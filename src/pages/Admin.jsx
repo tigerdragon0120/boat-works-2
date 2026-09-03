@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { getSettings, todayStr, generateAndSavePrediction, saveResultAndVerify } from "@/lib/predictionService";
 import { Settings as SettingsIcon, FlaskConical, Save, Plus } from "lucide-react";
+import SyncPanel from "@/components/SyncPanel";
 
 export default function Admin() {
   const [tab, setTab] = useState("settings");
@@ -13,6 +14,7 @@ export default function Admin() {
       </div>
       <div className="flex gap-2 mb-4">
         {[
+          { k: "sync", l: "BOAT WORKS連携" },
           { k: "settings", l: "判定しきい値" },
           { k: "result", l: "結果登録" },
           { k: "seed", l: "サンプル登録" },
@@ -21,6 +23,7 @@ export default function Admin() {
             className={`px-3 h-8 rounded-lg text-sm font-semibold ${tab === t.k ? "bg-sky-600 text-white" : "bg-white border border-slate-200 text-slate-600"}`}>{t.l}</button>
         ))}
       </div>
+      {tab === "sync" && <SyncPanel />}
       {tab === "settings" && <SettingsTab />}
       {tab === "result" && <ResultTab />}
       {tab === "seed" && <SeedTab />}

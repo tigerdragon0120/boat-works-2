@@ -1,10 +1,10 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
-import { secrets } from "base44:runtime";
 import { syncAndPredict } from "../../shared/predictionService.js";
 
 // BOAT WORKS DATA SYNC
-// mode: "api"  → BOAT WORKS側APIから今日のデータを取得して同期+予想
-// mode: "ingest" → payload.data を直接取り込んで同期+予想(テスト/手動投入用)
+// mode: "api"  → BOAT WORKS側APIからデータを取得して同期+予想
+//        body.api_base / body.api_key を使用(管理画面のAppSettingsから渡す)
+// mode: "ingest" → body.data を直接取り込んで同期+予想(テスト/手動投入用)
 // date: "YYYY-MM-DD"(省略時は今日)
 export default async function (req) {
   try {
@@ -20,10 +20,10 @@ export default async function (req) {
 
     let payload;
     if (mode === "api") {
-      const base = secrets.get("BOATWORKS_API_BASE");
-      const key = secrets.get("BOATWORKS_API_KEY");
+      const base = body.api_base;
+      const key = body.api_key;
       if (!base || !key) {
-        return Response.json({ error: "BOATWORKS_API_BASE / BOATWORKS_API_KEY が未設定です。管理画面のSecretsで設定してください。" }, { status: 500 });
+        return Response.json({ error: "api_base / api_key が未設定です。管理画面でBOAT WORKS API設定を入力してください。" }, { status: 400 });
       }
       const url = `${base.replace(/\/$/, "")}/sync?date=${date}`;
       const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });

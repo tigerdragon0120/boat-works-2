@@ -392,7 +392,23 @@ export function runPrediction(entries, settings, options = {}) {
     top_expected_value: topTrifecta?.expected_value,
     top_judgment: topTrifecta?.judgment,
     exhibition_ready: exhibitionReady,
+    bet_plan: decideBetPlan(judgedTrifectas, settings, { dataConfidence, stage }),
   };
+}
+
+// ---------- 買い目点数判定(1-3点 / 4-6点 / 見送り) ----------
+export function decideBetPlan(trifectas, settings, ctx = {}) {
+  const { dataConfidence = 50, stage = "PRE" } = ctx;
+  if (!trifectas || trifectas.length === 0) return { tier: "skip", count: 0, reason: "予想データなし" };
+  if (dataConfidence < (settings.min_confidence || 40)) return { tier: "skip", count: 0, reason: "データ信頼度不足" };
+  const buyable = trifectas.filter((t) => t.judgment === "STRONG_BUY" || t.judgment === "BUY" || t.judgment === "WATCH");
+  if (buyable.length === 0) return { tier: "skip", count: 0, reason: "BUY/WATCH該当なし" };
+  const top = trifectas[0];
+  const second = trifectas[1];
+  const gap = second ? top.probability - second.probability : top.probability;
+  if (top.probability >= 12 && gap >= 4) return { tier: "1-3", count: Math.min(3, buyable.length), reason: "本命濃厚・集中" };
+  if (top.probability >= 8) return { tier: "4-6", count: Math.min(6, buyable.length), reason: "予想分散・広目" };
+  return { tier: "skip", count: 0, reason: "確率低・見送り" };
 }
 
 // ---------- 結果照合 ----------

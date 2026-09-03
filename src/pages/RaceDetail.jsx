@@ -5,6 +5,7 @@ import {
   getRaceEntries, getPrediction, getBoatPredictions, getTrifectaPredictions,
   generateAndSavePrediction, getSettings,
 } from "@/lib/predictionService";
+import { decideBetPlan } from "@/lib/predictionEngine";
 import BoatCard from "@/components/BoatCard";
 import { ArrowLeft, Zap, Gauge, Trophy, TrendingUp, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ export default function RaceDetail() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState("FINAL");
+  const [rankMode, setRankMode] = useState("prob");
 
   const load = async () => {
     setLoading(true);
@@ -71,7 +73,11 @@ export default function RaceDetail() {
 
   const activePred = view === "FINAL" ? fin : pre;
   const activeBoats = (view === "FINAL" ? finBoats : preBoats).sort((a, b) => a.boat_number - b.boat_number);
-  const activeTri = (view === "FINAL" ? finTri : preTri).sort((a, b) => a.rank - b.rank).slice(0, 10);
+  const allTri = view === "FINAL" ? finTri : preTri;
+  const probRank = [...allTri].sort((a, b) => a.rank - b.rank).slice(0, 10);
+  const evRank = [...allTri].sort((a, b) => b.expected_value - a.expected_value).slice(0, 10);
+  const activeTri = rankMode === "prob" ? probRank : evRank;
+  const betPlan = activePred ? decideBetPlan(allTri, { min_confidence: 40 }, { dataConfidence: activePred.data_confidence, stage: view }) : null;
 
   const roleOf = (n) => {
     if (activePred?.honmei_boat === n) return "honmei";
@@ -181,10 +187,23 @@ export default function RaceDetail() {
           )}
 
           {/* 3連単ランキング */}
-          <div className="flex items-center gap-2 mt-5 mb-2">
-            <TrendingUp className="w-4 h-4 text-sky-600" />
-            <h2 className="font-display font-bold text-slate-900">3連単予想ランキング 上位10</h2>
+          <div className="flex items-center justify-between mt-5 mb-2">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-sky-600" />
+              <h2 className="font-display font-bold text-slate-900">3連単ランキング</h2>
+            </div>
+            <div className="flex gap-1">
+              <button onClick={() => setRankMode("prob")} className={cn("px-2.5 h-7 rounded-lg text-[11px] font-bold", rankMode === "prob" ? "bg-sky-600 text-white" : "bg-white border border-slate-200 text-slate-500")}>予想(確率)</button>
+              <button onClick={() => setRankMode("ev")} className={cn("px-2.5 h-7 rounded-lg text-[11px] font-bold", rankMode === "ev" ? "bg-emerald-600 text-white" : "bg-white border border-slate-200 text-slate-500")}>買い目(期待値)</button>
+            </div>
           </div>
+          {betPlan && (
+            <div className={cn("mb-2 rounded-xl px-3 py-2 text-xs flex items-center gap-2", betPlan.tier === "skip" ? "bg-slate-100 text-slate-600" : betPlan.tier === "1-3" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700")}>
+              <span className="font-bold">推奨買い目</span>
+              <span className="font-bold">{betPlan.tier === "skip" ? "見送り" : `${betPlan.tier}点`}</span>
+              <span className="text-slate-400">· {betPlan.reason}</span>
+            </div>
+          )}
           <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
             {activeTri.map((t) => (
               <div key={t.combination} className="flex items-center px-3 py-2.5 border-b border-slate-50 last:border-0">

@@ -68,6 +68,7 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
   const predictionId = existing?.id;
   const predictionRecord = {
     race_id: race.id,
+    race_key: race.race_key,
     stage,
     prediction_version: VERSION,
     computed_at: new Date().toISOString(),
@@ -100,6 +101,7 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
   const boatDocs = result.boatScores.map((s) => ({
     prediction_id: pid,
     race_id: race.id,
+    race_key: race.race_key,
     stage,
     boat_number: s.boat_number,
     first_power: s.first_power,
@@ -122,6 +124,7 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
   const trifectaDocs = result.trifectas.slice(0, 60).map((t) => ({
     prediction_id: pid,
     race_id: race.id,
+    race_key: race.race_key,
     stage,
     combination: t.combination,
     rank: t.rank,
@@ -164,7 +167,7 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     top_trifecta: result.top_trifecta,
     top_probability: result.top_probability,
     final_judgment: result.top_judgment,
-    status: stage === "FINAL" ? "final" : "pre",
+    status: race.status === "finished" ? "finished" : (stage === "FINAL" ? "final" : "pre"),
   };
   if (stage === "PRE") raceUpdate.has_pre = true;
   if (stage === "FINAL") raceUpdate.has_final = true;
@@ -251,6 +254,36 @@ export async function saveResultAndVerify(raceId, resultTrifecta, payout, finish
   }
 
   return { result: savedResult, verification: savedVerif };
+}
+
+// ---------- BOAT WORKS データ同期 ----------
+// バックエンド関数 syncFromBoatWorks を呼び出す
+export async function invokeSync(mode, payload = {}) {
+  return await base44.functions.invoke("syncFromBoatWorks", { mode, ...payload });
+}
+
+// SyncStatus取得(最新1件)
+export async function getSyncStatus() {
+  const list = await base44.entities.SyncStatus.filter({ name: "default" }, "-last_sync_at", 1);
+  return list && list[0];
+}
+
+// 今日のレース状況(同期状態表示用): no-data / pre / final / finished を判定
+export async function listTodayRaceStatus() {
+  const races = await base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 100);
+  const out = [];
+  for (const r of races || []) {
+    const entries = await base44.entities.RaceEntry.filter({ race_id: r.id }, "boat_number", 6);
+    const complete = (entries || []).filter((e) => !e.is_scratched).length >= 6;
+    out.push({
+      id: r.id, race_key: r.race_key, venue: r.venue, venue_code: r.venue_code,
+      race_number: r.race_number, race_name: r.race_name, status: r.status,
+      entries: (entries || []).length, complete, exhibition_ready: r.exhibition_ready,
+      has_pre: r.has_pre, has_final: r.has_final,
+      state: !complete ? "no-data" : (r.has_final ? "final" : (r.has_pre ? "pre" : "pending")),
+    });
+  }
+  return out;
 }
 
 // 検証集計

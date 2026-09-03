@@ -91,6 +91,14 @@
         "type": "string"
       },
       "description": "\u5bfe\u8c61\u7af6\u8247\u5834"
+    },
+    "boatworks_api_base": {
+      "type": "string",
+      "description": "BOAT WORKS\u30c7\u30fc\u30bf\u53d6\u5f97API\u306e\u30d9\u30fc\u30b9URL"
+    },
+    "boatworks_api_key": {
+      "type": "string",
+      "description": "BOAT WORKS\u30c7\u30fc\u30bf\u53d6\u5f97API\u306e\u8a8d\u8a3c\u30ad\u30fc"
     }
   },
   "required": [
