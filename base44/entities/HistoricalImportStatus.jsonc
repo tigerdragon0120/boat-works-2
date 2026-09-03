@@ -1,0 +1,44 @@
+{
+  "name": "HistoricalImportStatus",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "default": "default"
+    },
+    "last_attempt_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_success_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "next_target_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "source_not_ready",
+        "failed",
+        "running"
+      ],
+      "default": "running"
+    },
+    "race_count": {
+      "type": "number"
+    },
+    "venue_count": {
+      "type": "number"
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
