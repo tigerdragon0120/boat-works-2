@@ -114,7 +114,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
               <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
             </div>
             <div className="min-w-0 flex items-center gap-1.5">
-              <PlayerPhoto src={e.player_photo} alt={e.player_name} />
+              <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-white text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</span>
@@ -158,7 +158,7 @@ function ExhibitionInfo({ entries }) {
       {entries.map((e) => (
         <div key={e.boat_number} className="flex items-center gap-2 rounded-lg border border-[#3a404c] bg-[#161a22] p-2">
           <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
-          <PlayerPhoto src={e.player_photo} alt={e.player_name} size="sm" />
+          <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} size="sm" />
           <span className="text-xs font-bold text-slate-200 w-20 truncate">{e.player_name || ""}</span>
           <div className="flex-1 grid grid-cols-4 gap-1 text-center text-[10px]">
             <div><div className="text-slate-500">展示T</div><div className="font-mono font-bold text-slate-200">{e.exhibition_time?.toFixed(2) || "—"}</div></div>
@@ -232,7 +232,7 @@ function BoatEvalView({ entries, activeBoats, activePred }) {
           <div key={bp.boat_number} className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
             <div className="flex items-center gap-2 mb-2">
               <span className={cn("w-7 h-7 rounded flex items-center justify-center font-black text-sm", boatColors[bp.boat_number])}>{bp.boat_number}</span>
-              <PlayerPhoto src={entry?.player_photo} alt={entry?.player_name} />
+              <PlayerPhoto src={entry?.player_photo} registrationNumber={entry?.register_number || entry?.registration_number} alt={entry?.player_name} />
               <span className="font-bold text-white text-sm flex-1 truncate">{entry?.player_name || ""}</span>
               {role && <span className={cn("text-[10px] px-1.5 rounded font-bold", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-white" : "bg-rose-500 text-white")}>{role}</span>}
               <span className="font-black text-[#f9c836] text-lg">{bp.total_power?.toFixed(0) ?? "—"}</span>
