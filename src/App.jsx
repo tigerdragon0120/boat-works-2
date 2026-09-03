@@ -13,6 +13,7 @@ import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
 import Layout from '@/components/Layout';
 import Home from '@/pages/Home';
+import Venue from '@/pages/Venue';
 import RaceDetail from '@/pages/RaceDetail';
 import Verification from '@/pages/Verification';
 import Admin from '@/pages/Admin';
@@ -50,6 +51,7 @@ const AuthenticatedApp = () => {
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />
+          <Route path="/venue/:code" element={<Venue />} />
           <Route path="/race/:id" element={<RaceDetail />} />
           <Route path="/verify" element={<Verification />} />
           <Route path="/admin" element={<Admin />} />
