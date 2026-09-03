@@ -2,7 +2,7 @@
 import { base44 } from "@/api/base44Client";
 import { runPrediction } from "@/lib/predictionEngine";
 
-const VERSION = "v2";
+const VERSION = "v3";
 
 // 今日の日付(YYYY-MM-DD)
 export const todayStr = () => new Date().toISOString().slice(0, 10);
