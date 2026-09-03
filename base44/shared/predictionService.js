@@ -2,6 +2,7 @@
 // client は createClientFromRequest(req) または asServiceRole。
 import { runPrediction } from "./predictionEngine.js";
 import { buildRaceKey, mapRace, mapEntry, mapResult } from "./raceKey.js";
+import { acquireLock, releaseLock, cleanupExpiredLocks } from "./concurrencyLock.js";
 
 const VERSION = "v3";
 
@@ -28,30 +29,136 @@ export async function getSettings(client) {
   return await client.asServiceRole.entities.AppSettings.create({ name: "default", ...DEFAULT_SETTINGS });
 }
 
-// race_keyでRaceをupsert(保護付き)
-export async function upsertRace(client, raceData) {
-  const existing = await client.asServiceRole.entities.Race.filter({ race_key: raceData.race_key }, "-updated_date", 1);
-  if (existing && existing[0]) {
-    const merged = mergeProtect(existing[0], raceData);
-    // FINAL確定後はstatusを後退させない
-    if (existing[0].status === "final" && (merged.status === "scheduled" || merged.status === "pre")) merged.status = "final";
-    if (existing[0].status === "finished") merged.status = "finished";
-    return await client.asServiceRole.entities.Race.update(existing[0].id, merged);
-  }
-  return await client.asServiceRole.entities.Race.create(raceData);
+// Raceの完全度スコア(重複整理時に保持候補を決める)
+function raceCompleteness(r, entryCount, hasResult) {
+  let s = 0;
+  if (entryCount >= 6) s += 100;
+  else s += entryCount * 10;
+  if (r.exhibition_ready) s += 50;
+  if (r.weather) s += 5;
+  if (r.wind_speed != null) s += 3;
+  if (r.wave_height != null) s += 3;
+  if (r.deadline) s += 2;
+  if (hasResult) s += 20;
+  if (r.has_final) s += 15;
+  if (r.has_pre) s += 5;
+  if (r.prediction_grade) s += 5;
+  return s;
 }
 
-// race_key+boat_numberでRaceEntryをupsert(保護付き)
-export async function upsertEntry(client, entryData) {
-  const existing = await client.asServiceRole.entities.RaceEntry.filter(
-    { race_key: entryData.race_key, boat_number: entryData.boat_number }, "boat_number", 1
-  );
+// race_keyの重複Raceを安全に統合。子レコード(RaceEntry/RaceResult/RacePrediction等)のrace_idを正規Raceへ付け替え、重複を削除。
+export async function dedupRace(client, raceKey) {
+  const sr = client.asServiceRole.entities;
+  const all = await sr.Race.filter({ race_key: raceKey }, "created_date", 50).catch(() => []);
+  if (!all || all.length <= 1) return all[0] || null;
+  // 子レコード数と結果の有無を集計
+  const entryCounts = {};
+  const hasResult = {};
+  await Promise.all(all.map(async (r) => {
+    const es = await sr.RaceEntry.filter({ race_id: r.id }, "boat_number", 10).catch(() => []);
+    entryCounts[r.id] = es.length;
+    const res = await sr.RaceResult.filter({ race_id: r.id }, "-finished_at", 1).catch(() => []);
+    hasResult[r.id] = !!(res && res[0] && res[0].result_trifecta);
+  }));
+  // 完全度でソート→先頭が勝者(同点なら古いcreated_date優先で安定)
+  const sorted = [...all].sort((a, b) => {
+    const ca = raceCompleteness(a, entryCounts[a.id] || 0, hasResult[a.id]);
+    const cb = raceCompleteness(b, entryCounts[b.id] || 0, hasResult[b.id]);
+    if (cb !== ca) return cb - ca;
+    return String(a.created_date).localeCompare(String(b.created_date));
+  });
+  const winner = sorted[0];
+  const losers = sorted.slice(1);
+  // loserの非nullフィールドをwinnerへ保護マージ(loser側にしか無い展示/天候等を救出)
+  let winnerMerged = { ...winner };
+  for (const l of losers) winnerMerged = mergeProtect(winnerMerged, l);
+  // status後退防止
+  if (winner.status === "final" && (winnerMerged.status === "scheduled" || winnerMerged.status === "pre")) winnerMerged.status = "final";
+  if (winner.status === "finished") winnerMerged.status = "finished";
+  await sr.Race.update(winner.id, winnerMerged);
+  // 子レコードのrace_idをloser→winnerへ付け替え
+  for (const l of losers) {
+    await sr.RaceEntry.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.RaceResult.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.RacePrediction.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.OddsSnapshot.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionVerification.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionLearningSample.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.Race.delete(l.id).catch(() => {});
+  }
+  // winner側のRaceEntry重複(1〜6号艇各1件)も整理
+  await dedupEntriesForRace(client, winner.id, raceKey);
+  return winner;
+}
+
+// 指定RaceのRaceEntryを1〜6号艇各1件に整理(重複は完全度高い方を残し統合)
+export async function dedupEntriesForRace(client, raceId, raceKey) {
+  const sr = client.asServiceRole.entities;
+  const entries = await sr.RaceEntry.filter({ race_id: raceId }, "boat_number", 50).catch(() => []);
+  if (!entries || !entries.length) return;
+  const byBoat = {};
+  for (const e of entries) {
+    const k = Number(e.boat_number);
+    if (!byBoat[k]) byBoat[k] = [];
+    byBoat[k].push(e);
+  }
+  for (const [boat, list] of Object.entries(byBoat)) {
+    if (list.length <= 1) continue;
+    // 完全度: 展示/登録番号/勝率/更新時刻
+    const sorted = list.sort((a, b) => {
+      const ca = (a.exhibition_time != null ? 10 : 0) + (a.registration_number ? 5 : 0) + (a.national_win_rate != null ? 3 : 0) + String(a.updated_date || "").localeCompare(String(b.updated_date || ""));
+      const cb = (b.exhibition_time != null ? 10 : 0) + (b.registration_number ? 5 : 0) + (b.national_win_rate != null ? 3 : 0);
+      return cb - ca;
+    });
+    const winner = sorted[0];
+    const losers = sorted.slice(1);
+    let merged = { ...winner };
+    for (const l of losers) merged = mergeProtect(merged, l);
+    await sr.RaceEntry.update(winner.id, merged).catch(() => {});
+    for (const l of losers) await sr.RaceEntry.delete(l.id).catch(() => {});
+  }
+}
+
+// race_keyでRaceをupsert(保護付き + 作成後デデアップ安全網)
+export async function upsertRace(client, raceData) {
+  const sr = client.asServiceRole.entities;
+  const existing = await sr.Race.filter({ race_key: raceData.race_key }, "-updated_date", 1);
   if (existing && existing[0]) {
+    const merged = mergeProtect(existing[0], raceData);
+    if (existing[0].status === "final" && (merged.status === "scheduled" || merged.status === "pre")) merged.status = "final";
+    if (existing[0].status === "finished") merged.status = "finished";
+    return await sr.Race.update(existing[0].id, merged);
+  }
+  const created = await sr.Race.create(raceData);
+  // 作成直後に同時並行で別ワーカーがcreateしていた場合の安全網
+  return await dedupRace(client, raceData.race_key);
+}
+
+// race_key+boat_numberでRaceEntryをupsert(保護付き + 作成後デデアップ安全網)
+export async function upsertEntry(client, entryData) {
+  const sr = client.asServiceRole.entities;
+  const existing = await sr.RaceEntry.filter(
+    { race_key: entryData.race_key, boat_number: entryData.boat_number }, "boat_number", 10
+  );
+  if (existing && existing.length === 1) {
     const merged = mergeProtect(existing[0], entryData);
     merged.race_id = existing[0].race_id;
-    return await client.asServiceRole.entities.RaceEntry.update(existing[0].id, merged);
+    return await sr.RaceEntry.update(existing[0].id, merged);
   }
-  return await client.asServiceRole.entities.RaceEntry.create(entryData);
+  if (existing && existing.length > 1) {
+    // 既に重複→整理してからupsert
+    await dedupEntriesForRace(client, existing[0].race_id, entryData.race_key);
+    const re = await sr.RaceEntry.filter({ race_key: entryData.race_key, boat_number: entryData.boat_number }, "boat_number", 1);
+    if (re && re[0]) {
+      const merged = mergeProtect(re[0], entryData);
+      merged.race_id = re[0].race_id;
+      return await sr.RaceEntry.update(re[0].id, merged);
+    }
+  }
+  const created = await sr.RaceEntry.create(entryData);
+  // 作成後デデアップ安全網
+  await dedupEntriesForRace(client, entryData.race_id, entryData.race_key);
+  return created;
 }
 
 // race_key+stage+versionでRacePredictionを1件保証(重複作成しない)
@@ -188,6 +295,15 @@ export async function syncAndPredict(client, payload, opts = {}) {
   const results = payload.results || [];
   const odds = payload.odds || [];
 
+  // 排他ロック: 同一dateの同時処理を防止。取得失敗時は処理スキップ(再試行待ち)。
+  const lockDate = races[0]?.race_date || new Date().toISOString().slice(0, 10);
+  const lockKey = `sync_${lockDate}${opts.venue_code ? `_${opts.venue_code}` : ""}`;
+  await cleanupExpiredLocks(client);
+  const lockId = await acquireLock(client, lockKey, opts.mode || "sync");
+  if (!lockId) {
+    return { races_total: races.length, races_upserted: 0, entries_upserted: 0, pre_generated: 0, final_generated: 0, results_saved: 0, errors: [{ message: `別ワーカーが${lockDate}を処理中のためスキップ` }], skipped: true, lock_key: lockKey };
+  }
+
   // seriesはBOAT WORKS側で race_key + registration_number 単位で出力される。
   // 旧実装は存在しない boat_number で索引していたため、節間成績が全件マージされていなかった。
   const seriesMap = {};
@@ -285,5 +401,6 @@ export async function syncAndPredict(client, payload, opts = {}) {
   if (existStatus?.[0]) await client.asServiceRole.entities.SyncStatus.update(existStatus[0].id, statusDoc);
   else await client.asServiceRole.entities.SyncStatus.create(statusDoc);
 
+  await releaseLock(client, lockId);
   return summary;
 }

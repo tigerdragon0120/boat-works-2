@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { secrets } from 'base44:runtime';
 import { buildRaceKey, mapRace, mapEntry, mapResult } from '../../shared/raceKey.js';
 import { upsertRace, upsertEntry } from '../../shared/predictionService.js';
+import { acquireLock, releaseLock, cleanupExpiredLocks } from '../../shared/concurrencyLock.js';
 
 function prevDate(s){ const d=new Date(`${s}T00:00:00Z`); d.setUTCDate(d.getUTCDate()-1); return d.toISOString().slice(0,10); }
 
@@ -35,6 +36,14 @@ export default async function(req){
     const venues=(manifest.venue_codes||[]).map((x)=>String(x).padStart(2,'0'));
     if(!venues.length||!manifest.race_count){
       return Response.json({status:'waiting_source',target_date:targetDate,race_count:manifest.race_count||0,message:'BOAT WORKS側のフルデータ待ち'});
+    }
+
+    // 排他ロック: 同一過去日の同時バックフィルを防止
+    await cleanupExpiredLocks(base44);
+    const lockKey=`backfill_${targetDate}`;
+    const lockId=await acquireLock(base44,lockKey,'autoHistoricalBackfill');
+    if(!lockId){
+      return Response.json({status:'busy',target_date:targetDate,message:'別ワーカーが同日を処理中のためスキップ'});
     }
 
     let racesSaved=0, entriesSaved=0, resultsSaved=0; const errors=[];
@@ -75,6 +84,7 @@ export default async function(req){
     let dbRefresh=null;
     try{ const rr=await base44.asServiceRole.functions.invoke('refreshDatabase',{}); dbRefresh=rr?.data||rr; }catch(e){ errors.push({step:'refreshDatabase',message:e?.message||String(e)}); }
 
+    await releaseLock(base44,lockId);
     return Response.json({status:errors.length?'partial':'success',target_date:targetDate,venues:venues.length,races_saved:racesSaved,entries_saved:entriesSaved,results_saved:resultsSaved,errors,db_refresh:dbRefresh});
   }catch(error){return Response.json({status:'error',message:error?.message||String(error)},{status:500});}
 }
