@@ -83,30 +83,26 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
 }
 
 // フィルタ別の列定義 (boat+name+評価は固定、中央のデータ列を切替)
+// ※ grid-cols-[...] はリテラル文字列として記述しTailwindのJITに検出させる
 const filterCols = {
   "選手成績": {
-    grid: "28px_1fr_28px_40px_64px_64px_40px",
-    gridSm: "32px_1fr_36px_48px_76px_76px_52px",
+    gridCls: "grid-cols-[28px_1fr_28px_40px_64px_64px_40px] sm:grid-cols-[32px_1fr_36px_48px_76px_76px_52px]",
     headers: ["FL", "ST", "全国勝率", "当地勝率"],
   },
   "節間成績": {
-    grid: "28px_1fr_42px_42px_1fr_46px_40px",
-    gridSm: "32px_1fr_48px_48px_1fr_56px_52px",
+    gridCls: "grid-cols-[28px_1fr_42px_42px_1fr_46px_40px] sm:grid-cols-[32px_1fr_48px_48px_1fr_56px_52px]",
     headers: ["Pts", "節ST", "今節着順", "勢い"],
   },
   "モーター履歴": {
-    grid: "28px_1fr_36px_46px_46px_36px_46px_40px",
-    gridSm: "32px_1fr_40px_54px_54px_40px_54px_52px",
+    gridCls: "grid-cols-[28px_1fr_36px_46px_46px_36px_46px_40px] sm:grid-cols-[32px_1fr_40px_54px_54px_40px_54px_52px]",
     headers: ["MNo", "M2連", "M3連", "BNo", "B2連"],
   },
   "全国成績": {
-    grid: "28px_1fr_54px_46px_46px_28px_40px_40px",
-    gridSm: "32px_1fr_60px_54px_54px_36px_48px_52px",
+    gridCls: "grid-cols-[28px_1fr_54px_46px_46px_28px_40px_40px] sm:grid-cols-[32px_1fr_60px_54px_54px_36px_48px_52px]",
     headers: ["勝率", "2連率", "3連率", "FL", "ST"],
   },
   "当地成績": {
-    grid: "28px_1fr_54px_46px_46px_28px_40px_40px",
-    gridSm: "32px_1fr_60px_54px_54px_36px_48px_52px",
+    gridCls: "grid-cols-[28px_1fr_54px_46px_46px_28px_40px_40px] sm:grid-cols-[32px_1fr_60px_54px_54px_36px_48px_52px]",
     headers: ["勝率", "2連率", "3連率", "FL", "ST"],
   },
 };
@@ -126,7 +122,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
   return (
     <div className="text-[11px]">
       {/* ヘッダ行 */}
-      <div className="grid gap-1 px-2 py-1.5 bg-[#161a22] border-b border-[#3a404c] text-slate-500 font-bold text-[10px] sticky top-0 items-center" style={{ gridTemplateColumns: cfg.grid }}>
+      <div className={cn("grid gap-1 px-2 py-1.5 bg-[#161a22] border-b border-[#3a404c] text-slate-500 font-bold text-[10px] sticky top-0 items-center", cfg.gridCls)}>
         <div className="text-center">枠</div>
         <div>選手名</div>
         {cfg.headers.map((h) => <div key={h} className="text-center">{h}</div>)}
@@ -136,7 +132,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
         const bp = bpOf(e.boat_number);
         const role = roleOf(e.boat_number);
         return (
-          <div key={e.boat_number} className={cn("grid gap-1 px-2 py-2 border-b border-[#2c3546] items-center", rowTint[e.boat_number])} style={{ gridTemplateColumns: cfg.grid }}>
+          <div key={e.boat_number} className={cn("grid gap-1 px-2 py-2 border-b border-[#2c3546] items-center", cfg.gridCls, rowTint[e.boat_number])}>
             <div className="flex justify-center">
               <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
             </div>
