@@ -1,0 +1,45 @@
+{
+  "name": "Daily Historical DB Backfill",
+  "description": "BOAT WORKS 2\u306e\u73fe\u5728\u6700\u53e4\u65e5\u304b\u30891\u65e5\u305a\u3064\u81ea\u52d5\u3067\u904e\u53bb\u3078\u9061\u308a\u3001BOAT WORKS\u304b\u3089Race/Entry/Series/Result\u3092\u53d6\u308a\u8fbc\u307fDB\u3092\u66f4\u65b0\u3059\u308b\u3002",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "30 3 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "daily_historical_db_backfill",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "run_backfill": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "autoHistoricalBackfill",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "\u904e\u53bbDB\u30921\u65e5\u5206\u81ea\u52d5\u8ffd\u52a0",
+            "description": "\u73fe\u5728\u6700\u53e4\u65e5\u3088\u308a1\u65e5\u524d\u3092BOAT WORKS\u304b\u3089\u53d6\u308a\u8fbc\u307f\u3001DB\u3092\u518d\u96c6\u8a08"
+          }
+        }
+      }
+    ]
+  }
+}
