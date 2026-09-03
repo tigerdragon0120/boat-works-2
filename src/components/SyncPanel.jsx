@@ -31,10 +31,25 @@ export default function SyncPanel() {
   const runApi = async () => {
     setBusy(true); setMsg(""); setErr("");
     try {
-      const res = await invokeSync("api", { date: todayStr() });
-      const sum = res.data?.summary || res.summary || {};
-      setMsg(`同期完了: ${sum.races_upserted || 0}レース / PRE ${sum.pre_generated || 0} / FINAL ${sum.final_generated || 0}`);
-      if (sum.errors?.length) setErr(`${sum.errors.length}件のエラー`);
+      // 504回避: まず軽量manifestで開催場だけ取得し、場単位で分割同期する。
+      const manifestRes = await invokeSync("api", { date: todayStr(), manifest: true });
+      const manifest = manifestRes.data || manifestRes || {};
+      const venues = manifest.venue_codes || [];
+      if (!venues.length) throw new Error("BOAT WORKSから本日の開催場を取得できませんでした");
+
+      let totalRaces = 0, totalPre = 0, totalFinal = 0, totalErrors = 0;
+      for (let i = 0; i < venues.length; i++) {
+        const venue = venues[i];
+        setMsg(`同期中 ${i + 1}/${venues.length}場（${venue}）…`);
+        const res = await invokeSync("api", { date: todayStr(), venue_code: venue });
+        const sum = res.data?.summary || res.summary || {};
+        totalRaces += sum.races_upserted || 0;
+        totalPre += sum.pre_generated || 0;
+        totalFinal += sum.final_generated || 0;
+        totalErrors += sum.errors?.length || 0;
+      }
+      setMsg(`同期完了: ${totalRaces}レース / PRE ${totalPre} / FINAL ${totalFinal}`);
+      if (totalErrors) setErr(`${totalErrors}件のエラー`);
       await load();
     } catch (e) { setErr(e.message || JSON.stringify(e)); }
     setBusy(false);
