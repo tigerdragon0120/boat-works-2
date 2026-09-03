@@ -3,18 +3,21 @@ import { base44 } from '@/api/base44Client';
 import PlayerPhoto from '@/components/race/PlayerPhoto';
 import { Database as DbIcon, Users, MapPin, Gauge, Search, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import DatabaseStatusPanel from '@/components/DatabaseStatusPanel';
 
 const tabs=[['racers','選手DB',Users],['venues','レース場DB',MapPin],['motors','モーターDB',Gauge],['races','レースDB',DbIcon]];
 export default function Database(){
-  const [tab,setTab]=useState('racers'); const [q,setQ]=useState(''); const [busy,setBusy]=useState(false); const [data,setData]=useState({racers:[],venues:[],motors:[],races:[]});
+  const [tab,setTab]=useState('racers'); const [q,setQ]=useState(''); const [busy,setBusy]=useState(false); const [data,setData]=useState({racers:[],venues:[],motors:[],races:[]}); const [dbStatus,setDbStatus]=useState(null);
+  const loadStatus=async()=>{ try{ const rows=await base44.entities.DatabaseStatus.filter({name:'default'},'-updated_date',1); setDbStatus(rows?.[0]||null); }catch{ setDbStatus(null); } };
   const load=async()=>{ const [racers,venues,motors,races]=await Promise.all([
     base44.entities.RacerDatabase.list('-latest_race_date',500), base44.entities.VenueDatabase.list('venue_code',100), base44.entities.MotorDatabase.list('-top2_rate',500), base44.entities.RaceDatabase.list('-race_date',500)
   ]); setData({racers,venues,motors,races}); };
-  useEffect(()=>{load();},[]);
-  const refresh=async()=>{setBusy(true);try{await base44.functions.invoke('refreshDatabase',{});await load();}finally{setBusy(false)}};
+  useEffect(()=>{load();loadStatus();},[]);
+  const refresh=async()=>{setBusy(true);setDbStatus(prev=>({...prev,status:'running'}));try{await base44.functions.invoke('refreshDatabase',{});await Promise.all([load(),loadStatus()]);}finally{setBusy(false)}};
   const rows=useMemo(()=>{const s=q.trim().toLowerCase(); const a=data[tab]||[]; if(!s)return a; return a.filter(x=>JSON.stringify(x).toLowerCase().includes(s));},[data,tab,q]);
   return <div className="space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2"><DbIcon className="w-5 h-5 text-[#f9c836]"/>BOAT WORKS DATABASE</h1><p className="text-xs text-slate-500 mt-1">予想に使う長期データを蓄積・検証</p></div><button onClick={refresh} disabled={busy} className="h-10 px-4 rounded-lg bg-[#f9c836] text-slate-950 font-black text-sm flex items-center gap-2 disabled:opacity-50"><RefreshCw className={cn('w-4 h-4',busy&&'animate-spin')}/>{busy?'更新中':'DB更新'}</button></div>
+    <DatabaseStatusPanel status={dbStatus} loading={busy}/>
     <div className="grid grid-cols-4 gap-1 bg-[#161a22] border border-[#2d3748] p-1 rounded-xl">{tabs.map(([k,label,I])=><button key={k} onClick={()=>setTab(k)} className={cn('h-10 rounded-lg text-[11px] sm:text-sm font-bold flex items-center justify-center gap-1.5',tab===k?'bg-[#f9c836] text-slate-950':'text-slate-400')}><I className="w-4 h-4"/><span className="hidden sm:inline">{label}</span></button>)}</div>
     <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="選手名・登録番号・場名・モーター番号で検索" className="w-full h-11 pl-10 pr-3 rounded-xl bg-[#161a22] border border-[#2d3748] text-sm outline-none focus:border-blue-500"/></div>
     {tab==='racers'&&<Racers rows={rows}/>} {tab==='venues'&&<Venues rows={rows}/>} {tab==='motors'&&<Motors rows={rows}/>} {tab==='races'&&<Races rows={rows}/>} 

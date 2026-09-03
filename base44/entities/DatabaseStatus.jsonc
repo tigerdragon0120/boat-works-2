@@ -13,6 +13,10 @@
     "racers": {
       "type": "number"
     },
+    "racer_venues": {
+      "type": "number",
+      "description": "\u9078\u624b\u00d7\u5834DB\u4ef6\u6570"
+    },
     "motors": {
       "type": "number"
     },
@@ -21,6 +25,24 @@
     },
     "races": {
       "type": "number"
+    },
+    "oldest_race_date": {
+      "type": "string",
+      "format": "date",
+      "description": "\u6700\u53e4\u30c7\u30fc\u30bf\u65e5"
+    },
+    "newest_race_date": {
+      "type": "string",
+      "format": "date",
+      "description": "\u6700\u65b0\u30c7\u30fc\u30bf\u65e5"
+    },
+    "result_count": {
+      "type": "number",
+      "description": "\u7d50\u679c\u53d6\u5f97\u6e08\u307f\u30ec\u30fc\u30b9\u6570"
+    },
+    "result_coverage_rate": {
+      "type": "number",
+      "description": "\u7d50\u679c\u53d6\u5f97\u7387(%)"
     },
     "status": {
       "type": "string",
