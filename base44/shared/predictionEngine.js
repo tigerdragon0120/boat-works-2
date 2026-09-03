@@ -164,21 +164,28 @@ export function computeTrifectas(boatScores, options = {}) {
   const { oddsMap = {}, margin = 0.25 } = options;
   const boats = boatScores.filter((b) => !b._absent);
   const numbers = boats.map((b) => b.boat_number);
-  const firstWeights = boats.map((b) => Math.pow(b.first_power, 2.2));
-  const firstProb = normalize(firstWeights);
+  // v3: 旧来の power^n は差を十分に確率へ反映できず、120通りが平坦化していた。
+  // softmaxで「艇力差」を順位確率へ変換し、強いレースほど上位買い目へ自然に集中させる。
+  const softmax = (scores, temperature) => {
+    if (!scores.length) return [];
+    const maxScore = Math.max(...scores);
+    const weights = scores.map((s) => Math.exp((s - maxScore) / temperature));
+    return normalize(weights);
+  };
+  const firstProb = softmax(boats.map((b) => b.first_power), 6.0);
   const firstP = {};
   boats.forEach((b, i) => (firstP[b.boat_number] = firstProb[i]));
 
   const results = [];
   for (const i of numbers) {
     const secondBoats = boats.filter((b) => b.boat_number !== i);
-    const secondProb = normalize(secondBoats.map((b) => Math.pow(b.second_power, 2.0)));
+    const secondProb = softmax(secondBoats.map((b) => b.second_power), 8.0);
     const secondP = {};
     secondBoats.forEach((b, k) => (secondP[b.boat_number] = secondProb[k]));
     for (const j of numbers) {
       if (j === i) continue;
       const thirdBoats = boats.filter((b) => b.boat_number !== i && b.boat_number !== j);
-      const thirdProb = normalize(thirdBoats.map((b) => Math.pow(b.third_power, 1.8)));
+      const thirdProb = softmax(thirdBoats.map((b) => b.third_power), 10.0);
       const thirdP = {};
       thirdBoats.forEach((b, k) => (thirdP[b.boat_number] = thirdProb[k]));
       for (const k of numbers) {
