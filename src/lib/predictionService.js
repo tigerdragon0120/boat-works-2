@@ -2,7 +2,7 @@
 import { base44 } from "@/api/base44Client";
 import { runPrediction } from "@/lib/predictionEngine";
 
-const VERSION = "v1";
+const VERSION = "v2";
 
 // 今日の日付(YYYY-MM-DD)
 export const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -31,7 +31,7 @@ export async function getSettings() {
 
 // 今日のレース一覧(終了済みは別途)
 export async function listTodayRaces({ includeFinished = false } = {}) {
-  const races = await base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 100);
+  const races = await base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500);
   if (!includeFinished) return (races || []).filter((r) => r.status !== "finished" && r.status !== "cancelled");
   return races || [];
 };
@@ -119,9 +119,9 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
   }));
   if (boatDocs.length) await base44.entities.BoatPrediction.bulkCreate(boatDocs);
 
-  // TrifectaPrediction保存(最大max_bets件の上位 + 判定付き全件は重いので上位60)
+  // TrifectaPrediction保存: 3連単120通りをすべて保持する
   const maxBets = settings.max_bets || 10;
-  const trifectaDocs = result.trifectas.slice(0, 60).map((t) => ({
+  const trifectaDocs = result.trifectas.map((t) => ({
     prediction_id: pid,
     race_id: race.id,
     race_key: race.race_key,
@@ -270,7 +270,7 @@ export async function getSyncStatus() {
 
 // 今日のレース状況(同期状態表示用): no-data / pre / final / finished を判定
 export async function listTodayRaceStatus() {
-  const races = await base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 100);
+  const races = await base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500);
   const out = [];
   for (const r of races || []) {
     const entries = await base44.entities.RaceEntry.filter({ race_id: r.id }, "boat_number", 6);
