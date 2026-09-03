@@ -48,7 +48,7 @@ export default function Home() {
             const activeCount = list.filter((r) => r.status !== "finished" && r.status !== "cancelled").length;
             const eventRace = list[0] || nextRace;
             const dayText = eventRace?.series_day ? (eventRace.is_final_day ? "最終日" : `${eventRace.series_day}日目`) : "";
-            const gradeText = eventRace?.grade || "一般";
+            const gradeText = displayGrade(eventRace?.grade);
             const womens = !!eventRace?.is_womens;
             const content = <><div className="flex items-center justify-between"><span className="text-[10px] font-bold text-slate-500">{code}</span>{active && <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.8)]" />}</div><div className={cn("mt-2 text-lg font-black", active ? "text-white" : "text-slate-600")}>{name}</div><div className="mt-1.5 min-h-[58px] text-xs leading-5">{active ? <><div className="flex items-center gap-1.5 flex-wrap"><span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30 text-blue-300 font-bold">{gradeText}</span>{dayText && <span className="font-bold text-amber-300">{dayText}</span>}{womens && <span title="女子戦" className="text-pink-400 text-sm">♥</span>}</div><div className="text-slate-400 truncate">{eventRace?.event_name || "本日開催"}</div><div className="font-bold text-blue-300">{nextRace ? `${nextRace.race_number}R / ${fmtTime(nextRace.deadline)}` : `${activeCount}R`}</div></> : <div className="text-slate-700">本日開催なし</div>}</div></>;
             return active ? <Link key={code} to={`/venue/${code}`} className="min-h-[104px] sm:min-h-[118px] rounded-xl border border-blue-500/30 bg-gradient-to-b from-blue-600/15 to-slate-900 p-2.5 sm:p-3 hover:border-blue-400 hover:bg-blue-500/15 active:scale-[.99] transition shadow-sm">{content}</Link> : <div key={code} className="min-h-[104px] sm:min-h-[118px] rounded-xl border border-slate-800 bg-slate-900/50 p-2.5 sm:p-3 opacity-70">{content}</div>;
@@ -61,4 +61,5 @@ export default function Home() {
   );
 }
 
+function displayGrade(v) { const g = String(v || "").toUpperCase(); return !g || g === "GENERAL" ? "一般" : g; }
 function fmtTime(v) { return v ? new Date(v).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "--:--"; }
