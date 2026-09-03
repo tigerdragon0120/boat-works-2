@@ -1,0 +1,52 @@
+{
+  "name": "SyncStatus",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "default": "default"
+    },
+    "last_sync_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "partial",
+        "failed",
+        "running"
+      ],
+      "default": "success"
+    },
+    "mode": {
+      "type": "string",
+      "description": "api / ingest / manual"
+    },
+    "error_count": {
+      "type": "number",
+      "default": 0
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "[{race_key, message}]"
+    },
+    "venue_summary": {
+      "type": "object",
+      "description": "venue_code -> {races, complete, exhibition, result, pre, final, errors}"
+    },
+    "synced_race_keys": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

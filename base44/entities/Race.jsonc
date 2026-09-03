@@ -2,9 +2,20 @@
   "name": "Race",
   "type": "object",
   "properties": {
+    "race_key": {
+      "type": "string",
+      "description": "\u5171\u901a\u30ad\u30fc YYYY-MM-DD_venueCode_raceNumber"
+    },
     "venue": {
       "type": "string",
-      "description": "\u7af6\u8247\u5834\u540d"
+      "description": "\u7af6\u8247\u5834\u540d(\u8868\u793a\u7528)"
+    },
+    "venue_code": {
+      "type": "string",
+      "description": "\u7af6\u8247\u5834\u30b3\u30fc\u30c9"
+    },
+    "venue_name": {
+      "type": "string"
     },
     "race_number": {
       "type": "number",
@@ -14,10 +25,9 @@
       "type": "string",
       "format": "date"
     },
-    "deadline": {
+    "race_name": {
       "type": "string",
-      "format": "date-time",
-      "description": "\u7de0\u5207\u6642\u523b"
+      "description": "\u30ec\u30fc\u30b9\u540d"
     },
     "race_type": {
       "type": "string",
@@ -30,9 +40,22 @@
       ],
       "default": "\u4e00\u822c"
     },
+    "race_phase": {
+      "type": "string",
+      "description": "\u4e88\u9078/\u4e00\u822c/\u6e96\u512a/\u512a\u52dd \u306a\u3069(BOAT WORKS\u7531\u6765)"
+    },
     "grade": {
       "type": "string",
       "description": "\u30ec\u30fc\u30b9\u30b0\u30ec\u30fc\u30c9 (SG/G1/G2/\u4e00\u822c)"
+    },
+    "time_slot": {
+      "type": "string",
+      "description": "\u958b\u50ac\u6642\u9593\u5e2f"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u7de0\u5207\u6642\u523b"
     },
     "status": {
       "type": "string",
@@ -63,6 +86,18 @@
     "air_temp": {
       "type": "number"
     },
+    "exhibition_ready": {
+      "type": "boolean",
+      "default": false,
+      "description": "\u5c55\u793a\u30c7\u30fc\u30bf\u53d6\u5f97\u6e08\u307f"
+    },
+    "scratched_boats": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "\u6b20\u5834\u8247\u756a\u53f7\u4e00\u89a7"
+    },
     "prediction_grade": {
       "type": "string",
       "enum": [
@@ -70,32 +105,25 @@
         "A",
         "B",
         "C"
-      ],
-      "description": "\u4e88\u60f3\u8a55\u4fa1"
+      ]
     },
     "honmei_boat": {
-      "type": "number",
-      "description": "\u672c\u547d\u8247\u756a\u53f7"
+      "type": "number"
     },
     "taiko_boat": {
-      "type": "number",
-      "description": "\u5bfe\u6297\u8247\u756a\u53f7"
+      "type": "number"
     },
     "ana_boat": {
-      "type": "number",
-      "description": "\u7a74\u8247\u756a\u53f7"
+      "type": "number"
     },
     "keshi_boat": {
-      "type": "number",
-      "description": "\u6d88\u3057\u8247\u756a\u53f7"
+      "type": "number"
     },
     "top_trifecta": {
-      "type": "string",
-      "description": "\u4e88\u60f31\u4f4d 3\u9023\u5358 (\u4f8b 1-3-5)"
+      "type": "string"
     },
     "top_probability": {
-      "type": "number",
-      "description": "\u4e88\u60f31\u4f4d\u63a8\u5b9a\u78ba\u7387"
+      "type": "number"
     },
     "final_judgment": {
       "type": "string",
@@ -114,10 +142,13 @@
     "has_final": {
       "type": "boolean",
       "default": false
+    },
+    "sync_source": {
+      "type": "string",
+      "description": "\u30c7\u30fc\u30bf\u540c\u671f\u5143(api/ingest/manual)"
     }
   },
   "required": [
-    "venue",
     "race_number",
     "race_date"
   ]
