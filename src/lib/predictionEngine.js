@@ -143,23 +143,40 @@ export function computeBoatScores(entry, settings) {
   const dataCount = totalW.length;
 
   // ---------- 1/2/3着力 ----------
-  // 1着力: 内側(艇番小)有利 + 総合力 + ST + 展示(FINAL)
-  const courseBonus = { 1: 12, 2: 6, 3: 2, 4: -2, 5: -6, 6: -10 }[entry.boat_number] || 0;
-  const firstParts = [total_power, courseBonus];
-  if (components.st !== null) firstParts.push(components.st * 0.3);
-  if (isFinal && components.exhibition !== null) firstParts.push(components.exhibition * 0.4);
-  const first_power = clamp(firstParts.reduce((a, b) => a + b, 0) / firstParts.length + (courseBonus > 0 ? courseBonus * 0.3 : 0), 5, 100);
+  // 旧ロジックは「総合力」と「小さなコース加点」を同じ配列で平均してしまい、
+  // 1着力が不自然に30前後まで圧縮されて全レースC判定になりやすかった。
+  // v2では各要素を0-100スケールに揃えてから加重平均する。
+  const courseFirstScore = { 1: 100, 2: 78, 3: 66, 4: 54, 5: 43, 6: 34 }[entry.boat_number] || 50;
+  const courseSecondScore = { 1: 72, 2: 82, 3: 78, 4: 68, 5: 58, 6: 50 }[entry.boat_number] || 60;
+  const courseThirdScore = { 1: 68, 2: 76, 3: 78, 4: 74, 5: 66, 6: 58 }[entry.boat_number] || 65;
 
-  // 2着力: 総合力 + 展示 + 節間(差し・追い込み考慮)。艇番による偏りは少なめ
-  const secondParts = [total_power];
-  if (components.section !== null) secondParts.push(components.section * 0.5);
-  if (isFinal && components.exhibition !== null) secondParts.push(components.exhibition * 0.5);
-  const second_power = clamp(secondParts.reduce((a, b) => a + b, 0) / secondParts.length, 5, 100);
+  const weightedAverage = (pairs, fallback = 50) => {
+    const validPairs = pairs.filter(([score]) => score !== null && isValid(score));
+    if (!validPairs.length) return fallback;
+    const denom = validPairs.reduce((a, [, weight]) => a + weight, 0);
+    return denom > 0 ? validPairs.reduce((a, [score, weight]) => a + score * weight, 0) / denom : fallback;
+  };
 
-  // 3着力: 総合力ベース + 穴要素
-  const thirdParts = [total_power * 0.8];
-  if (components.section !== null) thirdParts.push(components.section * 0.3);
-  const third_power = clamp(thirdParts.reduce((a, b) => a + b, 0) / thirdParts.length, 5, 100);
+  const first_power = clamp(weightedAverage([
+    [total_power, isFinal ? 0.50 : 0.60],
+    [components.st, isFinal ? 0.15 : 0.20],
+    [courseFirstScore, 0.20],
+    [isFinal ? components.exhibition : null, 0.15],
+  ]), 5, 100);
+
+  const second_power = clamp(weightedAverage([
+    [total_power, isFinal ? 0.55 : 0.65],
+    [components.section, 0.15],
+    [courseSecondScore, 0.10],
+    [isFinal ? components.exhibition : null, 0.20],
+  ]), 5, 100);
+
+  const third_power = clamp(weightedAverage([
+    [total_power, 0.68],
+    [components.section, 0.12],
+    [courseThirdScore, 0.12],
+    [isFinal ? components.exhibition : null, 0.08],
+  ]), 5, 100);
 
   // スタート力・モーター力・展示力・当地適性・節間調子(0-100)
   const start_power = (() => {
@@ -322,8 +339,8 @@ export function gradePrediction(boatScores, topTrifecta) {
   const second = boatScores.filter((b) => b.boat_number !== top.boat_number).reduce((a, b) => (a.first_power > b.first_power ? a : b));
   const gap = top.first_power - second.first_power;
   const conf = top.dataCount;
-  if (gap >= 12 && top.first_power >= 80 && conf >= 8) return "S";
-  if (gap >= 7 && top.first_power >= 70) return "A";
+  if (gap >= 10 && top.first_power >= 80 && conf >= 8) return "S";
+  if (gap >= 6 && top.first_power >= 70) return "A";
   if (top.first_power >= 60) return "B";
   return "C";
 }
