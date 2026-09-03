@@ -18,6 +18,8 @@ export default async function (req) {
     try { body = await req.json(); } catch { body = {}; }
     const mode = body.mode || "ingest";
     const date = body.date || new Date().toISOString().slice(0, 10);
+    const venueCode = body.venue_code ? String(body.venue_code).padStart(2, "0") : null;
+    const manifestOnly = body.manifest === true;
 
     let payload;
     if (mode === "api") {
@@ -27,15 +29,27 @@ export default async function (req) {
         return Response.json({ error: "BOAT_WORKS_API_BASE / BOAT_WORKS_API_KEY がサーバーSecretに未設定です" }, { status: 500 });
       }
       const normalized = String(base).replace(/\/$/, "");
-      const url = normalized.includes("exportBoatWorksData")
+      const baseUrl = normalized.includes("exportBoatWorksData")
         ? `${normalized}${normalized.includes("?") ? "&" : "?"}date=${encodeURIComponent(date)}`
         : `${normalized}/exportBoatWorksData?date=${encodeURIComponent(date)}`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
+      const qs = `${manifestOnly ? "&manifest=1" : ""}${venueCode ? `&venue_code=${encodeURIComponent(venueCode)}` : ""}`;
+      const url = `${baseUrl}${qs}`;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 45000);
+      let res;
+      try {
+        res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
         return Response.json({ error: `BOAT WORKS APIエラー: ${res.status}`, detail: detail.slice(0, 500) }, { status: 502 });
       }
       payload = await res.json();
+      if (manifestOnly) {
+        return Response.json({ ok: true, date, mode, manifest: true, venue_codes: payload.venue_codes || [], race_count: payload.race_count || 0 });
+      }
     } else {
       payload = body.data || {};
     }
@@ -44,8 +58,8 @@ export default async function (req) {
       return Response.json({ error: "データ形式不正: { races, entries, series, results, odds } が必要です" }, { status: 400 });
     }
 
-    const summary = await syncAndPredict(base44, payload, { mode });
-    return Response.json({ ok: true, date, mode, summary });
+    const summary = await syncAndPredict(base44, payload, { mode, venue_code: venueCode });
+    return Response.json({ ok: true, date, mode, venue_code: venueCode, summary });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
