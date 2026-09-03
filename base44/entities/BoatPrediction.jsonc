@@ -1,0 +1,96 @@
+{
+  "name": "BoatPrediction",
+  "type": "object",
+  "properties": {
+    "prediction_id": {
+      "type": "string",
+      "description": "\u5bfe\u8c61RacePrediction\u306eid"
+    },
+    "race_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ]
+    },
+    "boat_number": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 6
+    },
+    "first_power": {
+      "type": "number",
+      "description": "1\u7740\u529b 0-100"
+    },
+    "second_power": {
+      "type": "number",
+      "description": "2\u7740\u529b 0-100"
+    },
+    "third_power": {
+      "type": "number",
+      "description": "3\u7740\u529b 0-100"
+    },
+    "total_power": {
+      "type": "number",
+      "description": "\u7dcf\u5408\u529b 0-100"
+    },
+    "start_power": {
+      "type": "number",
+      "description": "\u30b9\u30bf\u30fc\u30c8\u529b"
+    },
+    "motor_power": {
+      "type": "number",
+      "description": "\u30e2\u30fc\u30bf\u30fc\u529b"
+    },
+    "exhibition_power": {
+      "type": "number",
+      "description": "\u5c55\u793a\u529b"
+    },
+    "local_fit": {
+      "type": "number",
+      "description": "\u5f53\u5730\u9069\u6027"
+    },
+    "section_form": {
+      "type": "number",
+      "description": "\u7bc0\u9593\u8abf\u5b50"
+    },
+    "ana_potential": {
+      "type": "number",
+      "description": "\u7a74\u671f\u5f85\u5ea6"
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "\u4e88\u60f3\u7406\u7531"
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "\u6ce8\u610f\u70b9"
+    },
+    "pre_score": {
+      "type": "number",
+      "description": "PRE\u6642\u30b9\u30b3\u30a2(\u6bd4\u8f03\u7528)"
+    },
+    "final_score": {
+      "type": "number",
+      "description": "FINAL\u6642\u30b9\u30b3\u30a2(\u6bd4\u8f03\u7528)"
+    },
+    "delta": {
+      "type": "number",
+      "description": "PRE\u2192FINAL\u5dee\u5206"
+    }
+  },
+  "required": [
+    "prediction_id",
+    "race_id",
+    "boat_number"
+  ]
+}

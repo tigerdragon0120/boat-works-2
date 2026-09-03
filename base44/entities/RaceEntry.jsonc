@@ -1,0 +1,135 @@
+{
+  "name": "RaceEntry",
+  "type": "object",
+  "properties": {
+    "race_id": {
+      "type": "string",
+      "description": "\u5bfe\u8c61Race\u306eid"
+    },
+    "boat_number": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 6
+    },
+    "player_name": {
+      "type": "string"
+    },
+    "register_number": {
+      "type": "string",
+      "description": "\u767b\u9332\u756a\u53f7"
+    },
+    "player_class": {
+      "type": "string",
+      "description": "\u7d1a\u5225 (A1/A2/B1/B2)"
+    },
+    "player_photo": {
+      "type": "string",
+      "description": "\u9078\u624b\u5199\u771fURL"
+    },
+    "national_win_rate": {
+      "type": "number",
+      "description": "\u5168\u56fd\u52dd\u7387"
+    },
+    "local_win_rate": {
+      "type": "number",
+      "description": "\u5f53\u5730\u52dd\u7387"
+    },
+    "national_f2_rate": {
+      "type": "number",
+      "description": "\u5168\u56fd2\u9023\u7387"
+    },
+    "national_f3_rate": {
+      "type": "number",
+      "description": "\u5168\u56fd3\u9023\u7387"
+    },
+    "local_f2_rate": {
+      "type": "number",
+      "description": "\u5f53\u57302\u9023\u7387"
+    },
+    "local_f3_rate": {
+      "type": "number",
+      "description": "\u5f53\u57303\u9023\u7387"
+    },
+    "avg_st": {
+      "type": "number",
+      "description": "\u5e73\u5747ST(\u79d2)"
+    },
+    "f_count": {
+      "type": "number",
+      "description": "F\u6570"
+    },
+    "l_count": {
+      "type": "number",
+      "description": "L\u6570"
+    },
+    "course_stats": {
+      "type": "object",
+      "description": "\u30b3\u30fc\u30b9\u5225\u6210\u7e3e"
+    },
+    "motor_f2_rate": {
+      "type": "number",
+      "description": "\u30e2\u30fc\u30bf\u30fc2\u9023\u7387"
+    },
+    "motor_f3_rate": {
+      "type": "number",
+      "description": "\u30e2\u30fc\u30bf\u30fc3\u9023\u7387"
+    },
+    "boat_f2_rate": {
+      "type": "number",
+      "description": "\u30dc\u30fc\u30c82\u9023\u7387"
+    },
+    "boat_f3_rate": {
+      "type": "number",
+      "description": "\u30dc\u30fc\u30c83\u9023\u7387"
+    },
+    "exhibition_time": {
+      "type": "number",
+      "description": "\u5c55\u793a\u30bf\u30a4\u30e0"
+    },
+    "exhibition_rank": {
+      "type": "number",
+      "description": "\u5c55\u793a\u9806\u4f4d"
+    },
+    "exhibition_st": {
+      "type": "number",
+      "description": "\u5c55\u793aST"
+    },
+    "exhibition_course": {
+      "type": "number",
+      "description": "\u5c55\u793a\u9032\u5165\u30b3\u30fc\u30b9"
+    },
+    "section_points": {
+      "type": "number",
+      "description": "\u7bc0\u9593\u30dd\u30a4\u30f3\u30c8"
+    },
+    "section_finishes": {
+      "type": "string",
+      "description": "\u4eca\u7bc0\u7740\u9806 (\u4f8b 1.3.2.4)"
+    },
+    "section_st": {
+      "type": "number",
+      "description": "\u4eca\u7bc0ST"
+    },
+    "section_momentum": {
+      "type": "number",
+      "description": "\u4eca\u7bc0\u306e\u52e2\u3044"
+    },
+    "program_intent": {
+      "type": "string",
+      "description": "\u756a\u7d44\u610f\u56f3"
+    },
+    "gamble_level": {
+      "type": "number",
+      "description": "\u52dd\u8ca0\u304c\u3051\u5ea6 0-100"
+    },
+    "is_absent": {
+      "type": "boolean",
+      "default": false,
+      "description": "\u6b20\u5834"
+    }
+  },
+  "required": [
+    "race_id",
+    "boat_number"
+  ]
+}

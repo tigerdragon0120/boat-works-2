@@ -1,0 +1,124 @@
+{
+  "name": "Race",
+  "type": "object",
+  "properties": {
+    "venue": {
+      "type": "string",
+      "description": "\u7af6\u8247\u5834\u540d"
+    },
+    "race_number": {
+      "type": "number",
+      "description": "\u30ec\u30fc\u30b9\u756a\u53f7"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u7de0\u5207\u6642\u523b"
+    },
+    "race_type": {
+      "type": "string",
+      "enum": [
+        "\u4e88\u9078",
+        "\u4e00\u822c",
+        "\u6e96\u512a",
+        "\u512a\u52dd",
+        "\u305d\u306e\u4ed6"
+      ],
+      "default": "\u4e00\u822c"
+    },
+    "grade": {
+      "type": "string",
+      "description": "\u30ec\u30fc\u30b9\u30b0\u30ec\u30fc\u30c9 (SG/G1/G2/\u4e00\u822c)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "scheduled",
+        "pre",
+        "final",
+        "finished",
+        "cancelled"
+      ],
+      "default": "scheduled"
+    },
+    "weather": {
+      "type": "string"
+    },
+    "wind_dir": {
+      "type": "string"
+    },
+    "wind_speed": {
+      "type": "number"
+    },
+    "wave_height": {
+      "type": "number"
+    },
+    "water_temp": {
+      "type": "number"
+    },
+    "air_temp": {
+      "type": "number"
+    },
+    "prediction_grade": {
+      "type": "string",
+      "enum": [
+        "S",
+        "A",
+        "B",
+        "C"
+      ],
+      "description": "\u4e88\u60f3\u8a55\u4fa1"
+    },
+    "honmei_boat": {
+      "type": "number",
+      "description": "\u672c\u547d\u8247\u756a\u53f7"
+    },
+    "taiko_boat": {
+      "type": "number",
+      "description": "\u5bfe\u6297\u8247\u756a\u53f7"
+    },
+    "ana_boat": {
+      "type": "number",
+      "description": "\u7a74\u8247\u756a\u53f7"
+    },
+    "keshi_boat": {
+      "type": "number",
+      "description": "\u6d88\u3057\u8247\u756a\u53f7"
+    },
+    "top_trifecta": {
+      "type": "string",
+      "description": "\u4e88\u60f31\u4f4d 3\u9023\u5358 (\u4f8b 1-3-5)"
+    },
+    "top_probability": {
+      "type": "number",
+      "description": "\u4e88\u60f31\u4f4d\u63a8\u5b9a\u78ba\u7387"
+    },
+    "final_judgment": {
+      "type": "string",
+      "enum": [
+        "STRONG_BUY",
+        "BUY",
+        "WATCH",
+        "SKIP",
+        "PENDING"
+      ]
+    },
+    "has_pre": {
+      "type": "boolean",
+      "default": false
+    },
+    "has_final": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "venue",
+    "race_number",
+    "race_date"
+  ]
+}

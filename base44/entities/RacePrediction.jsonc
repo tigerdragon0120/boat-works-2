@@ -1,0 +1,85 @@
+{
+  "name": "RacePrediction",
+  "type": "object",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ]
+    },
+    "prediction_version": {
+      "type": "string",
+      "default": "v1"
+    },
+    "computed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "prediction_grade": {
+      "type": "string",
+      "enum": [
+        "S",
+        "A",
+        "B",
+        "C"
+      ]
+    },
+    "data_confidence": {
+      "type": "number",
+      "description": "\u30c7\u30fc\u30bf\u4fe1\u983c\u5ea6 0-100"
+    },
+    "honmei_boat": {
+      "type": "number"
+    },
+    "taiko_boat": {
+      "type": "number"
+    },
+    "ana_boat": {
+      "type": "number"
+    },
+    "keshi_boat": {
+      "type": "number"
+    },
+    "top_trifecta": {
+      "type": "string"
+    },
+    "top_probability": {
+      "type": "number"
+    },
+    "top_odds": {
+      "type": "number"
+    },
+    "top_expected_value": {
+      "type": "number",
+      "description": "\u671f\u5f85\u5024(%)"
+    },
+    "top_judgment": {
+      "type": "string",
+      "enum": [
+        "STRONG_BUY",
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PENDING",
+        "COMPLETED",
+        "MISSING"
+      ],
+      "default": "COMPLETED"
+    }
+  },
+  "required": [
+    "race_id",
+    "stage",
+    "prediction_version"
+  ]
+}

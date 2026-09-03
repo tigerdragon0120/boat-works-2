@@ -1,0 +1,28 @@
+{
+  "name": "OddsSnapshot",
+  "type": "object",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ]
+    },
+    "odds_map": {
+      "type": "object",
+      "description": "combination -> odds \u306e\u30de\u30c3\u30d7"
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id",
+    "stage"
+  ]
+}

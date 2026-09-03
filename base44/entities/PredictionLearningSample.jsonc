@@ -1,0 +1,39 @@
+{
+  "name": "PredictionLearningSample",
+  "type": "object",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ]
+    },
+    "prediction_version": {
+      "type": "string",
+      "default": "v1"
+    },
+    "snapshot": {
+      "type": "object",
+      "description": "\u4e88\u60f3\u6642\u70b9\u306e\u5168\u7279\u5fb4\u91cf\u30b9\u30ca\u30c3\u30d7\u30b7\u30e7\u30c3\u30c8(6\u8247\u30b9\u30b3\u30a2\u30fb\u30aa\u30c3\u30ba\u30fb\u5c55\u793a\u30fb\u5929\u5019\u30fb\u7bc0\u9593\u30fb120\u901a\u308a\u78ba\u7387\u30fb\u5224\u5b9a)"
+    },
+    "actual_result": {
+      "type": "string",
+      "description": "\u7d50\u679c(\u5f8c\u8ffd\u3044\u66f4\u65b0)"
+    },
+    "payout": {
+      "type": "number"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id",
+    "stage"
+  ]
+}

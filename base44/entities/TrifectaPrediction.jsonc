@@ -1,0 +1,61 @@
+{
+  "name": "TrifectaPrediction",
+  "type": "object",
+  "properties": {
+    "prediction_id": {
+      "type": "string"
+    },
+    "race_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ]
+    },
+    "combination": {
+      "type": "string",
+      "description": "3\u9023\u5358 (\u4f8b 1-3-5)"
+    },
+    "rank": {
+      "type": "number",
+      "description": "\u4e88\u60f3\u9806\u4f4d 1-120"
+    },
+    "probability": {
+      "type": "number",
+      "description": "\u63a8\u5b9a\u7684\u4e2d\u78ba\u7387(%)"
+    },
+    "estimated_odds": {
+      "type": "number",
+      "description": "\u4e88\u60f3\u30aa\u30c3\u30ba"
+    },
+    "actual_odds": {
+      "type": "number",
+      "description": "\u76f4\u524d\u30aa\u30c3\u30ba"
+    },
+    "expected_value": {
+      "type": "number",
+      "description": "\u671f\u5f85\u5024(%)"
+    },
+    "judgment": {
+      "type": "string",
+      "enum": [
+        "STRONG_BUY",
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "basis": {
+      "type": "string",
+      "description": "\u6839\u62e0"
+    }
+  },
+  "required": [
+    "prediction_id",
+    "race_id",
+    "combination"
+  ]
+}
