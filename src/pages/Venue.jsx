@@ -58,7 +58,7 @@ export default function Venue() {
 
         <div className="px-3 sm:px-4 py-3 border-b border-slate-800 flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="font-black text-lg">{race.race_number}R</div>
-          <span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30 text-blue-300 text-[11px] font-bold">{race.grade || "一般"}</span>
+          <span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30 text-blue-300 text-[11px] font-bold">{displayGrade(race.grade)}</span>
           {race.series_day && <span className="text-xs font-bold text-amber-300">{race.is_final_day ? "最終日" : `${race.series_day}日目`}</span>}
           {race.is_womens && <span className="text-pink-400 text-base" title="女子戦">♥</span>}
           <div className="text-xs text-slate-500 max-w-[52vw] sm:max-w-none truncate">{race.event_name || race.race_name || race.race_type || "一般"}</div>
@@ -89,6 +89,7 @@ function RaceList({ races, selected, onSelect }) {
   return <div className="p-3 bg-[#080d13] md:col-span-2 xl:col-span-1"><div className="text-[11px] text-slate-500 mb-2">本日の12レース</div><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-1 gap-1">{races.map((r) => <button key={r.id} onClick={() => onSelect(r.id)} className={cn("w-full grid grid-cols-[36px_1fr_auto] items-center gap-2 px-2 py-1.5 rounded-md text-xs", selected === r.id ? "bg-slate-800" : "hover:bg-slate-900")}><span className="font-bold text-slate-300">{r.race_number}R</span><span className="text-left text-slate-500 truncate">{fmtTime(r.deadline)}</span><span className={cn("font-black", judgmentStyle[r.final_judgment || "PENDING"])}>{r.prediction_grade || "C"} {r.final_judgment === "STRONG_BUY" ? "BUY" : (r.final_judgment || "—")}</span></button>)}</div></div>;
 }
 
+function displayGrade(v) { const g = String(v || "").toUpperCase(); return !g || g === "GENERAL" ? "一般" : g; }
 function fmtTime(v) { return v ? new Date(v).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "--:--"; }
 function StatLine({ label, value }) { return <div className="flex justify-between gap-3"><span className="text-slate-500">{label}</span><span className="text-slate-200 font-semibold">{value}</span></div>; }
 function MiniTag({ children }) { return <span className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-300">{children}</span>; }
