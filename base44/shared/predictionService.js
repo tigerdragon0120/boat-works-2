@@ -132,6 +132,17 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
 }
 
 // 結果upsert + 照合(サーバー側)
+export async function upsertResultOnly(client, race, resultData) {
+  if (!resultData.result_trifecta) return null;
+  const existing = await client.asServiceRole.entities.RaceResult.filter({ race_id: race.id }, "-finished_at", 1);
+  const doc = { race_id: race.id, race_key: race.race_key, result_trifecta: resultData.result_trifecta, finish_order: resultData.finish_order, payout: resultData.payout || 0, is_finished: true, finished_at: new Date().toISOString() };
+  let saved;
+  if (existing && existing[0]) saved = await client.asServiceRole.entities.RaceResult.update(existing[0].id, doc);
+  else saved = await client.asServiceRole.entities.RaceResult.create(doc);
+  await client.asServiceRole.entities.Race.update(race.id, { status: "finished" });
+  return saved;
+}
+
 export async function upsertResultAndVerify(client, race, resultData) {
   if (!resultData.result_trifecta) return null;
   const existing = await client.asServiceRole.entities.RaceResult.filter({ race_id: race.id }, "-finished_at", 1);
@@ -231,8 +242,8 @@ export async function syncAndPredict(client, payload, opts = {}) {
       const complete = entryDocs.filter((e) => e && !e.is_scratched && e.boat_number).length >= 6;
       if (complete) addVenue(raceData.venue_code, "complete");
 
-      // PRE予想(6艇揃っていれば展示データ不使用で生成)
-      if (complete) {
+      // PRE予想(6艇揃っていれば展示データ不使用で生成)。履歴DB取込では予想を新規生成しない。
+      if (complete && !opts.skip_predictions) {
         try {
           await runAndSavePrediction(client, race, entryDocs, settings, "PRE", {});
           summary.pre_generated++; addVenue(raceData.venue_code, "pre");
@@ -240,7 +251,7 @@ export async function syncAndPredict(client, payload, opts = {}) {
       }
 
       // FINAL予想(展示取得済みの場合のみ)
-      if (complete && raceData.exhibition_ready) {
+      if (complete && raceData.exhibition_ready && !opts.skip_predictions) {
         addVenue(raceData.venue_code, "exhibition");
         try {
           await runAndSavePrediction(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {});
@@ -252,7 +263,9 @@ export async function syncAndPredict(client, payload, opts = {}) {
       const res = results.find((r) => (r.race_key || buildRaceKey(r.race_date, r.venue_code, r.race_number)) === raceData.race_key);
       if (res) {
         try {
-          await upsertResultAndVerify(client, race, mapResult(res));
+          const mapped = mapResult(res);
+          if (opts.skip_verification) await upsertResultOnly(client, race, mapped);
+          else await upsertResultAndVerify(client, race, mapped);
           summary.results_saved++; addVenue(raceData.venue_code, "result");
         } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "結果保存失敗: " + e.message }); }
       }
