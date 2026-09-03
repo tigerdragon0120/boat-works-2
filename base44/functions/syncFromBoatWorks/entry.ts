@@ -1,9 +1,10 @@
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
+import { secrets } from "base44:runtime";
 import { syncAndPredict } from "../../shared/predictionService.js";
 
 // BOAT WORKS DATA SYNC
 // mode: "api"  → BOAT WORKS側APIからデータを取得して同期+予想
-//        body.api_base / body.api_key を使用(管理画面のAppSettingsから渡す)
+//        BOAT_WORKS_API_BASE / BOAT_WORKS_API_KEY をサーバー側Secretから使用
 // mode: "ingest" → body.data を直接取り込んで同期+予想(テスト/手動投入用)
 // date: "YYYY-MM-DD"(省略時は今日)
 export default async function (req) {
@@ -20,14 +21,20 @@ export default async function (req) {
 
     let payload;
     if (mode === "api") {
-      const base = body.api_base;
-      const key = body.api_key;
+      const base = secrets.get("BOAT_WORKS_API_BASE");
+      const key = secrets.get("BOAT_WORKS_API_KEY");
       if (!base || !key) {
-        return Response.json({ error: "api_base / api_key が未設定です。管理画面でBOAT WORKS API設定を入力してください。" }, { status: 400 });
+        return Response.json({ error: "BOAT_WORKS_API_BASE / BOAT_WORKS_API_KEY がサーバーSecretに未設定です" }, { status: 500 });
       }
-      const url = `${base.replace(/\/$/, "")}/sync?date=${date}`;
+      const normalized = String(base).replace(/\/$/, "");
+      const url = normalized.includes("exportBoatWorksData")
+        ? `${normalized}${normalized.includes("?") ? "&" : "?"}date=${encodeURIComponent(date)}`
+        : `${normalized}/exportBoatWorksData?date=${encodeURIComponent(date)}`;
       const res = await fetch(url, { headers: { Authorization: `Bearer ${key}` } });
-      if (!res.ok) return Response.json({ error: `BOAT WORKS APIエラー: ${res.status}` }, { status: 502 });
+      if (!res.ok) {
+        const detail = await res.text().catch(() => "");
+        return Response.json({ error: `BOAT WORKS APIエラー: ${res.status}`, detail: detail.slice(0, 500) }, { status: 502 });
+      }
       payload = await res.json();
     } else {
       payload = body.data || {};
