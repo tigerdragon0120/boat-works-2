@@ -1,22 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Clock, RefreshCw, Waves } from "lucide-react";
-import { listTodayRaces } from "@/lib/predictionService";
+import { ArrowLeft, RefreshCw, Waves } from "lucide-react";
+import {
+  listTodayRaces, getRaceEntries, getPrediction, getBoatPredictions, getTrifectaPredictions,
+  generateAndSavePrediction, getSettings,
+} from "@/lib/predictionService";
+import { decideBetPlan } from "@/lib/predictionEngine";
 import { cn } from "@/lib/utils";
-
-const gradeStyle = {
-  S: "border-fuchsia-500 text-fuchsia-300 bg-fuchsia-500/10",
-  A: "border-amber-400 text-amber-300 bg-amber-400/10",
-  B: "border-emerald-500 text-emerald-300 bg-emerald-500/10",
-  C: "border-slate-600 text-slate-400 bg-slate-700/20",
-};
-const judgmentStyle = {
-  STRONG_BUY: "text-fuchsia-300",
-  BUY: "text-rose-400",
-  WATCH: "text-amber-300",
-  SKIP: "text-slate-400",
-  PENDING: "text-slate-500",
-};
+import PredictionPanel from "@/components/race/PredictionPanel";
+import EntryTable from "@/components/race/EntryTable";
 
 export default function Venue() {
   const { code } = useParams();
@@ -24,7 +16,20 @@ export default function Venue() {
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const load = async () => {
+  // 選択中レースの詳細データ
+  const [race, setRace] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const [pre, setPre] = useState(null);
+  const [fin, setFin] = useState(null);
+  const [preBoats, setPreBoats] = useState([]);
+  const [finBoats, setFinBoats] = useState([]);
+  const [preTri, setPreTri] = useState([]);
+  const [finTri, setFinTri] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [view, setView] = useState("FINAL");
+  const [rankMode, setRankMode] = useState("prob");
+
+  const loadList = async () => {
     setLoading(true);
     const all = await listTodayRaces({ includeFinished: true });
     const list = (all || []).filter((r) => String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
@@ -33,64 +38,120 @@ export default function Venue() {
     setSelectedId((prev) => prev && list.some((r) => r.id === prev) ? prev : (list.find((r) => r.status !== "finished") || list[list.length - 1] || list[0])?.id);
     setLoading(false);
   };
-  useEffect(() => { load(); }, [code]);
+  useEffect(() => { loadList(); }, [code]);
 
-  const race = useMemo(() => races.find((r) => r.id === selectedId) || races[0], [races, selectedId]);
+  const raceList = useMemo(() => races, [races]);
   const venueName = races[0]?.venue || races[0]?.venue_name || `場コード ${code}`;
 
+  // 選択中レースの詳細読み込み
+  const loadDetail = async () => {
+    if (!selectedId) return;
+    const r = races.find((x) => x.id === selectedId);
+    setRace(r);
+    if (!r) return;
+    const es = await getRaceEntries(selectedId);
+    setEntries(es || []);
+    const p = await getPrediction(selectedId, "PRE");
+    const f = await getPrediction(selectedId, "FINAL");
+    setPre(p); setFin(f);
+    if (p) {
+      setPreBoats(await getBoatPredictions(p.id));
+      setPreTri(await getTrifectaPredictions(p.id));
+    } else { setPreBoats([]); setPreTri([]); }
+    if (f) {
+      setFinBoats(await getBoatPredictions(f.id));
+      setFinTri(await getTrifectaPredictions(f.id));
+      setView("FINAL");
+    } else if (p) {
+      setView("PRE");
+    }
+  };
+  useEffect(() => { loadDetail(); }, [selectedId, races]);
+
+  const run = async (stage) => {
+    if (!race) return;
+    setBusy(true);
+    try {
+      const settings = await getSettings();
+      await generateAndSavePrediction(race, entries, settings, stage, {});
+      await loadDetail();
+      await loadList();
+    } catch (e) {
+      alert("予想生成に失敗: " + e.message);
+    }
+    setBusy(false);
+  };
+
   if (loading) return <div className="py-24 text-center text-slate-500">読み込み中…</div>;
-  if (!race) return <div className="space-y-4"><Link to="/" className="text-blue-400 text-sm">← レース場一覧へ</Link><div className="py-24 text-center text-slate-500">本日のレースはありません</div></div>;
+  if (!raceList.length) return <div className="space-y-4"><Link to="/" className="text-blue-400 text-sm">← レース場一覧へ</Link><div className="py-24 text-center text-slate-500">本日のレースはありません</div></div>;
+
+  const activePred = view === "FINAL" ? fin : pre;
+  const activeBoats = (view === "FINAL" ? finBoats : preBoats).sort((a, b) => a.boat_number - b.boat_number);
+  const allTri = view === "FINAL" ? finTri : preTri;
+  const probRank = [...allTri].sort((a, b) => a.rank - b.rank).slice(0, 10);
+  const evRank = [...allTri].sort((a, b) => b.expected_value - a.expected_value).slice(0, 10);
+  const betPlan = activePred ? decideBetPlan(allTri, { min_confidence: 40 }, { dataConfidence: activePred.data_confidence, stage: view }) : null;
+  const compareData = preBoats.length && finBoats.length
+    ? [1, 2, 3, 4, 5, 6].map((n) => {
+        const pb = preBoats.find((b) => b.boat_number === n);
+        const fb = finBoats.find((b) => b.boat_number === n);
+        if (!pb || !fb) return null;
+        return { n, pre: pb.total_power, final: fb.total_power, delta: fb.total_power - pb.total_power };
+      }).filter(Boolean)
+    : [];
 
   return (
-    <div className="text-slate-100 space-y-3 sm:space-y-4">
+    <div className="text-slate-100 space-y-3">
+      {/* ヘッダー */}
       <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-        <Link to="/" className="h-10 sm:h-9 px-2.5 sm:px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 flex items-center gap-2 text-xs font-semibold"><ArrowLeft className="w-4 h-4" /><span className="hidden xs:inline">レース場一覧</span></Link>
-        <div className="flex items-center gap-2 min-w-0"><div className="w-8 h-8 rounded-lg bg-blue-600/15 border border-blue-500/30 flex items-center justify-center shrink-0"><Waves className="w-4 h-4 text-blue-400" /></div><div className="min-w-0"><div className="font-black text-lg sm:text-xl truncate">{venueName}</div><div className="text-[9px] sm:text-[10px] tracking-widest text-slate-500">VENUE {String(code).padStart(2, "0")}</div></div></div>
-        <button onClick={load} className="ml-auto h-10 sm:h-9 min-w-10 px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 flex items-center justify-center gap-2 text-xs font-semibold"><RefreshCw className="w-4 h-4" /><span className="hidden sm:inline">更新</span></button>
+        <Link to="/" className="h-9 px-2.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 flex items-center gap-2 text-xs font-semibold">
+          <ArrowLeft className="w-4 h-4" /><span className="hidden xs:inline">レース場一覧</span>
+        </Link>
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-blue-600/15 border border-blue-500/30 flex items-center justify-center shrink-0">
+            <Waves className="w-4 h-4 text-blue-400" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-black text-lg sm:text-xl truncate">{venueName}</div>
+            <div className="text-[9px] sm:text-[10px] tracking-widest text-slate-500">VENUE {String(code).padStart(2, "0")}</div>
+          </div>
+        </div>
+        <button onClick={loadList} className="ml-auto h-9 min-w-9 px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 flex items-center justify-center gap-2 text-xs font-semibold">
+          <RefreshCw className="w-4 h-4" /><span className="hidden sm:inline">更新</span>
+        </button>
       </div>
 
-      <section className="rounded-xl border border-slate-800 bg-[#0b1118] overflow-hidden shadow-xl shadow-black/10">
-        <div className="sticky top-14 sm:top-16 z-20 px-2.5 sm:px-4 py-2.5 sm:py-3 border-b border-slate-800 bg-[#0b1118]/98 backdrop-blur flex gap-1.5 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-          {races.map((r) => (
-            <button key={r.id} onClick={() => setSelectedId(r.id)} className={cn("min-w-[50px] h-11 sm:h-9 rounded-md border text-xs font-bold transition active:scale-95", r.id === race.id ? "bg-amber-400 text-slate-950 border-amber-300" : r.status === "finished" ? "bg-slate-900 text-slate-600 border-slate-800" : "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-500")}>{r.race_number}R</button>
-          ))}
-        </div>
+      {/* 1R-12R タブ */}
+      <div className="flex gap-1.5 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] pb-1">
+        {raceList.map((r) => (
+          <button key={r.id} onClick={() => setSelectedId(r.id)}
+            className={cn("min-w-[48px] h-10 rounded-md border text-xs font-bold transition active:scale-95 flex flex-col items-center justify-center",
+              r.id === selectedId ? "bg-[#f9c836] text-slate-950 border-amber-300" :
+              r.status === "finished" ? "bg-slate-900 text-slate-600 border-slate-800" :
+              "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-500")}>
+            <span>{r.race_number}R</span>
+            {r.prediction_grade && r.id !== selectedId && <span className="text-[8px] text-slate-500">{r.prediction_grade}</span>}
+          </button>
+        ))}
+      </div>
 
-        <div className="px-3 sm:px-4 py-3 border-b border-slate-800 flex flex-wrap items-center gap-2 sm:gap-3">
-          <div className="font-black text-lg">{race.race_number}R</div>
-          <span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30 text-blue-300 text-[11px] font-bold">{displayGrade(race.grade)}</span>
-          {race.series_day && <span className="text-xs font-bold text-amber-300">{race.is_final_day ? "最終日" : `${race.series_day}日目`}</span>}
-          {race.is_womens && <span className="text-pink-400 text-base" title="女子戦">♥</span>}
-          <div className="text-xs text-slate-500 max-w-[52vw] sm:max-w-none truncate">{race.event_name || race.race_name || race.race_type || "一般"}</div>
-          <div className="sm:ml-auto text-xs text-slate-400 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />締切 {fmtTime(race.deadline)}</div>
+      {/* スプリットレイアウト */}
+      {race && (
+        <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
+          <PredictionPanel
+            race={race} pre={pre} fin={fin} view={view} setView={setView}
+            run={run} busy={busy} entries={entries}
+            activePred={activePred} activeBoats={activeBoats} allTri={allTri}
+            betPlan={betPlan} compareData={compareData}
+          />
+          <EntryTable
+            race={race} entries={entries}
+            activePred={activePred} activeBoats={activeBoats} allTri={allTri}
+            probRank={probRank} evRank={evRank}
+            rankMode={rankMode} setRankMode={setRankMode}
+          />
         </div>
-
-        <div className="grid md:grid-cols-[190px_1fr] xl:grid-cols-[200px_1fr_260px]">
-          <PredictionBlock race={race} />
-          <MainPickBlock race={race} />
-          <RaceList races={races} selected={race.id} onSelect={setSelectedId} />
-        </div>
-      </section>
+      )}
     </div>
   );
 }
-
-function PredictionBlock({ race }) {
-  const grade = race.prediction_grade || "C";
-  const judgment = race.final_judgment || "PENDING";
-  return <div className="p-3 sm:p-4 border-b md:border-r xl:border-b-0 border-slate-800"><div className="text-[11px] text-slate-500 mb-2">予想評価</div><div className="flex items-center gap-3"><div className={cn("w-12 h-12 border-2 rounded-lg flex items-center justify-center text-2xl font-black", gradeStyle[grade])}>{grade}</div><div className={cn("font-black text-xl", judgmentStyle[judgment])}>{judgment === "STRONG_BUY" ? "S BUY" : judgment}</div></div><div className="mt-4 space-y-2 text-xs"><StatLine label="的中期待度" value={race.top_probability != null ? `${race.top_probability}%` : "—"} /><StatLine label="推奨配当" value={race.top_odds != null ? `${race.top_odds}倍` : "—"} /><StatLine label="判定段階" value={race.has_final ? "FINAL" : "PRE"} /></div><Link to={`/race/${race.id}`} className="mt-4 h-9 rounded-lg bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center text-xs font-bold">予想詳細を見る</Link></div>;
-}
-
-function MainPickBlock({ race }) {
-  return <div className="p-3 sm:p-4 border-b xl:border-b-0 xl:border-r border-slate-800"><div className="text-[11px] text-slate-500 mb-2">本命・買い目</div><div className="grid grid-cols-3 gap-2"><BoatRole label="本命" n={race.honmei_boat} /><BoatRole label="対抗" n={race.taiko_boat} /><BoatRole label="穴" n={race.ana_boat} /></div><div className="mt-4 text-[11px] text-slate-500">予想1位</div><div className="mt-1 flex items-center gap-3"><div className="font-mono text-3xl font-black tracking-wider text-amber-300">{race.top_trifecta || "—"}</div><div className="text-xs text-slate-400">{race.top_probability != null ? `${race.top_probability}%` : ""}</div></div><div className="mt-4 flex gap-2 flex-wrap"><MiniTag>{race.has_pre ? "PRE済" : "PRE待ち"}</MiniTag><MiniTag>{race.has_final ? "FINAL済" : "FINAL待ち"}</MiniTag>{race.exhibition_ready && <MiniTag>展示取得済</MiniTag>}</div></div>;
-}
-
-function RaceList({ races, selected, onSelect }) {
-  return <div className="p-3 bg-[#080d13] md:col-span-2 xl:col-span-1"><div className="text-[11px] text-slate-500 mb-2">本日の12レース</div><div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-1 gap-1">{races.map((r) => <button key={r.id} onClick={() => onSelect(r.id)} className={cn("w-full grid grid-cols-[36px_1fr_auto] items-center gap-2 px-2 py-1.5 rounded-md text-xs", selected === r.id ? "bg-slate-800" : "hover:bg-slate-900")}><span className="font-bold text-slate-300">{r.race_number}R</span><span className="text-left text-slate-500 truncate">{fmtTime(r.deadline)}</span><span className={cn("font-black", judgmentStyle[r.final_judgment || "PENDING"])}>{r.prediction_grade || "C"} {r.final_judgment === "STRONG_BUY" ? "BUY" : (r.final_judgment || "—")}</span></button>)}</div></div>;
-}
-
-function displayGrade(v) { const g = String(v || "").toUpperCase(); return !g || g === "GENERAL" ? "一般" : g; }
-function fmtTime(v) { return v ? new Date(v).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "--:--"; }
-function StatLine({ label, value }) { return <div className="flex justify-between gap-3"><span className="text-slate-500">{label}</span><span className="text-slate-200 font-semibold">{value}</span></div>; }
-function MiniTag({ children }) { return <span className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-300">{children}</span>; }
-function BoatRole({ label, n }) { const colors = {1:"bg-white text-black",2:"bg-slate-500 text-white",3:"bg-rose-600 text-white",4:"bg-blue-600 text-white",5:"bg-amber-400 text-black",6:"bg-emerald-600 text-white"}; return <div className="rounded-lg border border-slate-700 bg-slate-900 p-2"><div className="text-[10px] text-slate-500">{label}</div><div className="mt-1 flex items-center gap-2"><span className={cn("w-7 h-7 rounded flex items-center justify-center font-black", colors[n] || "bg-slate-700 text-white")}>{n || "-"}</span><span className="text-sm font-bold">{n ? `${n}号艇` : "—"}</span></div></div>; }
