@@ -58,7 +58,10 @@ export default function Venue() {
 
         <div className="px-3 sm:px-4 py-3 border-b border-slate-800 flex flex-wrap items-center gap-2 sm:gap-3">
           <div className="font-black text-lg">{race.race_number}R</div>
-          <div className="text-xs text-slate-500">{race.race_type || race.race_name || "一般"}</div>
+          <span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30 text-blue-300 text-[11px] font-bold">{race.grade || "一般"}</span>
+          {race.series_day && <span className="text-xs font-bold text-amber-300">{race.is_final_day ? "最終日" : `${race.series_day}日目`}</span>}
+          {race.is_womens && <span className="text-pink-400 text-base" title="女子戦">♥</span>}
+          <div className="text-xs text-slate-500 max-w-[52vw] sm:max-w-none truncate">{race.event_name || race.race_name || race.race_type || "一般"}</div>
           <div className="sm:ml-auto text-xs text-slate-400 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" />締切 {fmtTime(race.deadline)}</div>
         </div>
 
