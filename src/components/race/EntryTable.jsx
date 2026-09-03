@@ -82,6 +82,35 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
   );
 }
 
+// フィルタ別の列定義 (boat+name+評価は固定、中央のデータ列を切替)
+const filterCols = {
+  "選手成績": {
+    grid: "28px_1fr_28px_40px_64px_64px_40px",
+    gridSm: "32px_1fr_36px_48px_76px_76px_52px",
+    headers: ["FL", "ST", "全国勝率", "当地勝率"],
+  },
+  "節間成績": {
+    grid: "28px_1fr_42px_42px_1fr_46px_40px",
+    gridSm: "32px_1fr_48px_48px_1fr_56px_52px",
+    headers: ["Pts", "節ST", "今節着順", "勢い"],
+  },
+  "モーター履歴": {
+    grid: "28px_1fr_36px_46px_46px_36px_46px_40px",
+    gridSm: "32px_1fr_40px_54px_54px_40px_54px_52px",
+    headers: ["MNo", "M2連", "M3連", "BNo", "B2連"],
+  },
+  "全国成績": {
+    grid: "28px_1fr_54px_46px_46px_28px_40px_40px",
+    gridSm: "32px_1fr_60px_54px_54px_36px_48px_52px",
+    headers: ["勝率", "2連率", "3連率", "FL", "ST"],
+  },
+  "当地成績": {
+    grid: "28px_1fr_54px_46px_46px_28px_40px_40px",
+    gridSm: "32px_1fr_60px_54px_54px_36px_48px_52px",
+    headers: ["勝率", "2連率", "3連率", "FL", "ST"],
+  },
+};
+
 function EntryGrid({ entries, filter, activeBoats, activePred }) {
   if (!entries.length) return <Empty msg="出走表データがありません" />;
   const roleOf = (n) => {
@@ -92,24 +121,22 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
     return null;
   };
   const bpOf = (n) => activeBoats.find((b) => b.boat_number === n);
+  const cfg = filterCols[filter] || filterCols["選手成績"];
 
   return (
     <div className="text-[11px]">
       {/* ヘッダ行 */}
-      <div className="grid grid-cols-[28px_1fr_32px_44px_70px_70px_44px] sm:grid-cols-[32px_1fr_36px_48px_80px_80px_52px] gap-1 px-2 py-1.5 bg-[#161a22] border-b border-[#3a404c] text-slate-500 font-bold text-[10px] sticky top-0">
+      <div className="grid gap-1 px-2 py-1.5 bg-[#161a22] border-b border-[#3a404c] text-slate-500 font-bold text-[10px] sticky top-0 items-center" style={{ gridTemplateColumns: cfg.grid }}>
         <div className="text-center">枠</div>
         <div>選手名</div>
-        <div className="text-center">FL</div>
-        <div className="text-center">ST</div>
-        <div className="text-center">全国勝率</div>
-        <div className="text-center">当地勝率</div>
+        {cfg.headers.map((h) => <div key={h} className="text-center">{h}</div>)}
         <div className="text-center">評価</div>
       </div>
       {entries.map((e) => {
         const bp = bpOf(e.boat_number);
         const role = roleOf(e.boat_number);
         return (
-          <div key={e.boat_number} className={cn("grid grid-cols-[28px_1fr_32px_44px_70px_70px_44px] sm:grid-cols-[32px_1fr_36px_48px_80px_80px_52px] gap-1 px-2 py-2 border-b border-[#2c3546] items-center", rowTint[e.boat_number])}>
+          <div key={e.boat_number} className={cn("grid gap-1 px-2 py-2 border-b border-[#2c3546] items-center", rowTint[e.boat_number])} style={{ gridTemplateColumns: cfg.grid }}>
             <div className="flex justify-center">
               <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
             </div>
@@ -122,25 +149,9 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
                   {role && <span className={cn("text-[9px] px-1 rounded font-bold shrink-0", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-white" : role === "穴" ? "bg-rose-500 text-white" : "bg-slate-600 text-slate-300")}>{role}</span>}
                 </div>
                 <div className="text-[10px] text-slate-500 truncate">{e.register_number || e.registration_number ? `登録${e.register_number || e.registration_number}` : ""}</div>
-                {/* モーター/ボート */}
-                <div className="text-[10px] text-slate-500 flex gap-2 mt-0.5">
-                  <span>M{e.motor_number || "—"} <span className="text-slate-600">2連{e.motor_f2_rate ?? e.motor_2rate ?? "—"}%</span></span>
-                  <span>B{e.boat_number_id || "—"} <span className="text-slate-600">2連{e.boat_f2_rate ?? e.boat_2rate ?? "—"}%</span></span>
-                </div>
               </div>
             </div>
-            <div className="text-center">
-              {e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}
-            </div>
-            <div className="text-center font-mono text-slate-300">{e.avg_st != null ? e.avg_st.toFixed(2) : "—"}</div>
-            <div className="text-center">
-              <div className="font-bold text-slate-200">{e.national_win_rate != null ? e.national_win_rate.toFixed(2) : "—"}</div>
-              <div className="text-[9px] text-slate-500">2連{e.national_f2_rate ?? e.national_2rate ?? "—"}%</div>
-            </div>
-            <div className="text-center">
-              <div className="font-bold text-slate-200">{e.local_win_rate != null ? e.local_win_rate.toFixed(2) : "—"}</div>
-              <div className="text-[9px] text-slate-500">2連{e.local_f2_rate ?? e.local_2rate ?? "—"}%</div>
-            </div>
+            {renderDataCols(filter, e)}
             <div className="text-center">
               {bp ? <span className="font-black text-[#f9c836] text-sm">{bp.total_power?.toFixed(0) ?? "—"}</span> : <span className="text-slate-600">—</span>}
             </div>
@@ -149,6 +160,53 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
       })}
     </div>
   );
+}
+
+// フィルタ別のデータセル
+function renderDataCols(filter, e) {
+  const num = (v, d = 2) => (v != null ? Number(v).toFixed(d) : "—");
+  const pct = (v) => (v != null ? `${v}%` : "—");
+
+  switch (filter) {
+    case "節間成績":
+      return [
+        <div key="pts" className="text-center font-bold text-slate-200">{e.section_points != null ? e.section_points : "—"}</div>,
+        <div key="sst" className="text-center font-mono text-slate-300">{num(e.section_st)}</div>,
+        <div key="fin" className="text-center text-slate-300 truncate" title={e.section_finishes || ""}>{e.section_finishes || "—"}</div>,
+        <div key="mom" className={cn("text-center font-bold", (e.section_momentum || 0) >= 60 ? "text-emerald-400" : (e.section_momentum || 0) >= 40 ? "text-amber-400" : "text-slate-400")}>{num(e.section_momentum, 0)}</div>,
+      ];
+    case "モーター履歴":
+      return [
+        <div key="mno" className="text-center font-bold text-slate-200">{e.motor_number || "—"}</div>,
+        <div key="m2" className="text-center"><div className="font-bold text-slate-200">{pct(e.motor_f2_rate ?? e.motor_2rate)}</div></div>,
+        <div key="m3" className="text-center text-slate-400">{pct(e.motor_f3_rate ?? e.motor_3rate)}</div>,
+        <div key="bno" className="text-center font-bold text-slate-200">{e.boat_number_id || "—"}</div>,
+        <div key="b2" className="text-center"><div className="font-bold text-slate-200">{pct(e.boat_f2_rate ?? e.boat_2rate)}</div></div>,
+      ];
+    case "全国成績":
+      return [
+        <div key="wr" className="text-center font-bold text-slate-200">{num(e.national_win_rate)}</div>,
+        <div key="f2" className="text-center text-slate-300">{pct(e.national_f2_rate ?? e.national_2rate)}</div>,
+        <div key="f3" className="text-center text-slate-400">{pct(e.national_f3_rate ?? e.national_3rate)}</div>,
+        <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
+        <div key="st" className="text-center font-mono text-slate-300">{num(e.avg_st)}</div>,
+      ];
+    case "当地成績":
+      return [
+        <div key="wr" className="text-center font-bold text-slate-200">{num(e.local_win_rate)}</div>,
+        <div key="f2" className="text-center text-slate-300">{pct(e.local_f2_rate ?? e.local_2rate)}</div>,
+        <div key="f3" className="text-center text-slate-400">{pct(e.local_f3_rate ?? e.local_3rate)}</div>,
+        <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
+        <div key="st" className="text-center font-mono text-slate-300">{num(e.avg_st)}</div>,
+      ];
+    default: // 選手成績
+      return [
+        <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
+        <div key="st" className="text-center font-mono text-slate-300">{num(e.avg_st)}</div>,
+        <div key="nw" className="text-center"><div className="font-bold text-slate-200">{num(e.national_win_rate)}</div><div className="text-[9px] text-slate-500">2連{pct(e.national_f2_rate ?? e.national_2rate)}</div></div>,
+        <div key="lw" className="text-center"><div className="font-bold text-slate-200">{num(e.local_win_rate)}</div><div className="text-[9px] text-slate-500">2連{pct(e.local_f2_rate ?? e.local_2rate)}</div></div>,
+      ];
+  }
 }
 
 function ExhibitionInfo({ entries }) {
