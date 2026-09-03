@@ -270,20 +270,27 @@ export async function getSyncStatus() {
 
 // 今日のレース状況(同期状態表示用): no-data / pre / final / finished を判定
 export async function listTodayRaceStatus() {
-  const races = await base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500);
-  const out = [];
-  for (const r of races || []) {
-    const entries = await base44.entities.RaceEntry.filter({ race_id: r.id }, "boat_number", 6);
-    const complete = (entries || []).filter((e) => !e.is_scratched).length >= 6;
-    out.push({
+  const date = todayStr();
+  const [races, allEntries] = await Promise.all([
+    base44.entities.Race.filter({ race_date: date }, "-deadline", 500),
+    base44.entities.RaceEntry.filter({ race_date: date }, "boat_number", 5000),
+  ]);
+  const entriesByRace = new Map();
+  for (const e of allEntries || []) {
+    if (!entriesByRace.has(e.race_id)) entriesByRace.set(e.race_id, []);
+    entriesByRace.get(e.race_id).push(e);
+  }
+  return (races || []).map((r) => {
+    const entries = entriesByRace.get(r.id) || [];
+    const complete = entries.filter((e) => !e.is_scratched).length >= 6;
+    return {
       id: r.id, race_key: r.race_key, venue: r.venue, venue_code: r.venue_code,
       race_number: r.race_number, race_name: r.race_name, status: r.status,
-      entries: (entries || []).length, complete, exhibition_ready: r.exhibition_ready,
+      entries: entries.length, complete, exhibition_ready: r.exhibition_ready,
       has_pre: r.has_pre, has_final: r.has_final,
-      state: !complete ? "no-data" : (r.has_final ? "final" : (r.has_pre ? "pre" : "pending")),
-    });
-  }
-  return out;
+      state: r.status === "finished" ? "finished" : (!complete ? "no-data" : (r.has_final ? "final" : (r.has_pre ? "pre" : "pending"))),
+    };
+  });
 }
 
 // 検証集計
