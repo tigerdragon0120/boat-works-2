@@ -3,7 +3,7 @@
 import { runPrediction } from "./predictionEngine.js";
 import { buildRaceKey, mapRace, mapEntry, mapResult } from "./raceKey.js";
 
-const VERSION = "v2";
+const VERSION = "v3";
 
 const DEFAULT_SETTINGS = {
   buy_ev_threshold: 150, strong_buy_ev_threshold: 200, watch_ev_threshold: 110,
@@ -188,7 +188,8 @@ export async function syncAndPredict(client, payload, opts = {}) {
   for (const o of odds) {
     const rk = o.race_key || buildRaceKey(o.race_date, o.venue_code, o.race_number);
     if (!oddsByRace[rk]) oddsByRace[rk] = {};
-    if (o.odds_map) Object.assign(oddsByRace[rk], o.odds_map);
+    if (o.all_trifecta_odds && typeof o.all_trifecta_odds === "object") Object.assign(oddsByRace[rk], o.all_trifecta_odds);
+    if (o.odds_map && typeof o.odds_map === "object") Object.assign(oddsByRace[rk], o.odds_map);
     else if (o.combination) oddsByRace[rk][o.combination] = Number(o.odds);
   }
 
