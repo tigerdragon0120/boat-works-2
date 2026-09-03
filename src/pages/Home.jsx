@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Clock, Sun, Moon, Star, Leaf, Heart } from "lucide-react";
 import { listTodayRaces } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
 
@@ -34,8 +34,10 @@ export default function Home() {
 
   return (
     <div className="text-slate-100 space-y-3 sm:space-y-5">
-      <div className="flex items-start sm:items-center justify-between gap-2 sm:gap-3">
-        <div className="min-w-0"><h1 className="text-xl sm:text-2xl font-black tracking-tight">本日のレース場</h1><p className="text-[11px] sm:text-xs text-slate-500 mt-1">レース場を選んで、1R〜12Rの予想へ進みます</p></div>
+      <div className="text-center mb-1">
+        <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">レースLIVE</h1>
+      </div>
+      <div className="flex items-center justify-end mb-2">
         <button onClick={load} className="h-10 sm:h-9 min-w-10 px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 flex items-center justify-center gap-2 text-xs font-semibold shrink-0"><RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} /><span className="hidden sm:inline">更新</span></button>
       </div>
 
@@ -56,7 +58,36 @@ export default function Home() {
         </div>
       </section>
 
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-slate-500 px-1"><span><span className="inline-block w-2 h-2 rounded-full bg-emerald-400 mr-1.5" />本日開催</span><span>開催場 {venueData.size}場</span><span>登録レース {races.length}R</span><span>※開催データはBOAT WORKS同期内容を表示</span></div>
+      {/* 凡例 */}
+      <section className="rounded-xl sm:rounded-2xl border border-slate-800 bg-[#0b1118] p-3 sm:p-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-slate-400">
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded bg-[#282d38] border border-slate-700" />
+            <span>本日開催</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-3 h-3 rounded bg-[#1c212a] border border-slate-800" />
+            <span>本日開催なし</span>
+          </div>
+          <div className="w-px h-4 bg-slate-700 hidden sm:block" />
+          <LegendIcon icon={Clock} label="モーニング" />
+          <LegendIcon icon={Sun} label="サマータイム" />
+          <LegendIcon icon={Moon} label="ナイター" />
+          <LegendIcon icon={Star} label="ミッドナイト" />
+          <LegendIcon icon={Leaf} label="ルーキーシリーズ" />
+          <LegendIcon icon={Heart} label="女子戦" />
+        </div>
+        <div className="mt-2.5 text-[10px] text-slate-600">※当日の開催情報は朝の7:30頃に更新予定です。開催データはBOAT WORKS同期内容を表示。</div>
+      </section>
+    </div>
+  );
+}
+
+function LegendIcon({ icon: Icon, label }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Icon className="w-3.5 h-3.5 text-slate-500" />
+      <span>{label}</span>
     </div>
   );
 }
