@@ -242,8 +242,14 @@ export function computeTrifectas(boatScores, options = {}) {
   const numbers = boats.map((b) => b.boat_number);
 
   // 1着確率
-  const firstWeights = boats.map((b) => Math.pow(b.first_power, 2.2));
-  const firstProb = normalize(firstWeights);
+  // v3: 艇力差をsoftmaxで確率へ変換し、強いレースほど上位買い目へ集中させる。
+  const softmax = (scores, temperature) => {
+    if (!scores.length) return [];
+    const maxScore = Math.max(...scores);
+    const weights = scores.map((s) => Math.exp((s - maxScore) / temperature));
+    return normalize(weights);
+  };
+  const firstProb = softmax(boats.map((b) => b.first_power), 6.0);
   const firstP = {};
   boats.forEach((b, i) => (firstP[b.boat_number] = firstProb[i]));
 
@@ -252,8 +258,7 @@ export function computeTrifectas(boatScores, options = {}) {
     const bi = boats.find((b) => b.boat_number === i);
     // 2着確率
     const secondBoats = boats.filter((b) => b.boat_number !== i);
-    const secondWeights = secondBoats.map((b) => Math.pow(b.second_power, 2.0));
-    const secondProb = normalize(secondWeights);
+    const secondProb = softmax(secondBoats.map((b) => b.second_power), 8.0);
     const secondP = {};
     secondBoats.forEach((b, k) => (secondP[b.boat_number] = secondProb[k]));
 
@@ -261,8 +266,7 @@ export function computeTrifectas(boatScores, options = {}) {
       if (j === i) continue;
       // 3着確率
       const thirdBoats = boats.filter((b) => b.boat_number !== i && b.boat_number !== j);
-      const thirdWeights = thirdBoats.map((b) => Math.pow(b.third_power, 1.8));
-      const thirdProb = normalize(thirdWeights);
+      const thirdProb = softmax(thirdBoats.map((b) => b.third_power), 10.0);
       const thirdP = {};
       thirdBoats.forEach((b, k) => (thirdP[b.boat_number] = thirdProb[k]));
 
