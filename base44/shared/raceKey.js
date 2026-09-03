@@ -97,11 +97,19 @@ export function mapEntry(bw, series = {}) {
     exhibition_st_raw: num(bw.exhibition_st_raw),
     exhibition_course: num(bw.exhibition_course) != null ? num(bw.exhibition_course) : num(bw.entry_course),
     tilt: num(bw.tilt),
-    // 節間情報(SeriesRacerPoint) → エンジンが読む節間項目へマップ
-    section_points: num(series.series_score) != null ? num(series.series_score) : num(bw.section_points),
+    // 節間情報(SeriesRacerPoint) → エンジン/UIが読む節間項目へマップ
+    // 得点率があれば優先。無い一般戦などはシリーズ指数を代替表示する。
+    section_points: num(series.point_rate) != null ? num(series.point_rate)
+      : (num(series.total_points) != null ? num(series.total_points)
+      : (num(series.series_score) != null ? num(series.series_score) : num(bw.section_points))),
     section_momentum: num(series.series_momentum_score) != null ? num(series.series_momentum_score) : num(bw.section_momentum),
-    section_finishes: str(series.finish_history) || str(bw.section_finishes) || str(bw.finish_history) || "",
-    section_st: num(bw.section_st),
+    section_finishes: Array.isArray(series.finish_history) ? series.finish_history.join("-") : (str(series.finish_history) || str(bw.section_finishes) || str(bw.finish_history) || ""),
+    section_st: (() => {
+      const hist = Array.isArray(series.lane_finish_history) ? series.lane_finish_history : [];
+      const sts = hist.map((x) => num(x?.st)).filter((x) => x !== null && x >= 0);
+      if (sts.length) return Math.round((sts.reduce((a, b) => a + b, 0) / sts.length) * 1000) / 1000;
+      return num(bw.section_st);
+    })(),
     series_score: num(series.series_score),
     series_label: str(series.series_label),
     series_momentum_score: num(series.series_momentum_score),
