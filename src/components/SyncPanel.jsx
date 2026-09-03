@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
 import { getSettings, invokeSync, getSyncStatus, listTodayRaceStatus, todayStr } from "@/lib/predictionService";
 import { RefreshCw, Database, CloudDownload, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
