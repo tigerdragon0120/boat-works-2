@@ -1,0 +1,63 @@
+{
+  "name": "RacerVenueDatabase",
+  "type": "object",
+  "properties": {
+    "registration_number": {
+      "type": "string"
+    },
+    "racer_name": {
+      "type": "string"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "venue_name": {
+      "type": "string"
+    },
+    "sample_races": {
+      "type": "number",
+      "default": 0
+    },
+    "win_count": {
+      "type": "number",
+      "default": 0
+    },
+    "top2_count": {
+      "type": "number",
+      "default": 0
+    },
+    "top3_count": {
+      "type": "number",
+      "default": 0
+    },
+    "win_rate": {
+      "type": "number"
+    },
+    "top2_rate": {
+      "type": "number"
+    },
+    "top3_rate": {
+      "type": "number"
+    },
+    "avg_finish": {
+      "type": "number"
+    },
+    "avg_st": {
+      "type": "number"
+    },
+    "recent_finish_history": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "registration_number",
+    "venue_code"
+  ]
+}

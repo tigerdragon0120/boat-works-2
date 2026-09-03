@@ -1,0 +1,40 @@
+{
+  "name": "DatabaseStatus",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "default": "default"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "racers": {
+      "type": "number"
+    },
+    "motors": {
+      "type": "number"
+    },
+    "venues": {
+      "type": "number"
+    },
+    "races": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "running"
+      ]
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
