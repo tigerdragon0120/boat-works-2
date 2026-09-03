@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
+import PlayerPhoto from "@/components/race/PlayerPhoto";
 
 
 const boatColors = {
@@ -112,17 +113,20 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
             <div className="flex justify-center">
               <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-white text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</span>
-                {e.player_class && <span className="text-[9px] px-1 rounded bg-slate-700 text-slate-300 font-bold shrink-0">{e.player_class}</span>}
-                {role && <span className={cn("text-[9px] px-1 rounded font-bold shrink-0", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-white" : role === "穴" ? "bg-rose-500 text-white" : "bg-slate-600 text-slate-300")}>{role}</span>}
-              </div>
-              <div className="text-[10px] text-slate-500 truncate">{e.register_number || e.registration_number ? `登録${e.register_number || e.registration_number}` : ""}</div>
-              {/* モーター/ボート */}
-              <div className="text-[10px] text-slate-500 flex gap-2 mt-0.5">
-                <span>M{e.motor_number || "—"} <span className="text-slate-600">2連{e.motor_f2_rate ?? e.motor_2rate ?? "—"}%</span></span>
-                <span>B{e.boat_number_id || "—"} <span className="text-slate-600">2連{e.boat_f2_rate ?? e.boat_2rate ?? "—"}%</span></span>
+            <div className="min-w-0 flex items-center gap-1.5">
+              <PlayerPhoto src={e.player_photo} alt={e.player_name} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-white text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</span>
+                  {e.player_class && <span className="text-[9px] px-1 rounded bg-slate-700 text-slate-300 font-bold shrink-0">{e.player_class}</span>}
+                  {role && <span className={cn("text-[9px] px-1 rounded font-bold shrink-0", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-white" : role === "穴" ? "bg-rose-500 text-white" : "bg-slate-600 text-slate-300")}>{role}</span>}
+                </div>
+                <div className="text-[10px] text-slate-500 truncate">{e.register_number || e.registration_number ? `登録${e.register_number || e.registration_number}` : ""}</div>
+                {/* モーター/ボート */}
+                <div className="text-[10px] text-slate-500 flex gap-2 mt-0.5">
+                  <span>M{e.motor_number || "—"} <span className="text-slate-600">2連{e.motor_f2_rate ?? e.motor_2rate ?? "—"}%</span></span>
+                  <span>B{e.boat_number_id || "—"} <span className="text-slate-600">2連{e.boat_f2_rate ?? e.boat_2rate ?? "—"}%</span></span>
+                </div>
               </div>
             </div>
             <div className="text-center">
@@ -154,6 +158,7 @@ function ExhibitionInfo({ entries }) {
       {entries.map((e) => (
         <div key={e.boat_number} className="flex items-center gap-2 rounded-lg border border-[#3a404c] bg-[#161a22] p-2">
           <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
+          <PlayerPhoto src={e.player_photo} alt={e.player_name} size="sm" />
           <span className="text-xs font-bold text-slate-200 w-20 truncate">{e.player_name || ""}</span>
           <div className="flex-1 grid grid-cols-4 gap-1 text-center text-[10px]">
             <div><div className="text-slate-500">展示T</div><div className="font-mono font-bold text-slate-200">{e.exhibition_time?.toFixed(2) || "—"}</div></div>
@@ -227,6 +232,7 @@ function BoatEvalView({ entries, activeBoats, activePred }) {
           <div key={bp.boat_number} className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
             <div className="flex items-center gap-2 mb-2">
               <span className={cn("w-7 h-7 rounded flex items-center justify-center font-black text-sm", boatColors[bp.boat_number])}>{bp.boat_number}</span>
+              <PlayerPhoto src={entry?.player_photo} alt={entry?.player_name} />
               <span className="font-bold text-white text-sm flex-1 truncate">{entry?.player_name || ""}</span>
               {role && <span className={cn("text-[10px] px-1.5 rounded font-bold", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-white" : "bg-rose-500 text-white")}>{role}</span>}
               <span className="font-black text-[#f9c836] text-lg">{bp.total_power?.toFixed(0) ?? "—"}</span>

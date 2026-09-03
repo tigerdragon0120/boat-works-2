@@ -1,6 +1,7 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 import { Crown, Shield, Sparkles, TrendingUp, Gauge, Trophy, Zap } from "lucide-react";
+import PlayerPhoto from "@/components/race/PlayerPhoto";
 
 const gradeStyle = {
   S: "border-fuchsia-400 text-fuchsia-300 bg-fuchsia-500/10",
@@ -84,9 +85,9 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
 
             {/* 本命/対抗/穴 */}
             <div className="grid grid-cols-3 gap-2">
-              <RoleBox label="本命" n={activePred?.honmei_boat} icon={Crown} cls="border-amber-400/40" />
-              <RoleBox label="対抗" n={activePred?.taiko_boat} icon={Shield} cls="border-blue-400/40" />
-              <RoleBox label="穴" n={activePred?.ana_boat} icon={Sparkles} cls="border-rose-400/40" />
+              <RoleBox label="本命" n={activePred?.honmei_boat} icon={Crown} cls="border-amber-400/40" photo={entries.find((e) => e.boat_number === activePred?.honmei_boat)?.player_photo} name={entries.find((e) => e.boat_number === activePred?.honmei_boat)?.player_name} />
+              <RoleBox label="対抗" n={activePred?.taiko_boat} icon={Shield} cls="border-blue-400/40" photo={entries.find((e) => e.boat_number === activePred?.taiko_boat)?.player_photo} name={entries.find((e) => e.boat_number === activePred?.taiko_boat)?.player_name} />
+              <RoleBox label="穴" n={activePred?.ana_boat} icon={Sparkles} cls="border-rose-400/40" photo={entries.find((e) => e.boat_number === activePred?.ana_boat)?.player_photo} name={entries.find((e) => e.boat_number === activePred?.ana_boat)?.player_name} />
             </div>
 
             {/* 予想1位 3連単 */}
@@ -153,7 +154,8 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
                     return (
                       <div key={bp.boat_number} className="flex items-center gap-2">
                         <span className={cn("w-5 h-5 rounded text-[10px] font-bold flex items-center justify-center shrink-0", boatColors[bp.boat_number])}>{bp.boat_number}</span>
-                        <span className="text-[11px] text-slate-400 w-16 truncate shrink-0">{entry?.player_name || ""}</span>
+                        <PlayerPhoto src={entry?.player_photo} alt={entry?.player_name} size="xs" />
+                        <span className="text-[11px] text-slate-400 w-14 truncate shrink-0">{entry?.player_name || ""}</span>
                         <div className="flex-1 h-2 rounded-full bg-[#2c3546] overflow-hidden">
                           <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400" style={{ width: `${pct}%` }} />
                         </div>
@@ -196,7 +198,7 @@ function TabBtn({ active, onClick, label }) {
   );
 }
 
-function RoleBox({ label, n, icon: Icon, cls }) {
+function RoleBox({ label, n, icon: Icon, cls, photo, name }) {
   const boatColors = {
     1: "bg-white text-black", 2: "bg-slate-500 text-white", 3: "bg-rose-600 text-white",
     4: "bg-blue-600 text-white", 5: "bg-amber-400 text-black", 6: "bg-emerald-600 text-white",
@@ -206,7 +208,11 @@ function RoleBox({ label, n, icon: Icon, cls }) {
       <div className="flex items-center justify-center gap-1 text-[10px] text-slate-400 mb-1">
         <Icon className="w-3 h-3" /> {label}
       </div>
-      <div className={cn("w-8 h-8 mx-auto rounded flex items-center justify-center font-black text-sm", n ? boatColors[n] : "bg-slate-700 text-slate-500")}>{n || "—"}</div>
+      <div className="flex items-center justify-center gap-1.5 mb-1">
+        <PlayerPhoto src={photo} alt={name} size="xs" />
+        <div className={cn("w-7 h-7 rounded flex items-center justify-center font-black text-sm", n ? boatColors[n] : "bg-slate-700 text-slate-500")}>{n || "—"}</div>
+      </div>
+      {name && <div className="text-[10px] text-slate-400 truncate">{name}</div>}
     </div>
   );
 }
