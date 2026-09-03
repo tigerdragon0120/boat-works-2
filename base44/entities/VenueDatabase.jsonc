@@ -1,0 +1,59 @@
+{
+  "name": "VenueDatabase",
+  "type": "object",
+  "properties": {
+    "venue_code": {
+      "type": "string"
+    },
+    "venue_name": {
+      "type": "string"
+    },
+    "sample_races": {
+      "type": "number",
+      "default": 0
+    },
+    "boat1_win_rate": {
+      "type": "number"
+    },
+    "boat2_win_rate": {
+      "type": "number"
+    },
+    "boat3_win_rate": {
+      "type": "number"
+    },
+    "boat4_win_rate": {
+      "type": "number"
+    },
+    "boat5_win_rate": {
+      "type": "number"
+    },
+    "boat6_win_rate": {
+      "type": "number"
+    },
+    "avg_payout": {
+      "type": "number"
+    },
+    "high_payout_rate": {
+      "type": "number"
+    },
+    "pre_hit_rate": {
+      "type": "number"
+    },
+    "final_hit_rate": {
+      "type": "number"
+    },
+    "buy_hit_rate": {
+      "type": "number"
+    },
+    "recovery_rate": {
+      "type": "number"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "venue_code"
+  ]
+}

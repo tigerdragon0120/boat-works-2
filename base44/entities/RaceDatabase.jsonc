@@ -1,0 +1,83 @@
+{
+  "name": "RaceDatabase",
+  "type": "object",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "venue_name": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "grade": {
+      "type": "string"
+    },
+    "race_type": {
+      "type": "string"
+    },
+    "series_day": {
+      "type": "number"
+    },
+    "weather": {
+      "type": "string"
+    },
+    "wind_speed": {
+      "type": "number"
+    },
+    "wave_height": {
+      "type": "number"
+    },
+    "result_trifecta": {
+      "type": "string"
+    },
+    "payout": {
+      "type": "number"
+    },
+    "winner_boat": {
+      "type": "number"
+    },
+    "pre_prediction": {
+      "type": "string"
+    },
+    "final_prediction": {
+      "type": "string"
+    },
+    "pre_hit": {
+      "type": "boolean"
+    },
+    "final_hit": {
+      "type": "boolean"
+    },
+    "recommended_hit": {
+      "type": "boolean"
+    },
+    "recovery_rate": {
+      "type": "number"
+    },
+    "prediction_grade": {
+      "type": "string"
+    },
+    "final_judgment": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id"
+  ]
+}

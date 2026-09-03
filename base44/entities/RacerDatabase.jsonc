@@ -1,0 +1,91 @@
+{
+  "name": "RacerDatabase",
+  "type": "object",
+  "properties": {
+    "registration_number": {
+      "type": "string",
+      "description": "\u9078\u624b\u767b\u9332\u756a\u53f7"
+    },
+    "racer_name": {
+      "type": "string"
+    },
+    "grade_class": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "age": {
+      "type": "number"
+    },
+    "photo_url": {
+      "type": "string"
+    },
+    "latest_race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "latest_venue_code": {
+      "type": "string"
+    },
+    "national_win_rate": {
+      "type": "number"
+    },
+    "national_2rate": {
+      "type": "number"
+    },
+    "national_3rate": {
+      "type": "number"
+    },
+    "avg_st": {
+      "type": "number"
+    },
+    "f_count": {
+      "type": "number"
+    },
+    "l_count": {
+      "type": "number"
+    },
+    "sample_races": {
+      "type": "number",
+      "default": 0
+    },
+    "win_count": {
+      "type": "number",
+      "default": 0
+    },
+    "top2_count": {
+      "type": "number",
+      "default": 0
+    },
+    "top3_count": {
+      "type": "number",
+      "default": 0
+    },
+    "win_rate_actual": {
+      "type": "number"
+    },
+    "top2_rate_actual": {
+      "type": "number"
+    },
+    "top3_rate_actual": {
+      "type": "number"
+    },
+    "avg_finish": {
+      "type": "number"
+    },
+    "recent_finish_history": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "registration_number"
+  ]
+}

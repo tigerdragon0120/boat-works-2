@@ -1,0 +1,60 @@
+{
+  "name": "MotorDatabase",
+  "type": "object",
+  "properties": {
+    "venue_code": {
+      "type": "string"
+    },
+    "motor_number": {
+      "type": "number"
+    },
+    "sample_races": {
+      "type": "number",
+      "default": 0
+    },
+    "win_count": {
+      "type": "number",
+      "default": 0
+    },
+    "top2_count": {
+      "type": "number",
+      "default": 0
+    },
+    "top3_count": {
+      "type": "number",
+      "default": 0
+    },
+    "win_rate": {
+      "type": "number"
+    },
+    "top2_rate": {
+      "type": "number"
+    },
+    "top3_rate": {
+      "type": "number"
+    },
+    "avg_finish": {
+      "type": "number"
+    },
+    "latest_2rate": {
+      "type": "number"
+    },
+    "latest_3rate": {
+      "type": "number"
+    },
+    "recent_finish_history": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "venue_code",
+    "motor_number"
+  ]
+}
