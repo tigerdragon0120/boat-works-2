@@ -1,0 +1,37 @@
+{
+  "name": "ProcessLock",
+  "type": "object",
+  "properties": {
+    "lock_key": {
+      "type": "string",
+      "description": "\u6392\u4ed6\u5236\u5fa1\u30ad\u30fc (\u4f8b: sync_2026-09-03_02)"
+    },
+    "owner": {
+      "type": "string",
+      "description": "\u53d6\u5f97\u5143 (\u95a2\u6570\u540d+\u30e9\u30f3\u30c0\u30e0ID)"
+    },
+    "acquired_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u30ea\u30fc\u30b9\u6709\u52b9\u671f\u9650\u3002\u8d85\u904e\u5f8c\u306f\u4ed6\u30ef\u30fc\u30ab\u30fc\u304c\u5f37\u596a\u53ef\u80fd"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "released",
+        "expired"
+      ],
+      "default": "active"
+    }
+  },
+  "required": [
+    "lock_key",
+    "owner",
+    "expires_at"
+  ]
+}
