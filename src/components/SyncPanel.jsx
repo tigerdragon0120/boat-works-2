@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { getSettings, invokeSync, getSyncStatus, listTodayRaceStatus, todayStr } from "@/lib/predictionService";
-import { RefreshCw, Database, CloudDownload, AlertTriangle, CheckCircle2, XCircle, Save } from "lucide-react";
+import { RefreshCw, Database, CloudDownload, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const stateInfo = {
@@ -32,7 +32,7 @@ export default function SyncPanel() {
   const runApi = async () => {
     setBusy(true); setMsg(""); setErr("");
     try {
-      const res = await invokeSync("api", { api_base: settings.boatworks_api_base, api_key: settings.boatworks_api_key, date: todayStr() });
+      const res = await invokeSync("api", { date: todayStr() });
       const sum = res.data?.summary || res.summary || {};
       setMsg(`同期完了: ${sum.races_upserted || 0}レース / PRE ${sum.pre_generated || 0} / FINAL ${sum.final_generated || 0}`);
       if (sum.errors?.length) setErr(`${sum.errors.length}件のエラー`);
@@ -52,11 +52,6 @@ export default function SyncPanel() {
       await load();
     } catch (e) { setErr(e.message || JSON.stringify(e)); }
     setBusy(false);
-  };
-
-  const saveConfig = async () => {
-    await base44.entities.AppSettings.update(settings.id, { boatworks_api_base: settings.boatworks_api_base, boatworks_api_key: settings.boatworks_api_key });
-    setMsg("API設定を保存しました"); setTimeout(() => setMsg(""), 1500);
   };
 
   if (!settings) return <div className="text-center py-10 text-slate-400 text-sm">読み込み中…</div>;
@@ -96,27 +91,16 @@ export default function SyncPanel() {
         </div>
       </div>
 
-      {/* API設定 + 同期実行 */}
+      {/* API同期実行 */}
       <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
         <div className="flex items-center gap-2">
           <CloudDownload className="w-4 h-4 text-sky-600" />
-          <h3 className="font-bold text-sm text-slate-900">BOAT WORKS API設定</h3>
+          <h3 className="font-bold text-sm text-slate-900">BOAT WORKS 実データ同期</h3>
         </div>
-        <p className="text-[11px] text-slate-500">BOAT WORKS側のDashboard→APIで発行した読み取り用エンドポイントのベースURLと認証キーを入力します。データは読み取り専用で取得し、BOAT WORKS側のデータを改変することはありません。</p>
-        <Field label="API ベースURL">
-          <input value={settings.boatworks_api_base || ""} onChange={(e) => setSettings({ ...settings, boatworks_api_base: e.target.value })} placeholder="https://..." className="w-full h-9 px-2 rounded-lg border border-slate-200 text-sm" />
-        </Field>
-        <Field label="API キー">
-          <input type="password" value={settings.boatworks_api_key || ""} onChange={(e) => setSettings({ ...settings, boatworks_api_key: e.target.value })} placeholder="読み取り用トークン" className="w-full h-9 px-2 rounded-lg border border-slate-200 text-sm" />
-        </Field>
-        <div className="flex gap-2">
-          <button onClick={saveConfig} className="h-9 px-3 rounded-lg bg-slate-100 text-slate-700 text-sm font-semibold flex items-center gap-1.5 hover:bg-slate-200">
-            <Save className="w-4 h-4" /> 設定保存
-          </button>
-          <button onClick={runApi} disabled={busy || !settings.boatworks_api_base || !settings.boatworks_api_key} className="flex-1 h-9 rounded-lg bg-sky-600 text-white text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-sky-700 disabled:opacity-50">
-            <RefreshCw className={cn("w-4 h-4", busy && "animate-spin")} /> API同期実行(今日)
-          </button>
-        </div>
+        <p className="text-[11px] text-slate-500">接続先URLと認証キーはフロント画面に保存せず、サーバー側Secretだけで管理します。BOAT WORKS側は読み取り専用です。</p>
+        <button onClick={runApi} disabled={busy} className="w-full h-9 rounded-lg bg-sky-600 text-white text-sm font-semibold flex items-center justify-center gap-1.5 hover:bg-sky-700 disabled:opacity-50">
+          <RefreshCw className={cn("w-4 h-4", busy && "animate-spin")} /> BOAT WORKSから今日の実データを同期
+        </button>
       </div>
 
       {/* JSON取り込み(テスト/手動) */}
