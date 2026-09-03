@@ -3,7 +3,7 @@
 import { runPrediction } from "./predictionEngine.js";
 import { buildRaceKey, mapRace, mapEntry, mapResult } from "./raceKey.js";
 
-const VERSION = "v1";
+const VERSION = "v2";
 
 const DEFAULT_SETTINGS = {
   buy_ev_threshold: 150, strong_buy_ev_threshold: 200, watch_ev_threshold: 110,
