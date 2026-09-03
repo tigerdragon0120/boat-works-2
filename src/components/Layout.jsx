@@ -1,11 +1,12 @@
 import React from "react";
 import { Link, useLocation, Outlet } from "react-router-dom";
-import { Waves, Home, BarChart3, Settings, Search, Ticket, CalendarDays, Newspaper, Video } from "lucide-react";
+import { Waves, Home, BarChart3, Settings, Search, Ticket, CalendarDays, Newspaper, Video, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { to: "/", label: "レース一覧", icon: Home },
   { to: "/verify", label: "検証", icon: BarChart3 },
+  { to: "/database", label: "DB", icon: Database },
   { to: "/admin", label: "管理", icon: Settings },
 ];
 
