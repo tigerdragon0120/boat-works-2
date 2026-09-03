@@ -177,11 +177,14 @@ export async function syncAndPredict(client, payload, opts = {}) {
   const results = payload.results || [];
   const odds = payload.odds || [];
 
-  // seriesをrace_key+boat_numberで索引
+  // seriesはBOAT WORKS側で race_key + registration_number 単位で出力される。
+  // 旧実装は存在しない boat_number で索引していたため、節間成績が全件マージされていなかった。
   const seriesMap = {};
   for (const s of series) {
-    const key = (s.race_key || buildRaceKey(s.race_date, s.venue_code, s.race_number)) + "_" + s.boat_number;
-    seriesMap[key] = s;
+    const rk = s.race_key || buildRaceKey(s.race_date, s.venue_code, s.race_number);
+    const reg = String(s.registration_number || s.register_number || "").trim();
+    if (!rk || !reg) continue;
+    seriesMap[`${rk}_${reg}`] = s;
   }
   // oddsをrace_keyで索引
   const oddsByRace = {};
@@ -218,7 +221,8 @@ export async function syncAndPredict(client, payload, opts = {}) {
       });
       const entryDocs = [];
       for (const bwEntry of raceEntries) {
-        const skey = raceData.race_key + "_" + bwEntry.boat_number;
+        const reg = String(bwEntry.registration_number || bwEntry.register_number || "").trim();
+        const skey = `${raceData.race_key}_${reg}`;
         const entryData = { ...mapEntry(bwEntry, seriesMap[skey] || {}), race_id: race.id };
         const saved = await upsertEntry(client, entryData);
         entryDocs.push(saved);
