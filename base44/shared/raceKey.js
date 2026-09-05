@@ -71,14 +71,18 @@ export function mapRace(bw) {
 }
 
 // BOAT WORKS RaceEntry + SeriesRacerPoint → BOAT WORKS 2 RaceEntry
-export function mapEntry(bw, series = {}) {
-  const race_date = str(bw.race_date);
-  const venue_code = str(bw.venue_code);
-  const race_number = num(bw.race_number);
-  const race_key = bw.race_key || buildRaceKey(race_date, venue_code, race_number);
+  const race_key = bw.race_key || buildRaceKey(str(bw.race_date), str(bw.venue_code), num(bw.race_number));
+  // entry個別に race_date/venue_code/race_number が無い場合、race_keyから逆算して補う。
+  const fallback = parseRaceKey(race_key);
+  const race_date = str(bw.race_date) ?? fallback.race_date;
+  const venue_code = str(bw.venue_code) ?? fallback.venue_code;
+  const race_number = num(bw.race_number) ?? fallback.race_number;
   const is_scratched = !!bw.is_scratched || !!bw.scratched;
   return {
     race_key,
+    race_date,
+    venue_code,
+    race_number,
     boat_number: num(bw.boat_number),
     player_name: str(bw.racer_name) || str(bw.player_name) || "",
     racer_name: str(bw.racer_name) || str(bw.player_name) || "",
