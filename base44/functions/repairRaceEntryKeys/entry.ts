@@ -11,14 +11,7 @@ function parseRaceKey(key) {
   return { race_date: raceDate, venue_code: String(venueCode).padStart(2, "0"), race_number: raceNumber };
 }
 
-async function mapBatches(items, size, worker) {
-  let done = 0;
-  for (let i = 0; i < items.length; i += size) {
-    const batch = items.slice(i, i + size);
-    await Promise.all(batch.map(async (x) => { await worker(x); done++; }));
-  }
-  return done;
-}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export default async function(req) {
   try {
@@ -30,41 +23,49 @@ export default async function(req) {
     const sr = base44.asServiceRole.entities;
     const body = await req.json().catch(() => ({}));
     const targetDate = body.race_date || null;
-    const maxRows = Math.min(Number(body.max_rows || 5000), 10000);
-    const pageSize = 500;
-    const rows = [];
-    for (let skip = 0; skip < maxRows; skip += pageSize) {
-      const batch = await sr.RaceEntry.filter(targetDate ? { race_date: targetDate } : {}, "-updated_date", pageSize, skip).catch(() => []);
-      rows.push(...batch);
-      if (batch.length < pageSize) break;
+    const maxGroups = Math.min(Number(body.max_groups || 24), 60);
+
+    // NULLの行だけ読む。race_key単位でupdateManyするため、6艇を1回の書込みで直せる。
+    const query = targetDate
+      ? { race_key: { $regex: `^${targetDate}_` }, $or: [{ race_date: null }, { venue_code: null }, { race_number: null }] }
+      : { $or: [{ race_date: null }, { venue_code: null }, { race_number: null }] };
+    const rows = await sr.RaceEntry.filter(query, "-updated_date", 500).catch(() => []);
+
+    const grouped = new Map();
+    for (const e of rows) {
+      const parsed = parseRaceKey(e.race_key);
+      if (!parsed) continue;
+      if (!grouped.has(e.race_key)) grouped.set(e.race_key, parsed);
+      if (grouped.size >= maxGroups) break;
     }
 
-    const raceCache = new Map();
-    let repaired = 0, relinked = 0, invalid = 0, alreadyOk = 0;
-    await mapBatches(rows, 20, async (e) => {
-      const parsed = parseRaceKey(e.race_key);
-      if (!parsed) { invalid++; return; }
-      const needsFields = !e.race_date || !e.venue_code || e.race_number == null;
-      let canonicalRace = raceCache.get(e.race_key);
-      if (canonicalRace === undefined) {
-        const rs = await sr.Race.filter({ race_key: e.race_key }, "-updated_date", 1).catch(() => []);
-        canonicalRace = rs?.[0] || null;
-        raceCache.set(e.race_key, canonicalRace);
+    let groupsRepaired = 0;
+    let rowsRepaired = 0;
+    const errors = [];
+    for (const [raceKey, parsed] of grouped.entries()) {
+      try {
+        const res = await sr.RaceEntry.updateMany(
+          { race_key: raceKey },
+          { $set: { race_date: parsed.race_date, venue_code: parsed.venue_code, race_number: parsed.race_number } }
+        );
+        groupsRepaired++;
+        rowsRepaired += Number(res?.modified_count || res?.modifiedCount || res?.matched_count || 0);
+      } catch (e) {
+        errors.push({ race_key: raceKey, message: e?.message || String(e) });
+        if (/rate limit/i.test(e?.message || "")) break;
       }
-      const needsRelink = canonicalRace && e.race_id !== canonicalRace.id;
-      if (!needsFields && !needsRelink) { alreadyOk++; return; }
-      const patch = {
-        race_date: parsed.race_date,
-        venue_code: parsed.venue_code,
-        race_number: parsed.race_number,
-      };
-      if (canonicalRace) patch.race_id = canonicalRace.id;
-      await sr.RaceEntry.update(e.id, patch);
-      if (needsFields) repaired++;
-      if (needsRelink) relinked++;
-    });
+      await sleep(140);
+    }
 
-    return Response.json({ status: "success", scanned: rows.length, repaired, relinked, already_ok: alreadyOk, invalid, target_date: targetDate });
+    return Response.json({
+      status: errors.length ? "partial" : "success",
+      scanned_missing_rows: rows.length,
+      groups_repaired: groupsRepaired,
+      rows_repaired: rowsRepaired,
+      remaining_sample: Math.max(0, rows.length - groupsRepaired * 6),
+      target_date: targetDate,
+      errors,
+    });
   } catch (e) {
     return Response.json({ status: "error", message: e?.message || String(e) }, { status: 500 });
   }
