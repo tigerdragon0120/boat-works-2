@@ -23,10 +23,33 @@ function mergeProtect(existing, incoming) {
   return out;
 }
 
-export async function getSettings(client) {
-  const list = await client.asServiceRole.entities.AppSettings.list();
-  if (list && list.length) return list[0];
-  return await client.asServiceRole.entities.AppSettings.create({ name: "default", ...DEFAULT_SETTINGS });
+export async function upsertEntry(client, entryData) {
+  const sr = client.asServiceRole.entities;
+  const existing = await sr.RaceEntry.filter(
+    { race_key: entryData.race_key, boat_number: entryData.boat_number }, "boat_number", 10
+  );
+  if (existing && existing.length === 1) {
+    const merged = mergeProtect(existing[0], entryData);
+    // race_idは常に今回のupsertRaceが解決した正規Race(entryData.race_id)に合わせる。
+    // 以前は existing[0].race_id を強制的に維持していたため、重複Raceの整理で
+    // 正規Raceが変わった際に出走表だけ古いRace IDを指したまま取り残され、
+    // 画面側の「6艇揃い」判定が常に0件になる不整合が起きていた。
+    return await sr.RaceEntry.update(existing[0].id, merged);
+  }
+  if (existing && existing.length > 1) {
+    // 既に重複→整理してからupsert
+    await dedupEntriesForRace(client, existing[0].race_id, entryData.race_key);
+    const re = await sr.RaceEntry.filter({ race_key: entryData.race_key, boat_number: entryData.boat_number }, "boat_number", 1);
+    if (re && re[0]) {
+      const merged = mergeProtect(re[0], entryData);
+      // 同上: 正規Race(entryData.race_id)に合わせる。古いrace_idを維持しない。
+      return await sr.RaceEntry.update(re[0].id, merged);
+    }
+  }
+  const created = await sr.RaceEntry.create(entryData);
+  // 作成後デデアップ安全網
+  await dedupEntriesForRace(client, entryData.race_id, entryData.race_key);
+  return created;
 }
 
 // Raceの完全度スコア(重複整理時に保持候補を決める)
