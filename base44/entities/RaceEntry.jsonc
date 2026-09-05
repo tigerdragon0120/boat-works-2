@@ -1,14 +1,28 @@
 {
+{
   "name": "RaceEntry",
   "type": "object",
   "properties": {
     "race_id": {
       "type": "string",
-      "description": "\u5bfe\u8c61Race\u306eid"
+      "description": "対象Raceのid"
     },
     "race_key": {
       "type": "string",
-      "description": "\u5171\u901a\u30ad\u30fc(\u89aaRace\u3068\u540c\u3058)"
+      "description": "共通キー(親Raceと同じ)"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date",
+      "description": "レース開催日(画面側の日付フィルターで使用)"
+    },
+    "venue_code": {
+      "type": "string",
+      "description": "競艇場コード"
+    },
+    "race_number": {
+      "type": "number",
+      "description": "レース番号"
     },
     "boat_number": {
       "type": "number",
