@@ -142,7 +142,9 @@ export async function upsertEntry(client, entryData) {
   );
   if (existing && existing.length === 1) {
     const merged = mergeProtect(existing[0], entryData);
-    merged.race_id = existing[0].race_id;
+    // 親Raceは今回race_keyから解決した正規Raceに必ず合わせる。
+    // 過去の重複Race整理後も古いrace_idを保持しない。
+    merged.race_id = entryData.race_id;
     return await sr.RaceEntry.update(existing[0].id, merged);
   }
   if (existing && existing.length > 1) {
@@ -151,7 +153,7 @@ export async function upsertEntry(client, entryData) {
     const re = await sr.RaceEntry.filter({ race_key: entryData.race_key, boat_number: entryData.boat_number }, "boat_number", 1);
     if (re && re[0]) {
       const merged = mergeProtect(re[0], entryData);
-      merged.race_id = re[0].race_id;
+      merged.race_id = entryData.race_id;
       return await sr.RaceEntry.update(re[0].id, merged);
     }
   }
