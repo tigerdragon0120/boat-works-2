@@ -4,8 +4,14 @@ import { runPrediction } from "@/lib/predictionEngine";
 
 const VERSION = "v3";
 
-// 今日の日付(YYYY-MM-DD)
-export const todayStr = () => new Date().toISOString().slice(0, 10);
+// 今日の日付(YYYY-MM-DD) — BOAT WORKSは日本時間基準。
+// UTCのtoISOString()だと日本時間0:00〜8:59に前日扱いになるため、必ずAsia/Tokyoで算出する。
+export const todayStr = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
 
 // AppSettings取得(なければデフォルト)
 export async function getSettings() {
