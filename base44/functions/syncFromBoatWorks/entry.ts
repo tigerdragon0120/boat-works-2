@@ -67,8 +67,14 @@ export default async function (req) {
       return Response.json({ error: "データ形式不正: { races, entries, series, results, odds } が必要です" }, { status: 400 });
     }
 
-    const summary = await syncAndPredict(base44, payload, { mode, venue_code: venueCode });
-    return Response.json({ ok: true, date, mode, venue_code: venueCode, summary });
+     const summary = await syncAndPredict(base44, payload, { mode, venue_code: venueCode });
+    return Response.json({
+      ok: true, date, mode, venue_code: venueCode, summary,
+      // 一時デバッグ: 受信した生entryと、送信元raceの中身をそのまま1件返す。
+      // race_dateが実際に来ているかをDB画面を介さず直接確認するため。
+      debug_sample_entry: Array.isArray(payload.entries) ? payload.entries[0] || null : null,
+      debug_sample_race: Array.isArray(payload.races) ? payload.races[0] || null : null,
+    });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
