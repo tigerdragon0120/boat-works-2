@@ -2,6 +2,15 @@ import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
 import { secrets } from "base44:runtime";
 import { syncAndPredict } from "../../shared/predictionService.js";
 
+// BUILD_TAG: race_date_fallback_fix_20260905_2 — 共有ファイル(raceKey.js/predictionService.js)の
+// 変更を確実に再デプロイさせるための目印。中身の意味はない。
+
+// BOAT WORKS DATA SYNC
+// mode: "api"  → BOAT WORKS側APIからデータを取得して同期+予想
+//        BOAT_WORKS_API_BASE / BOAT_WORKS_API_KEY をサーバー側Secretから使用
+// mode: "ingest" → body.data を直接取り込んで同期+予想(テスト/手動投入用)
+// date: "YYYY-MM-DD"(省略時は今日)
+export default async function (req) {
 // BOAT WORKS DATA SYNC
 // mode: "api"  → BOAT WORKS側APIからデータを取得して同期+予想
 //        BOAT_WORKS_API_BASE / BOAT_WORKS_API_KEY をサーバー側Secretから使用
