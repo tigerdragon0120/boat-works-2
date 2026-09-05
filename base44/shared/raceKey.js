@@ -1,16 +1,27 @@
 // 共通race_key生成 + BOAT WORKS→BOAT WORKS 2 フィールドマッピング
 
-export function mapEntry(bw, series = {}) {
-  const race_date = str(bw.race_date);
-  const venue_code = str(bw.venue_code);
-  const race_number = num(bw.race_number);
-  const race_key = bw.race_key || buildRaceKey(race_date, venue_code, race_number);
-  const is_scratched = !!bw.is_scratched || !!bw.scratched;
+export function buildRaceKey(race_date, venue_code, race_number) {
+  const d = String(race_date || "").slice(0, 10);
+  const v = String(venue_code ?? "");
+  const n = String(race_number ?? "").padStart(2, "0");
+  return `${d}_${v}_${n}`;
+}
+
+// race_key("2026-09-05_13_12")から race_date/venue_code/race_number を逆算する。
+// 同期元のentry個別データにこれらが欠けている場合の保険。
+export function parseRaceKey(key) {
+  const parts = String(key || "").split("_");
+  if (parts.length < 3) return { race_date: null, venue_code: null, race_number: null };
+  const race_number = parts.pop();
+  const venue_code = parts.pop();
+  const race_date = parts.join("_"); // 万一date部に_が含まれても安全なように残りを結合
   return {
-    race_key,
-    race_date,
-    venue_code,
-    race_number,
+    race_date: race_date || null,
+    venue_code: venue_code || null,
+    race_number: race_number ? Number(race_number) : null,
+  };
+}
+
     boat_number: num(bw.boat_number),
     player_name: str(bw.racer_name) || str(bw.player_name) || "",
     ...
