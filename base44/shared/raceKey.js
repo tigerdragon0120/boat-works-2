@@ -1,11 +1,19 @@
 // 共通race_key生成 + BOAT WORKS→BOAT WORKS 2 フィールドマッピング
 
-export function buildRaceKey(race_date, venue_code, race_number) {
-  const d = String(race_date || "").slice(0, 10);
-  const v = String(venue_code ?? "");
-  const n = String(race_number ?? "").padStart(2, "0");
-  return `${d}_${v}_${n}`;
-}
+export function mapEntry(bw, series = {}) {
+  const race_date = str(bw.race_date);
+  const venue_code = str(bw.venue_code);
+  const race_number = num(bw.race_number);
+  const race_key = bw.race_key || buildRaceKey(race_date, venue_code, race_number);
+  const is_scratched = !!bw.is_scratched || !!bw.scratched;
+  return {
+    race_key,
+    race_date,
+    venue_code,
+    race_number,
+    boat_number: num(bw.boat_number),
+    player_name: str(bw.racer_name) || str(bw.player_name) || "",
+    ...
 
 // 数値化(文字列も許容)
 const num = (v) => {
