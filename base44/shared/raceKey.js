@@ -22,10 +22,6 @@ export function parseRaceKey(key) {
   };
 }
 
-    boat_number: num(bw.boat_number),
-    player_name: str(bw.racer_name) || str(bw.player_name) || "",
-    ...
-
 // 数値化(文字列も許容)
 const num = (v) => {
   if (v === null || v === undefined || v === "") return null;
@@ -71,6 +67,7 @@ export function mapRace(bw) {
 }
 
 // BOAT WORKS RaceEntry + SeriesRacerPoint → BOAT WORKS 2 RaceEntry
+export function mapEntry(bw, series = {}) {
   const race_key = bw.race_key || buildRaceKey(str(bw.race_date), str(bw.venue_code), num(bw.race_number));
   // entry個別に race_date/venue_code/race_number が無い場合、race_keyから逆算して補う。
   const fallback = parseRaceKey(race_key);
