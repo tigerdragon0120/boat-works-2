@@ -63,7 +63,14 @@ export default async function(req){
           const raceEntries=(p.entries||[]).filter((e)=>(e.race_key||buildRaceKey(e.race_date,e.venue_code,e.race_number))===raceData.race_key);
           for(const e of raceEntries){
             const reg=String(e.registration_number||e.register_number||'').trim();
-            await upsertEntry(base44,{...mapEntry(e,seriesMap[`${raceData.race_key}_${reg}`]||{}),race_id:race.id});
+            await upsertEntry(base44,{
+              ...mapEntry(e,seriesMap[`${raceData.race_key}_${reg}`]||{}),
+              race_id:race.id,
+              race_key:raceData.race_key,
+              race_date:raceData.race_date,
+              venue_code:String(raceData.venue_code||'').padStart(2,'0'),
+              race_number:Number(raceData.race_number),
+            });
             entriesSaved++;
           }
           const srcResult=(p.results||[]).find((r)=>(r.race_key||buildRaceKey(r.race_date,r.venue_code,r.race_number))===raceData.race_key);
