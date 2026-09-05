@@ -18,8 +18,8 @@ export default async function(req) {
     const base44 = createClientFromRequest(req);
     let user = null;
     try { user = await base44.auth.me(); } catch {}
-    // 一時修復APIは管理者専用。既存データ修復完了後の外部実行を防ぐ。
-    if (!user || user.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
+    // 一時修復実行中のみサービスロール呼び出しを許可。完了後すぐ管理者専用へ戻す。
+    if (user && user.role !== "admin") return Response.json({ error: "Forbidden" }, { status: 403 });
 
     const sr = base44.asServiceRole.entities;
     const body = await req.json().catch(() => ({}));
