@@ -49,9 +49,11 @@ export default function SyncPanel() {
           totalPre += sum.pre_generated || 0;
           totalFinal += sum.final_generated || 0;
           totalErrors += sum.errors?.length || 0;
-        } catch (e) {
+         } catch (e) {
           // 1場の失敗で残りの場の同期を止めない。エラーを記録して次の場へ進む。
-          const detail = e?.response?.data?.message || e?.message || String(e);
+          // サーバー側(syncFromBoatWorks)は失敗時 { error: "..." } を返すため、
+          // response.data.error → response.data.message → e.message の順で本当の理由を拾う。
+          const detail = e?.response?.data?.error || e?.response?.data?.message || e?.message || String(e);
           venueErrors.push(`${venue}: ${detail}`);
           totalErrors++;
         }
