@@ -352,7 +352,17 @@ export async function syncAndPredict(client, payload, opts = {}) {
       for (const bwEntry of raceEntries) {
         const reg = String(bwEntry.registration_number || bwEntry.register_number || "").trim();
         const skey = `${raceData.race_key}_${reg}`;
-        const entryData = { ...mapEntry(bwEntry, seriesMap[skey] || {}), race_id: race.id };
+        // 親Raceを正としてキー情報を強制補完する。
+        // BOAT WORKS側のRaceEntryフィールド欠落や古いexportが混じっても、race_keyだけでなく
+        // race_date / venue_code / race_number を必ずBOAT WORKS 2側へ保存する。
+        const entryData = {
+          ...mapEntry(bwEntry, seriesMap[skey] || {}),
+          race_id: race.id,
+          race_key: raceData.race_key,
+          race_date: raceData.race_date,
+          venue_code: String(raceData.venue_code || "").padStart(2, "0"),
+          race_number: Number(raceData.race_number),
+        };
         const saved = await upsertEntry(client, entryData);
         entryDocs.push(saved);
         summary.entries_upserted++;
