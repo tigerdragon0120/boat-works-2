@@ -38,20 +38,29 @@ export default function SyncPanel() {
       if (!venues.length) throw new Error("BOAT WORKSから本日の開催場を取得できませんでした");
 
       let totalRaces = 0, totalPre = 0, totalFinal = 0, totalErrors = 0;
+      const venueErrors = [];
       for (let i = 0; i < venues.length; i++) {
         const venue = venues[i];
         setMsg(`同期中 ${i + 1}/${venues.length}場（${venue}）…`);
-        const res = await invokeSync("api", { date: todayStr(), venue_code: venue });
-        const sum = res.data?.summary || res.summary || {};
-        totalRaces += sum.races_upserted || 0;
-        totalPre += sum.pre_generated || 0;
-        totalFinal += sum.final_generated || 0;
-        totalErrors += sum.errors?.length || 0;
+        try {
+          const res = await invokeSync("api", { date: todayStr(), venue_code: venue });
+          const sum = res.data?.summary || res.summary || {};
+          totalRaces += sum.races_upserted || 0;
+          totalPre += sum.pre_generated || 0;
+          totalFinal += sum.final_generated || 0;
+          totalErrors += sum.errors?.length || 0;
+        } catch (e) {
+          // 1場の失敗で残りの場の同期を止めない。エラーを記録して次の場へ進む。
+          const detail = e?.response?.data?.message || e?.message || String(e);
+          venueErrors.push(`${venue}: ${detail}`);
+          totalErrors++;
+        }
       }
       setMsg(`同期完了: ${totalRaces}レース / PRE ${totalPre} / FINAL ${totalFinal}`);
-      if (totalErrors) setErr(`${totalErrors}件のエラー`);
+      if (venueErrors.length) setErr(`${venueErrors.length}場でエラー — ${venueErrors.join(" / ")}`);
+      else if (totalErrors) setErr(`${totalErrors}件のエラー`);
       await load();
-    } catch (e) { setErr(e.message || JSON.stringify(e)); }
+    } catch (e) { setErr(e?.response?.data?.message || e.message || JSON.stringify(e)); }
     setBusy(false);
   };
 
@@ -64,7 +73,7 @@ export default function SyncPanel() {
       setMsg(`取り込み完了: ${sum.races_upserted || 0}レース / PRE ${sum.pre_generated || 0} / FINAL ${sum.final_generated || 0}`);
       if (sum.errors?.length) setErr(`${sum.errors.length}件のエラー`);
       await load();
-    } catch (e) { setErr(e.message || JSON.stringify(e)); }
+    } catch (e) { setErr(e?.response?.data?.message || e.message || JSON.stringify(e)); }
     setBusy(false);
   };
 
