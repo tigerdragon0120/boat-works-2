@@ -2,6 +2,7 @@ import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
 import { secrets } from "base44:runtime";
 import { syncAndPredict } from "../../shared/predictionService.js";
 
+// BUILD_TAG: canonical_entry_keys_20260906
 // BOAT WORKS DATA SYNC
 // mode: "api"  → BOAT WORKS側APIからデータを取得して同期+予想
 //        BOAT_WORKS_API_BASE / BOAT_WORKS_API_KEY をサーバー側Secretから使用
