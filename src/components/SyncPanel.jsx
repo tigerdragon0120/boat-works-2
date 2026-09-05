@@ -37,28 +37,39 @@ export default function SyncPanel() {
       const venues = manifest.venue_codes || [];
       if (!venues.length) throw new Error("BOAT WORKSから本日の開催場を取得できませんでした");
 
-      let totalRaces = 0, totalPre = 0, totalFinal = 0, totalErrors = 0;
+       let totalRaces = 0, totalPre = 0, totalFinal = 0, totalErrors = 0;
       const venueErrors = [];
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       for (let i = 0; i < venues.length; i++) {
         const venue = venues[i];
+        // Base44側のレート制限を避けるため、各場の間に少し間隔を空ける。
+        if (i > 0) await sleep(800);
         setMsg(`同期中 ${i + 1}/${venues.length}場（${venue}）…`);
-        try {
-          const res = await invokeSync("api", { date: todayStr(), venue_code: venue });
-          const sum = res.data?.summary || res.summary || {};
-          totalRaces += sum.races_upserted || 0;
-          totalPre += sum.pre_generated || 0;
-          totalFinal += sum.final_generated || 0;
-          totalErrors += sum.errors?.length || 0;
-         } catch (e) {
+        let lastError = null;
+        let done = false;
+        // レート制限(Rate limit exceeded)は一時的なものなので、間隔を空けて最大3回まで再試行する。
+        for (let attempt = 0; attempt < 3 && !done; attempt++) {
+          try {
+            if (attempt > 0) await sleep(3000 * attempt);
+            const res = await invokeSync("api", { date: todayStr(), venue_code: venue });
+            const sum = res.data?.summary || res.summary || {};
+            totalRaces += sum.races_upserted || 0;
+            totalPre += sum.pre_generated || 0;
+            totalFinal += sum.final_generated || 0;
+            totalErrors += sum.errors?.length || 0;
+            done = true;
+          } catch (e) {
+            lastError = e?.response?.data?.error || e?.response?.data?.message || e?.message || String(e);
+            if (!/rate limit/i.test(lastError)) break; // レート制限以外は再試行しない
+          }
+        }
+        if (!done) {
           // 1場の失敗で残りの場の同期を止めない。エラーを記録して次の場へ進む。
-          // サーバー側(syncFromBoatWorks)は失敗時 { error: "..." } を返すため、
-          // response.data.error → response.data.message → e.message の順で本当の理由を拾う。
-          const detail = e?.response?.data?.error || e?.response?.data?.message || e?.message || String(e);
-          venueErrors.push(`${venue}: ${detail}`);
+          venueErrors.push(`${venue}: ${lastError}`);
           totalErrors++;
         }
       }
-      setMsg(`同期完了: ${totalRaces}レース / PRE ${totalPre} / FINAL ${totalFinal}`);
+     setMsg(`同期完了: ${totalRaces}レース / PRE ${totalPre} / FINAL ${totalFinal}`);
       if (venueErrors.length) setErr(`${venueErrors.length}場でエラー — ${venueErrors.join(" / ")}`);
       else if (totalErrors) setErr(`${totalErrors}件のエラー`);
       await load();
