@@ -4,7 +4,7 @@
   "properties": {
     "registration_number": {
       "type": "string",
-      "description": "\u9078\u624b\u767b\u9332\u756a\u53f7"
+      "description": "\u9078\u624b\u767b\u9332\u756a\u53f7(\u4e3b\u30ad\u30fc)"
     },
     "racer_name": {
       "type": "string"
@@ -115,7 +115,7 @@
         "1": {
           "type": "object",
           "properties": {
-            "samples": {
+            "sample_size": {
               "type": "number"
             },
             "win_rate": {
@@ -125,6 +125,12 @@
               "type": "number"
             },
             "top3_rate": {
+              "type": "number"
+            },
+            "avg_finish": {
+              "type": "number"
+            },
+            "avg_st": {
               "type": "number"
             }
           }
@@ -132,7 +138,7 @@
         "2": {
           "type": "object",
           "properties": {
-            "samples": {
+            "sample_size": {
               "type": "number"
             },
             "win_rate": {
@@ -142,6 +148,12 @@
               "type": "number"
             },
             "top3_rate": {
+              "type": "number"
+            },
+            "avg_finish": {
+              "type": "number"
+            },
+            "avg_st": {
               "type": "number"
             }
           }
@@ -149,7 +161,7 @@
         "3": {
           "type": "object",
           "properties": {
-            "samples": {
+            "sample_size": {
               "type": "number"
             },
             "win_rate": {
@@ -159,6 +171,12 @@
               "type": "number"
             },
             "top3_rate": {
+              "type": "number"
+            },
+            "avg_finish": {
+              "type": "number"
+            },
+            "avg_st": {
               "type": "number"
             }
           }
@@ -166,7 +184,7 @@
         "4": {
           "type": "object",
           "properties": {
-            "samples": {
+            "sample_size": {
               "type": "number"
             },
             "win_rate": {
@@ -176,6 +194,12 @@
               "type": "number"
             },
             "top3_rate": {
+              "type": "number"
+            },
+            "avg_finish": {
+              "type": "number"
+            },
+            "avg_st": {
               "type": "number"
             }
           }
@@ -183,7 +207,7 @@
         "5": {
           "type": "object",
           "properties": {
-            "samples": {
+            "sample_size": {
               "type": "number"
             },
             "win_rate": {
@@ -193,6 +217,12 @@
               "type": "number"
             },
             "top3_rate": {
+              "type": "number"
+            },
+            "avg_finish": {
+              "type": "number"
+            },
+            "avg_st": {
               "type": "number"
             }
           }
@@ -200,7 +230,7 @@
         "6": {
           "type": "object",
           "properties": {
-            "samples": {
+            "sample_size": {
               "type": "number"
             },
             "win_rate": {
@@ -211,34 +241,123 @@
             },
             "top3_rate": {
               "type": "number"
+            },
+            "avg_finish": {
+              "type": "number"
+            },
+            "avg_st": {
+              "type": "number"
             }
           }
         }
       }
     },
+    "winning_methods": {
+      "type": "object",
+      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u63a8\u5b9a)",
+      "properties": {
+        "escape_rate": {
+          "type": "number",
+          "description": "\u9003\u3052\u52dd\u7387%"
+        },
+        "sashi_rate": {
+          "type": "number",
+          "description": "\u5dee\u3057\u52dd\u7387%"
+        },
+        "makuri_rate": {
+          "type": "number",
+          "description": "\u307e\u304f\u308a\u52dd\u7387%"
+        },
+        "makuri_sashi_rate": {
+          "type": "number",
+          "description": "\u307e\u304f\u308a\u5dee\u3057\u52dd\u7387%"
+        },
+        "nuki_rate": {
+          "type": "number",
+          "description": "\u629c\u304d\u52dd\u7387%"
+        },
+        "other_rate": {
+          "type": "number",
+          "description": "\u305d\u306e\u4ed6\u52dd\u7387%"
+        },
+        "total_wins": {
+          "type": "number",
+          "description": "\u7dcf\u52dd\u5229\u6570"
+        }
+      }
+    },
+    "recent_form": {
+      "type": "object",
+      "description": "\u6700\u8fd1\u306e\u8abf\u5b50",
+      "properties": {
+        "recent_5_avg_finish": {
+          "type": "number"
+        },
+        "recent_10_avg_finish": {
+          "type": "number"
+        },
+        "recent_20_avg_finish": {
+          "type": "number"
+        },
+        "recent_st": {
+          "type": "number"
+        },
+        "recent_win_rate": {
+          "type": "number"
+        },
+        "recent_top3_rate": {
+          "type": "number"
+        },
+        "momentum_score": {
+          "type": "number",
+          "description": "\u52e2\u3044\u30b9\u30b3\u30a2(\u6700\u8fd1vs\u904e\u53bb)"
+        }
+      }
+    },
+    "losing_pattern": {
+      "type": "object",
+      "description": "\u6557\u6226\u30d1\u30bf\u30fc\u30f3",
+      "properties": {
+        "outside_top3_rate": {
+          "type": "number",
+          "description": "\u5916\u30b3\u30fc\u30b9(4-6)\u304b\u3089\u306e3\u9023\u5185\u7387"
+        },
+        "first_course_loss_rate": {
+          "type": "number",
+          "description": "1\u30b3\u30fc\u30b9\u6557\u9000\u7387"
+        },
+        "start_late_rate": {
+          "type": "number",
+          "description": "ST\u9045\u5ef6\u7387"
+        },
+        "collapse_rate": {
+          "type": "number",
+          "description": "\u5d29\u308c\u7387(\u7740\u9806>\u30b3\u30fc\u30b9)"
+        }
+      }
+    },
+    "venue_stats": {
+      "type": "object",
+      "description": "\u7af6\u8247\u5834\u5225\u6210\u7e3e venue_code -> stats"
+    },
     "winning_style": {
       "type": "object",
-      "description": "\u52dd\u3061\u65b9\u30d7\u30ed\u30d5\u30a1\u30a4\u30eb",
+      "description": "\u52dd\u3061\u65b9\u30d7\u30ed\u30d5\u30a1\u30a4\u30eb(\u4e92\u63db\u7528)",
       "properties": {
         "front_runner_score": {
-          "type": "number",
-          "description": "\u9003\u3052\u578b\u30b9\u30b3\u30a20-100"
+          "type": "number"
         },
         "chaser_score": {
-          "type": "number",
-          "description": "\u8ffd\u8fbc\u578b\u30b9\u30b3\u30a20-100"
+          "type": "number"
         },
         "st_stability": {
-          "type": "number",
-          "description": "ST\u5b89\u5b9a\u60270-100"
+          "type": "number"
         },
         "attack_score": {
-          "type": "number",
-          "description": "\u653b\u6483\u578b\u30b9\u30b3\u30a20-100"
+          "type": "number"
         },
         "defense_score": {
-          "type": "number",
-          "description": "\u5b88\u5099\u578b\u30b9\u30b3\u30a20-100"
+          "type": "number"
         }
       }
     },
@@ -251,15 +370,38 @@
     },
     "momentum": {
       "type": "number",
-      "description": "\u52e2\u3044\u30b9\u30b3\u30a2(\u6700\u8fd1vs\u904e\u53bb)"
+      "description": "\u52e2\u3044(\u4e92\u63db\u7528)"
     },
     "total_samples": {
-      "type": "number",
-      "description": "\u7dcf\u30b5\u30f3\u30d7\u30eb\u6570"
+      "type": "number"
     },
     "data_confidence": {
       "type": "number",
       "description": "\u30c7\u30fc\u30bf\u4fe1\u983c\u5ea60-100"
+    },
+    "source_meta": {
+      "type": "object",
+      "description": "\u5143\u30c7\u30fc\u30bf\u30e1\u30bf",
+      "properties": {
+        "source_updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "\u5143\u30c7\u30fc\u30bf\u306e\u6700\u7d42\u66f4\u65b0\u65e5\u6642"
+        },
+        "profile_calculated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "\u30d7\u30ed\u30d5\u30a1\u30a4\u30eb\u8a08\u7b97\u65e5\u6642"
+        },
+        "source_version": {
+          "type": "string",
+          "description": "\u5143\u30c7\u30fc\u30bf\u30d0\u30fc\u30b8\u30e7\u30f3"
+        },
+        "source_race_count": {
+          "type": "number",
+          "description": "\u4f7f\u7528\u30ec\u30fc\u30b9\u6570"
+        }
+      }
     },
     "updated_at": {
       "type": "string",

@@ -1,251 +1,202 @@
-// BOAT WORKS 2 - 予想エンジン(サーバー側共有コピー)
-// src/lib/predictionEngine.js と同等の純粋計算モジュール。
-// バックエンド関数から import するためのサーバー側正本。
-// ※ロジック変更時は src/lib/predictionEngine.js と合わせること。
+// BOAT WORKS 2 - 予想エンジン v4 (選手個別分析型)
+// RacerPerformanceProfileを最重要データとし、期間別(6m/1y/3y)成績を主軸に着順予想。
+// BUY/WATCH/SKIPは中心から外し、オッズは確率計算に使わない。
+// FINALはPRE予想に展示補正を加える方式。
 
 const isValid = (v) => typeof v === "number" && !Number.isNaN(v) && Number.isFinite(v);
 const clamp = (x, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
+const round1 = (n) => Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
 const normalize = (arr) => {
   const sum = arr.reduce((a, b) => a + b, 0);
   if (sum <= 0) return arr.map(() => 1 / arr.length);
   return arr.map((x) => x / sum);
 };
-const rateToScore = (rate) => (isValid(rate) ? clamp(rate, 0, 100) : null);
 const stToScore = (st, refSt = 0.15) => {
   if (!isValid(st)) return null;
   return clamp(70 + (refSt - st) * 300, 5, 100);
 };
 
+// 期間別重み付けスコア: 6m=45%, 1y=30%, 3y=15% (サンプル不足時は再正規化)
+function periodWeightedScore(profile, metric) {
+  if (!profile) return null;
+  const s6m = profile.stats_6m, s1y = profile.stats_1y, s3y = profile.stats_3y;
+  const use6m = s6m?.sample_size >= 5 ? 0.45 : 0;
+  const use1y = s1y?.sample_size >= 5 ? 0.30 : 0;
+  const use3y = s3y?.sample_size >= 5 ? 0.15 : 0;
+  const v6m = use6m > 0 && s6m[metric] != null ? s6m[metric] : null;
+  const v1y = use1y > 0 && s1y[metric] != null ? s1y[metric] : null;
+  const v3y = use3y > 0 && s3y[metric] != null ? s3y[metric] : null;
+  const pairs = [[v6m, use6m], [v1y, use1y], [v3y, use3y]].filter(([v]) => v != null);
+  if (!pairs.length) return null;
+  const totalW = pairs.reduce((s, [, w]) => s + w, 0);
+  return clamp(pairs.reduce((s, [v, w]) => s + v * w, 0) / totalW, 0, 100);
+}
+
+// コース別スコア
+function getCourseScore(profile, entry, metric) {
+  if (!profile || !entry.boat_number) return null;
+  const cs = profile.course_stats?.[String(entry.boat_number)];
+  if (!cs || cs.sample_size < 3) return null;
+  return cs[metric] != null ? clamp(cs[metric], 0, 100) : null;
+}
+
+// 決まり手スコア: 艇番に応じた決まり手勝率
+function getKimariteScore(profile, boatNumber) {
+  if (!profile?.winning_methods) return null;
+  const wm = profile.winning_methods;
+  if (wm.total_wins < 2) return null;
+  if (boatNumber === 1) return wm.escape_rate;
+  if (boatNumber === 2) return wm.sashi_rate;
+  if (boatNumber === 3) return wm.makuri_rate;
+  if (boatNumber === 4) return wm.makuri_sashi_rate;
+  if (boatNumber === 5 || boatNumber === 6) return wm.nuki_rate;
+  return null;
+}
+
+// 競艇場別スコア
+function getVenueScore(profile, entry, metric) {
+  if (!profile?.venue_stats || !entry.venue_code) return null;
+  const vs = profile.venue_stats[String(entry.venue_code)];
+  if (!vs || vs.samples < 3) return null;
+  return vs[metric] != null ? clamp(vs[metric], 0, 100) : null;
+}
+
+// 展示スコア(FINAL用)
+function computeExhibitionScore(entry) {
+  const parts = [];
+  if (isValid(entry.exhibition_time)) parts.push(clamp(50 + (1.4 - entry.exhibition_time) * 100, 5, 100));
+  if (isValid(entry.exhibition_rank)) parts.push(clamp(110 - entry.exhibition_rank * 15, 0, 100));
+  if (isValid(entry.exhibition_st)) parts.push(stToScore(entry.exhibition_st, 0.1));
+  return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : 50;
+}
+
+const weightedAverage = (pairs, fallback = 50) => {
+  const valid = pairs.filter(([s]) => s !== null && isValid(s));
+  if (!valid.length) return fallback;
+  const denom = valid.reduce((a, [, w]) => a + w, 0);
+  return denom > 0 ? valid.reduce((a, [s, w]) => a + s * w, 0) / denom : fallback;
+};
+
+// その他要素(10%)のスコア
+function computeOtherScore(profile, entry, metric) {
+  const courseScore = getCourseScore(profile, entry, metric);
+  const recentMetric = metric === 'win_rate' ? 'recent_win_rate' : 'recent_top3_rate';
+  const recentForm = profile?.recent_form?.[recentMetric];
+  const recentSt = profile?.recent_form?.recent_st || entry.avg_st;
+  const stScore = stToScore(recentSt);
+  const kimariteScore = getKimariteScore(profile, entry.boat_number);
+  const venueScore = getVenueScore(profile, entry, metric);
+  const sectionScore = isValid(entry.section_points) ? clamp(entry.section_points * 2, 0, 100) : null;
+  const motorScore = isValid(entry.motor_f2_rate) ? clamp(entry.motor_f2_rate, 0, 100) : null;
+  return weightedAverage([
+    [courseScore, 0.25], [recentForm, 0.20], [stScore, 0.15],
+    [kimariteScore, 0.15], [venueScore, 0.10], [sectionScore, 0.08], [motorScore, 0.07],
+  ]);
+}
+
+// 選手個別分析型スコア計算
 export function computeBoatScores(entry, settings) {
-  const w = settings?.weights || {};
+  const profile = entry._profile;
   const stage = settings?.stage || "PRE";
   const isFinal = stage === "FINAL";
-  const components = {};
 
-  components.national_win = rateToScore(entry.national_win_rate != null ? entry.national_win_rate * 10 : null);
-  components.local_win = rateToScore(entry.local_win_rate != null ? entry.local_win_rate * 10 : null);
-  components.national_f2 = rateToScore(entry.national_f2_rate);
-  components.national_f3 = rateToScore(entry.national_f3_rate);
-  components.local_f2 = rateToScore(entry.local_f2_rate);
-  components.local_f3 = rateToScore(entry.local_f3_rate);
+  // === プロファイル期間別スコア(主軸) ===
+  const profileWin = periodWeightedScore(profile, 'win_rate');
+  const profileF2 = periodWeightedScore(profile, 'top2_rate');
+  const profileF3 = periodWeightedScore(profile, 'top3_rate');
 
-  components.st = stToScore(entry.avg_st);
-  components.f_penalty = isValid(entry.f_count) ? clamp(100 - entry.f_count * 8, 0, 100) : null;
-  components.l_penalty = isValid(entry.l_count) ? clamp(100 - entry.l_count * 5, 0, 100) : null;
+  // === 公式成績(フォールバック) ===
+  const officialWin = entry.national_win_rate != null ? clamp(entry.national_win_rate * 10, 0, 100) : null;
+  const officialF2 = entry.national_f2_rate != null ? clamp(entry.national_f2_rate, 0, 100) : null;
+  const officialF3 = entry.national_f3_rate != null ? clamp(entry.national_f3_rate, 0, 100) : null;
 
-  components.motor_f2 = rateToScore(entry.motor_f2_rate);
-  components.motor_f3 = rateToScore(entry.motor_f3_rate);
-  components.boat_f2 = rateToScore(entry.boat_f2_rate);
-  components.boat_f3 = rateToScore(entry.boat_f3_rate);
+  // === その他要素(10%) ===
+  const otherFirst = computeOtherScore(profile, entry, 'win_rate');
+  const otherSecond = computeOtherScore(profile, entry, 'top2_rate');
+  const otherThird = computeOtherScore(profile, entry, 'top3_rate');
 
-  components.local_fit = (() => {
-    const parts = [components.local_win, components.local_f2, components.local_f3].filter((x) => x !== null);
-    return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : null;
-  })();
-
-  components.section = (() => {
-    const parts = [];
-    if (isValid(entry.section_points)) parts.push(clamp(entry.section_points * 2, 0, 100));
-    if (isValid(entry.section_momentum)) parts.push(clamp(entry.section_momentum, 0, 100));
-    if (entry.section_finishes) {
-      const finishes = String(entry.section_finishes).split(/[.\s,]/).map(Number).filter((n) => !Number.isNaN(n));
-      if (finishes.length) {
-        const avg = finishes.reduce((a, b) => a + b, 0) / finishes.length;
-        parts.push(clamp(110 - avg * 20, 0, 100));
-      }
-    }
-    return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : null;
-  })();
-
-  components.exhibition = (() => {
-    if (!isFinal) return null;
-    const parts = [];
-    if (isValid(entry.exhibition_time)) parts.push(clamp(50 + (1.4 - entry.exhibition_time) * 100, 5, 100));
-    if (isValid(entry.exhibition_rank)) parts.push(clamp(110 - entry.exhibition_rank * 15, 0, 100));
-    if (isValid(entry.exhibition_st)) parts.push(stToScore(entry.exhibition_st, 0.1));
-    return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : null;
-  })();
-
-  // === 選手プロファイルベースの成分 ===
-  const profile = entry._profile;
-  // プロファイル勝率: 6ヶ月5件以上→6ヶ月、そうでなければ全期間5件以上
-  components.profile_win = (() => {
-    if (!profile) return null;
-    const s6 = profile.stats_6m, sAll = profile.stats_all;
-    const s = (s6?.sample_size >= 5) ? s6 : (sAll?.sample_size >= 5 ? sAll : null);
-    return s?.win_rate != null ? clamp(s.win_rate, 0, 100) : null;
-  })();
-  // プロファイル2連率
-  components.profile_f2 = (() => {
-    if (!profile) return null;
-    const s6 = profile.stats_6m, sAll = profile.stats_all;
-    const s = (s6?.sample_size >= 5) ? s6 : (sAll?.sample_size >= 5 ? sAll : null);
-    return s?.top2_rate != null ? clamp(s.top2_rate, 0, 100) : null;
-  })();
-  // プロファイル3連率
-  components.profile_f3 = (() => {
-    if (!profile) return null;
-    const s6 = profile.stats_6m, sAll = profile.stats_all;
-    const s = (s6?.sample_size >= 5) ? s6 : (sAll?.sample_size >= 5 ? sAll : null);
-    return s?.top3_rate != null ? clamp(s.top3_rate, 0, 100) : null;
-  })();
-  // コース別成績: この艇番のコースでの勝率
-  components.profile_course_win = (() => {
-    if (!profile || !entry.boat_number) return null;
-    const cs = profile.course_stats?.[String(entry.boat_number)];
-    if (!cs || cs.samples < 3) return null;
-    return cs.win_rate != null ? clamp(cs.win_rate, 0, 100) : null;
-  })();
-  components.profile_course_f2 = (() => {
-    if (!profile || !entry.boat_number) return null;
-    const cs = profile.course_stats?.[String(entry.boat_number)];
-    if (!cs || cs.samples < 3) return null;
-    return cs.top2_rate != null ? clamp(cs.top2_rate, 0, 100) : null;
-  })();
-  // 勝ち方プロファイル
-  components.front_runner = profile?.winning_style?.front_runner_score != null ? clamp(profile.winning_style.front_runner_score, 0, 100) : null;
-  components.chaser = profile?.winning_style?.chaser_score != null ? clamp(profile.winning_style.chaser_score, 0, 100) : null;
-  components.st_stability = profile?.winning_style?.st_stability != null ? clamp(profile.winning_style.st_stability, 0, 100) : null;
-  components.attack = profile?.winning_style?.attack_score != null ? clamp(profile.winning_style.attack_score, 0, 100) : null;
-  // 勢い
-  components.momentum = profile?.momentum != null ? clamp(50 + profile.momentum * 20, 0, 100) : null;
-  // データ信頼度
-  const profileConfidence = profile?.data_confidence != null ? profile.data_confidence : 0;
-
-  const weightOf = (key) => (w[key] != null ? w[key] : 1.0);
-  const totalRaw = [], totalW = [];
-  const add = (score, key) => { if (score === null) return; totalRaw.push(score * weightOf(key)); totalW.push(weightOf(key)); };
-  // プロファイル成分を優先(データ信頼度に応じて重み付け)
-  const profileWeight = profileConfidence / 100; // 0-1
-  add(components.national_win, "national_win");
-  add(components.local_win, "local_win");
-  add(components.national_f2, "f2_rate");
-  add(components.national_f3, "f3_rate");
-  add(components.local_f2, "f2_rate");
-  add(components.local_f3, "f3_rate");
-  add(components.st, "st");
-  add(components.f_penalty, "st");
-  add(components.l_penalty, "st");
-  add(components.motor_f2, "motor");
-  add(components.motor_f3, "motor");
-  add(components.boat_f2, "boat");
-  add(components.boat_f3, "boat");
-  add(components.local_fit, "local_fit");
-  add(components.section, "section");
-  if (isFinal) add(components.exhibition, "exhibition");
-  // プロファイル成分(信頼度に応じて重み付け)
-  if (components.profile_win !== null) add(components.profile_win * profileWeight + components.national_win * (1 - profileWeight) * 0 + components.profile_win, "national_win");
-  if (components.profile_f2 !== null) add(components.profile_f2, "f2_rate");
-  if (components.profile_f3 !== null) add(components.profile_f3, "f3_rate");
-  if (components.momentum !== null) add(components.momentum, "section");
-
-  const total_power = totalW.length ? clamp(totalRaw.reduce((a, b) => a + b, 0) / totalW.reduce((a, b) => a + b, 0), 0, 100) : 50;
-  const dataCount = totalW.length;
-
-  // コース別スコア: プロファイルの実績があれば優先、なければ静的テーブル
-  const courseFirstScore = components.profile_course_win !== null
-    ? components.profile_course_win
-    : { 1: 100, 2: 78, 3: 66, 4: 54, 5: 43, 6: 34 }[entry.boat_number] || 50;
-  const courseSecondScore = components.profile_course_f2 !== null
-    ? components.profile_course_f2
-    : { 1: 72, 2: 82, 3: 78, 4: 68, 5: 58, 6: 50 }[entry.boat_number] || 60;
-  const courseThirdScore = { 1: 68, 2: 76, 3: 78, 4: 74, 5: 66, 6: 58 }[entry.boat_number] || 65;
-  const weightedAverage = (pairs, fallback = 50) => {
-    const validPairs = pairs.filter(([score]) => score !== null && isValid(score));
-    if (!validPairs.length) return fallback;
-    const denom = validPairs.reduce((a, [, weight]) => a + weight, 0);
-    return denom > 0 ? validPairs.reduce((a, [score, weight]) => a + score * weight, 0) / denom : fallback;
+  // === 着力計算 ===
+  // プロファイルあり: 90%プロファイル + 10%その他
+  // プロファイルなし: 70%公式 + 30%その他
+  const computePower = (profileScore, officialScore, otherScore) => {
+    if (profileScore != null) return clamp(profileScore * 0.90 + (otherScore || 50) * 0.10, 5, 100);
+    if (officialScore != null) return clamp(officialScore * 0.70 + (otherScore || 50) * 0.30, 5, 100);
+    return clamp(otherScore || 50, 5, 100);
   };
-  // 勝ち方を1着力に反映: 内コースなら逃げ型、外コースなら追込型を加点
-  const styleBonus1 = (() => {
-    if (entry.boat_number <= 3 && components.front_runner !== null) return components.front_runner;
-    if (entry.boat_number >= 4 && components.chaser !== null) return components.chaser;
-    return null;
-  })();
-  const first_power = clamp(weightedAverage([
-    [total_power, isFinal ? 0.45 : 0.50],
-    [components.profile_win, 0.15],
-    [components.st, isFinal ? 0.10 : 0.15],
-    [courseFirstScore, 0.20],
-    [styleBonus1, 0.05],
-    [components.momentum, 0.05],
-    [isFinal ? components.exhibition : null, 0.15],
-  ]), 5, 100);
-  const second_power = clamp(weightedAverage([
-    [total_power, isFinal ? 0.50 : 0.55],
-    [components.profile_f2, 0.15],
-    [components.section, 0.10],
-    [courseSecondScore, 0.10],
-    [components.momentum, 0.05],
-    [isFinal ? components.exhibition : null, 0.20],
-  ]), 5, 100);
-  const third_power = clamp(weightedAverage([
-    [total_power, 0.60],
-    [components.profile_f3, 0.13],
-    [components.section, 0.10],
-    [courseThirdScore, 0.10],
-    [components.momentum, 0.07],
-    [isFinal ? components.exhibition : null, 0.08],
-  ]), 5, 100);
 
+  let first_power = computePower(profileWin, officialWin, otherFirst);
+  let second_power = computePower(profileF2, officialF2, otherSecond);
+  let third_power = computePower(profileF3, officialF3, otherThird);
+
+  // === 展示補正(FINALのみ) ===
+  let exhibition_delta = 0;
+  let exhibition_score = 50;
+  if (isFinal) {
+    exhibition_score = computeExhibitionScore(entry);
+    exhibition_delta = (exhibition_score - 50) * 0.3; // -15〜+15
+  }
+
+  // === 補助スコア ===
   const start_power = (() => {
-    const parts = [components.st, components.f_penalty, components.l_penalty].filter((x) => x !== null);
-    return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : 50;
+    const recentSt = profile?.recent_form?.recent_st || entry.avg_st;
+    const stScore = stToScore(recentSt);
+    const fPenalty = isValid(entry.f_count) ? clamp(100 - entry.f_count * 8, 0, 100) : null;
+    const parts = [stScore, fPenalty].filter((x) => x !== null);
+    return parts.length ? round1(parts.reduce((a, b) => a + b, 0) / parts.length) : 50;
   })();
-  const motor_power = (() => {
-    const parts = [components.motor_f2, components.motor_f3, components.boat_f2, components.boat_f3].filter((x) => x !== null);
-    return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : 50;
+  const motor_power = isValid(entry.motor_f2_rate) ? round1(clamp(entry.motor_f2_rate, 0, 100)) : 50;
+  const exhibition_power = round1(exhibition_score);
+  const local_fit = (() => {
+    const vs = getVenueScore(profile, entry, 'win_rate');
+    return vs != null ? round1(vs) : 50;
   })();
-  const exhibition_power = components.exhibition !== null ? components.exhibition : 50;
-  const local_fit = components.local_fit !== null ? components.local_fit : 50;
-  const section_form = components.section !== null ? components.section : 50;
-  const ana_potential = clamp(exhibition_power * 0.4 + section_form * 0.3 + (100 - total_power) * 0.3, 0, 100);
+  const section_form = isValid(entry.section_points) ? round1(clamp(entry.section_points * 2, 0, 100)) : 50;
+  const ana_potential = round1(clamp(exhibition_power * 0.4 + section_form * 0.3 + (100 - first_power) * 0.3, 0, 100));
+  const total_power = round1((first_power + second_power + third_power) / 3);
 
+  // === 予想理由 ===
   const reasons = [], notes = [];
-  if (entry.boat_number === 1) reasons.push("1コース逃げ率が高い");
-  if (components.local_win !== null && components.local_win >= 60) reasons.push(`当地勝率が高い(${entry.local_win_rate})`);
-  if (components.national_f2 !== null && components.national_f2 >= 55) reasons.push(`全国2連率${entry.national_f2_rate}%`);
-  if (components.motor_f2 !== null && components.motor_f2 >= 55) reasons.push("モーター上位");
-  if (isFinal && components.exhibition !== null && components.exhibition >= 70) reasons.push(`展示タイム${entry.exhibition_rank}位`);
-  if (components.section !== null && components.section >= 65) reasons.push("節間好調");
-  if (components.st !== null && components.st >= 70) reasons.push("スタート安定");
-  // プロファイルベースの理由
-  if (components.profile_win !== null && components.profile_win >= 50) reasons.push(`直近勝率${components.profile_win}%`);
-  if (components.profile_course_win !== null && components.profile_course_win >= 40) reasons.push(`${entry.boat_number}コース勝率${components.profile_course_win}%`);
-  if (components.front_runner !== null && components.front_runner >= 60 && entry.boat_number <= 3) reasons.push("逃げ型(内コース得意)");
-  if (components.chaser !== null && components.chaser >= 50 && entry.boat_number >= 4) reasons.push("追込型(外コース差し)");
-  if (components.st_stability !== null && components.st_stability >= 70) reasons.push("ST安定性高い");
-  if (components.momentum !== null && components.momentum >= 65) reasons.push("勢い上向き");
-  if (components.attack !== null && components.attack >= 50) reasons.push("攻撃型(位置上げ)");
-  if (components.st !== null && components.st < 55) notes.push("平均STがやや遅い");
-  if (components.f_penalty !== null && entry.f_count > 0) notes.push(`F数${entry.f_count}`);
-  if (components.motor_f2 !== null && components.motor_f2 < 40) notes.push("モーター低調");
-  if (isFinal && components.exhibition !== null && components.exhibition < 45) notes.push("展示伸び悩む");
-  if (components.momentum !== null && components.momentum < 40) notes.push("最近調子落ち");
+  if (profileWin != null && profileWin >= 50) reasons.push(`直近勝率${round1(profileWin)}%`);
+  if (profileF2 != null && profileF2 >= 55) reasons.push(`直近2連率${round1(profileF2)}%`);
+  const courseWin = getCourseScore(profile, entry, 'win_rate');
+  if (courseWin != null && courseWin >= 40) reasons.push(`${entry.boat_number}コース勝率${round1(courseWin)}%`);
+  const wm = profile?.winning_methods;
+  if (wm?.total_wins >= 3) {
+    if (entry.boat_number === 1 && wm.escape_rate >= 50) reasons.push(`逃げ勝率${round1(wm.escape_rate)}%`);
+    if (entry.boat_number === 2 && wm.sashi_rate >= 40) reasons.push(`差し勝率${round1(wm.sashi_rate)}%`);
+    if (entry.boat_number === 3 && wm.makuri_rate >= 40) reasons.push(`まくり勝率${round1(wm.makuri_rate)}%`);
+    if (entry.boat_number === 4 && wm.makuri_sashi_rate >= 30) reasons.push(`まくり差し${round1(wm.makuri_sashi_rate)}%`);
+    if (entry.boat_number >= 5 && wm.nuki_rate >= 20) reasons.push(`抜き勝率${round1(wm.nuki_rate)}%`);
+  }
+  const momentum = profile?.recent_form?.momentum_score;
+  if (momentum != null && momentum > 0.3) reasons.push("勢い上向き");
+  if (momentum != null && momentum < -0.3) notes.push("最近調子落ち");
+  if (profile?.recent_form?.recent_win_rate >= 30) reasons.push(`最近勝率${round1(profile.recent_form.recent_win_rate)}%`);
+  if (isFinal && exhibition_score >= 65) reasons.push(`展示良好(${round1(exhibition_score)})`);
+  if (isFinal && exhibition_score < 40) notes.push("展示低調");
+  if (profile?.winning_style?.st_stability >= 70) reasons.push("ST安定");
+  if (profile?.winning_style?.st_stability < 40) notes.push("ST不安定");
   if (profile && profile.total_samples < 5) notes.push("プロファイルデータ少");
+  if (profileWin == null && officialWin != null) notes.push("公式成績ベース予想");
 
   return {
     boat_number: entry.boat_number,
-    first_power: Math.round(first_power * 10) / 10,
-    second_power: Math.round(second_power * 10) / 10,
-    third_power: Math.round(third_power * 10) / 10,
-    total_power: Math.round(total_power * 10) / 10,
-    start_power: Math.round(start_power),
-    motor_power: Math.round(motor_power),
-    exhibition_power: Math.round(exhibition_power),
-    local_fit: Math.round(local_fit),
-    section_form: Math.round(section_form),
-    ana_potential: Math.round(ana_potential),
-    reasons, notes, dataCount,
+    first_power: round1(first_power),
+    second_power: round1(second_power),
+    third_power: round1(third_power),
+    total_power,
+    start_power, motor_power, exhibition_power, local_fit, section_form, ana_potential,
+    exhibition_delta: round1(exhibition_delta),
+    reasons, notes,
+    dataCount: profile?.total_samples || 0,
+    _absent: !!entry.is_absent,
   };
 }
 
-export function computeTrifectas(boatScores, options = {}) {
-  const { oddsMap = {}, margin = 0.25 } = options;
+// 3連単確率計算(オッズ不使用・選手プロファイル+展開から確率生成)
+export function computeTrifectas(boatScores) {
   const boats = boatScores.filter((b) => !b._absent);
   const numbers = boats.map((b) => b.boat_number);
-  // v3: 旧来の power^n は差を十分に確率へ反映できず、120通りが平坦化していた。
-  // softmaxで「艇力差」を順位確率へ変換し、強いレースほど上位買い目へ自然に集中させる。
   const softmax = (scores, temperature) => {
     if (!scores.length) return [];
     const maxScore = Math.max(...scores);
@@ -255,7 +206,6 @@ export function computeTrifectas(boatScores, options = {}) {
   const firstProb = softmax(boats.map((b) => b.first_power), 6.0);
   const firstP = {};
   boats.forEach((b, i) => (firstP[b.boat_number] = firstProb[i]));
-
   const results = [];
   for (const i of numbers) {
     const secondBoats = boats.filter((b) => b.boat_number !== i);
@@ -271,17 +221,10 @@ export function computeTrifectas(boatScores, options = {}) {
       for (const k of numbers) {
         if (k === i || k === j) continue;
         const prob = firstP[i] * secondP[j] * thirdP[k];
-        const combo = `${i}-${j}-${k}`;
-        const actualOdds = oddsMap[combo];
-        const estimated_odds = Math.max(1.0, (1 / prob) * (1 - margin));
-        const odds = actualOdds != null ? actualOdds : estimated_odds;
-        const expected_value = prob * odds * 100;
         results.push({
-          combination: combo,
+          combination: `${i}-${j}-${k}`,
           probability: Math.round(prob * 1000) / 10,
-          estimated_odds: Math.round(estimated_odds * 10) / 10,
-          actual_odds: actualOdds != null ? actualOdds : null,
-          expected_value: Math.round(expected_value * 10) / 10,
+          rank: 0,
         });
       }
     }
@@ -291,87 +234,143 @@ export function computeTrifectas(boatScores, options = {}) {
   return results;
 }
 
-export function judgeTrifecta(trifecta, ctx = {}) {
-  const { settings = {}, topBoatTotal = 60, dataConfidence = 50, exhibitionReady = false } = ctx;
-  const prob = trifecta.probability;
-  const ev = trifecta.expected_value;
-  const gates = [];
-  if (prob < (settings.min_probability || 5)) gates.push("確率不足");
-  if (topBoatTotal < 55) gates.push("本命艇評価不足");
-  if (dataConfidence < (settings.min_confidence || 40)) gates.push("データ信頼度不足");
-  if (ctx.stage === "FINAL" && !exhibitionReady) gates.push("展示評価不足");
-  if (gates.length > 0) return { judgment: "SKIP", basis: gates.join("・") };
-  const strongEv = settings.strong_buy_ev_threshold || 200;
-  const buyEv = settings.buy_ev_threshold || 150;
-  const watchEv = settings.watch_ev_threshold || 110;
-  if (ev >= strongEv && prob >= (settings.min_probability || 5) * 1.5) return { judgment: "STRONG_BUY", basis: `期待値${ev}%・確率${prob}%・信頼度${dataConfidence}` };
-  if (ev >= buyEv) return { judgment: "BUY", basis: `期待値${ev}%・確率${prob}%` };
-  if (ev >= watchEv) return { judgment: "WATCH", basis: `期待値${ev}%・確率${prob}%` };
-  return { judgment: "SKIP", basis: `期待値${ev}%低・確率${prob}%` };
+// 展開予測
+export function computeRaceScenario(boatScores) {
+  const sorted = [...boatScores].filter(b => !b._absent).sort((a, b) => b.first_power - a.first_power);
+  if (!sorted.length) return { primary: "—", secondary: "—", confidence: 0, reasons: [] };
+  const top = sorted[0];
+  const second = sorted[1];
+  const gap = top.first_power - (second?.first_power || 0);
+  const reasons = [];
+  let primary = "混戦", secondary = "—";
+  let confidence = 30;
+
+  const boat1 = sorted.find(b => b.boat_number === 1);
+  const boat2 = sorted.find(b => b.boat_number === 2);
+  const boat3 = sorted.find(b => b.boat_number === 3);
+  const boat4 = sorted.find(b => b.boat_number === 4);
+  const boat5 = sorted.find(b => b.boat_number === 5);
+  const boat6 = sorted.find(b => b.boat_number === 6);
+
+  if (boat1 && boat1.first_power >= 65 && top.boat_number === 1 && gap >= 5) {
+    primary = "1逃げ濃厚";
+    confidence = Math.min(90, 60 + gap * 2);
+    reasons.push(`1号艇1着力${boat1.first_power}が突出`);
+    reasons.push(`2位との差${gap.toFixed(1)}`);
+  } else if (boat2 && boat2.first_power >= 62) {
+    primary = "2差し警戒";
+    confidence = 58;
+    reasons.push(`2号艇1着力${boat2.first_power}`);
+  } else if (boat3 && boat3.first_power >= 60) {
+    primary = "3まくり警戒";
+    confidence = 52;
+    reasons.push(`3号艇1着力${boat3.first_power}`);
+  } else if (boat4 && boat4.first_power >= 58) {
+    primary = "4カド攻め警戒";
+    confidence = 48;
+    reasons.push(`4号艇1着力${boat4.first_power}`);
+  } else if (top.boat_number >= 5) {
+    primary = "外伸び";
+    confidence = 45;
+    reasons.push(`${top.boat_number}号艇が外から上位`);
+  } else {
+    primary = "混戦";
+    confidence = 25;
+    reasons.push("6艇の差が少なく予想困難");
+  }
+
+  if (boat3 && boat3.first_power >= 55 && primary !== "3まくり警戒") secondary = "3まくり差し警戒";
+  else if (boat4 && boat4.first_power >= 54 && primary !== "4カド攻め警戒") secondary = "4カド差し警戒";
+  else if (boat1 && boat1.first_power < 55 && primary !== "1逃げ濃厚") secondary = "内競り";
+  else if (sorted.slice(0, 3).some(b => b.boat_number >= 5)) secondary = "外伸び警戒";
+  else if (boat5 && boat5.first_power >= 52 || (boat6 && boat6.first_power >= 50)) secondary = "まくり差し展開";
+
+  return { primary, secondary, confidence: Math.round(confidence), reasons };
 }
 
 export function gradePrediction(boatScores) {
-  const top = boatScores.reduce((a, b) => (a.first_power > b.first_power ? a : b));
-  const second = boatScores.filter((b) => b.boat_number !== top.boat_number).reduce((a, b) => (a.first_power > b.first_power ? a : b));
+  const active = boatScores.filter(b => !b._absent);
+  if (!active.length) return "C";
+  const top = active.reduce((a, b) => (a.first_power > b.first_power ? a : b));
+  const second = active.filter(b => b.boat_number !== top.boat_number).reduce((a, b) => (a.first_power > b.first_power ? a : b), active[0]);
   const gap = top.first_power - second.first_power;
   const conf = top.dataCount;
-  if (gap >= 10 && top.first_power >= 80 && conf >= 8) return "S";
-  if (gap >= 6 && top.first_power >= 70) return "A";
-  if (top.first_power >= 60) return "B";
+  if (gap >= 10 && top.first_power >= 75 && conf >= 20) return "S";
+  if (gap >= 6 && top.first_power >= 65) return "A";
+  if (top.first_power >= 55) return "B";
   return "C";
 }
 
 export function computeConfidence(boatScores) {
-  const avgCount = boatScores.reduce((a, b) => a + b.dataCount, 0) / Math.max(1, boatScores.length);
-  return clamp(Math.round((avgCount / 12) * 100), 0, 100);
+  const active = boatScores.filter(b => !b._absent);
+  if (!active.length) return 0;
+  const avgSamples = active.reduce((a, b) => a + (b.dataCount || 0), 0) / active.length;
+  return clamp(Math.round((avgSamples / 50) * 100), 0, 100);
 }
 
-// 買い目点数判定: 1-3点 / 4-6点 / 見送り。分散度と信頼度で決める。
-export function decideBetPlan(trifectas, settings, ctx = {}) {
-  const { dataConfidence = 50, stage = "PRE" } = ctx;
-  if (!trifectas || trifectas.length === 0) return { tier: "skip", count: 0, reason: "予想データなし" };
-  if (dataConfidence < (settings.min_confidence || 40)) return { tier: "skip", count: 0, reason: "データ信頼度不足" };
-  const buyable = trifectas.filter((t) => t.judgment === "STRONG_BUY" || t.judgment === "BUY" || t.judgment === "WATCH");
-  if (buyable.length === 0) return { tier: "skip", count: 0, reason: "BUY/WATCH該当なし" };
-  const top = trifectas[0];
-  const second = trifectas[1];
-  const gap = second ? top.probability - second.probability : top.probability;
-  // 集中型: 本命確率が高く2位との差が大きい
-  if (top.probability >= 12 && gap >= 4) return { tier: "1-3", count: Math.min(3, buyable.length), reason: "本命濃厚・集中" };
-  if (top.probability >= 8) return { tier: "4-6", count: Math.min(6, buyable.length), reason: "予想分散・広目" };
-  return { tier: "skip", count: 0, reason: "確率低・見送り" };
-}
-
+// 予想実行
 export function runPrediction(entries, settings, options = {}) {
-  const stage = settings.stage || "PRE";
-  const oddsMap = options.oddsMap || {};
+  const stage = settings?.stage || "PRE";
+  const isFinal = stage === "FINAL";
+  const preBoatScores = options.preBoatScores || null;
+
   const boats = entries.map((e) => ({ ...e, _absent: !!e.is_absent }));
-  const activeBoats = boats.filter((b) => !b._absent);
-  const boatScores = boats.map((e) => { const s = computeBoatScores(e, settings); s._absent = e._absent; return s; });
-  const activeScores = boatScores.filter((b) => !b._absent);
-  const trifectas = computeTrifectas(activeScores, { oddsMap });
+  let boatScores = boats.map((e) => computeBoatScores(e, settings));
+
+  // FINAL: PRE予想を基準に展示補正のみ適用
+  if (isFinal && preBoatScores && preBoatScores.length) {
+    for (const s of boatScores) {
+      const pre = preBoatScores.find(p => p.boat_number === s.boat_number);
+      if (pre) {
+        s.first_power = clamp(pre.first_power + s.exhibition_delta, 5, 100);
+        s.second_power = clamp(pre.second_power + s.exhibition_delta * 0.7, 5, 100);
+        s.third_power = clamp(pre.third_power + s.exhibition_delta * 0.5, 5, 100);
+        s.total_power = round1((s.first_power + s.second_power + s.third_power) / 3);
+        s.pre_first = pre.first_power;
+        s.pre_second = pre.second_power;
+        s.pre_third = pre.third_power;
+      }
+    }
+  }
+
+  const activeScores = boatScores.filter(b => !b._absent);
+  const trifectas = computeTrifectas(activeScores);
+  const raceScenario = computeRaceScenario(activeScores);
   const dataConfidence = computeConfidence(activeScores);
-  const exhibitionReady = activeBoats.some((e) => isValid(e.exhibition_time) || isValid(e.exhibition_st));
-  const top = activeScores.reduce((a, b) => (a.first_power > b.first_power ? a : b), activeScores[0]);
-  const ranked = [...activeScores].sort((a, b) => b.first_power - a.first_power);
-  const honmei = ranked[0]?.boat_number;
-  const taiko = ranked[1]?.boat_number;
+
+  // ランキング(1着候補・2着候補・3着候補)
+  const firstRanking = [...activeScores].sort((a, b) => b.first_power - a.first_power).map(b => b.boat_number);
+  const secondRanking = [...activeScores].sort((a, b) => b.second_power - a.second_power).map(b => b.boat_number);
+  const thirdRanking = [...activeScores].sort((a, b) => b.third_power - a.third_power).map(b => b.boat_number);
+
+  const honmei = firstRanking[0];
+  const taiko = secondRanking[0];
   const ana = [...activeScores].sort((a, b) => b.ana_potential - a.ana_potential)[0]?.boat_number;
-  const keshi = ranked[ranked.length - 1]?.boat_number;
-  const judgedTrifectas = trifectas.map((t) => {
-    const { judgment, basis } = judgeTrifecta(t, { settings, topBoatTotal: top?.total_power || 50, dataConfidence, exhibitionReady, stage });
-    return { ...t, judgment, basis };
-  });
+  const keshi = firstRanking[firstRanking.length - 1];
+
+  const topTrifecta = trifectas[0];
   const grade = gradePrediction(activeScores);
-  const topTrifecta = judgedTrifectas[0];
-  const betPlan = decideBetPlan(judgedTrifectas, settings, { dataConfidence, stage });
+
   return {
-    stage, boatScores, trifectas: judgedTrifectas,
-    prediction_grade: grade, data_confidence: dataConfidence,
+    stage, boatScores, trifectas,
+    race_scenario: raceScenario,
+    prediction_grade: grade,
+    data_confidence: dataConfidence,
     honmei_boat: honmei, taiko_boat: taiko, ana_boat: ana, keshi_boat: keshi,
     top_trifecta: topTrifecta?.combination, top_probability: topTrifecta?.probability,
-    top_odds: topTrifecta?.actual_odds != null ? topTrifecta.actual_odds : topTrifecta?.estimated_odds,
-    top_expected_value: topTrifecta?.expected_value, top_judgment: topTrifecta?.judgment,
-    exhibition_ready: exhibitionReady, bet_plan: betPlan,
+    first_ranking: firstRanking, second_ranking: secondRanking, third_ranking: thirdRanking,
+    exhibition_ready: activeScores.some(s => s.exhibition_delta !== 0),
   };
+}
+
+// 互換用: 判定は参考情報として残す
+export function judgeTrifecta(trifecta, ctx = {}) {
+  const { settings = {}, dataConfidence = 50 } = ctx;
+  const prob = trifecta.probability || 0;
+  if (prob < (settings.min_probability || 5)) return { judgment: "SKIP", basis: `確率${prob}%不足` };
+  if (dataConfidence < (settings.min_confidence || 40)) return { judgment: "SKIP", basis: "データ信頼度不足" };
+  if (prob >= 15 && dataConfidence >= 60) return { judgment: "STRONG_BUY", basis: `確率${prob}%・信頼度${dataConfidence}` };
+  if (prob >= 10) return { judgment: "BUY", basis: `確率${prob}%` };
+  if (prob >= 6) return { judgment: "WATCH", basis: `確率${prob}%` };
+  return { judgment: "SKIP", basis: `確率${prob}%低` };
 }

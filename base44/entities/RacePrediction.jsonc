@@ -5,6 +5,9 @@
     "race_id": {
       "type": "string"
     },
+    "race_key": {
+      "type": "string"
+    },
     "stage": {
       "type": "string",
       "enum": [
@@ -55,8 +58,7 @@
       "type": "number"
     },
     "top_expected_value": {
-      "type": "number",
-      "description": "\u671f\u5f85\u5024(%)"
+      "type": "number"
     },
     "top_judgment": {
       "type": "string",
@@ -66,6 +68,51 @@
         "WATCH",
         "SKIP"
       ]
+    },
+    "race_scenario": {
+      "type": "object",
+      "description": "\u5c55\u958b\u4e88\u6e2c",
+      "properties": {
+        "primary": {
+          "type": "string",
+          "description": "\u4e3b\u8981\u5c55\u958b"
+        },
+        "secondary": {
+          "type": "string",
+          "description": "\u526f\u6b21\u5c55\u958b"
+        },
+        "confidence": {
+          "type": "number",
+          "description": "\u5c55\u958b\u4fe1\u983c\u5ea60-100"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "first_ranking": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "1\u7740\u5019\u88dc\u9806\u4f4d(\u8247\u756a\u914d\u5217)"
+    },
+    "second_ranking": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "2\u7740\u5019\u88dc\u9806\u4f4d(\u8247\u756a\u914d\u5217)"
+    },
+    "third_ranking": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "3\u7740\u5019\u88dc\u9806\u4f4d(\u8247\u756a\u914d\u5217)"
     },
     "status": {
       "type": "string",
