@@ -178,7 +178,14 @@ export async function getOrCreatePrediction(client, raceId, raceKey, stage) {
 // 予想を実行して保存(サーバー側)。既存子レコードは置換。
 export async function runAndSavePrediction(client, race, entries, settings, stage, oddsMap = {}) {
   const cfg = { ...settings, stage };
-  const result = runPrediction(entries, cfg, { oddsMap });
+  // 選手プロファイルを取得してエントリに付与
+  const profiles = await client.asServiceRole.entities.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
+  const profileByReg = new Map(profiles.map(p => [p.registration_number, p]));
+  const entriesWithProfiles = entries.map(e => {
+    const reg = String(e.registration_number || e.register_number || '').trim();
+    return { ...e, _profile: reg ? profileByReg.get(reg) || null : null };
+  });
+  const result = runPrediction(entriesWithProfiles, cfg, { oddsMap });
 
   const { id: predictionId } = await getOrCreatePrediction(client, race.id, race.race_key, stage);
 
