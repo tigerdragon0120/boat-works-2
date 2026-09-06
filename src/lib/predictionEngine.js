@@ -106,6 +106,45 @@ export function computeBoatScores(entry, settings) {
     return parts.reduce((a, b) => a + b, 0) / parts.length;
   })();
 
+  // === 選手プロファイルベースの成分 ===
+  const profile = entry._profile;
+  components.profile_win = (() => {
+    if (!profile) return null;
+    const s6 = profile.stats_6m, sAll = profile.stats_all;
+    const s = (s6?.sample_size >= 5) ? s6 : (sAll?.sample_size >= 5 ? sAll : null);
+    return s?.win_rate != null ? clamp(s.win_rate, 0, 100) : null;
+  })();
+  components.profile_f2 = (() => {
+    if (!profile) return null;
+    const s6 = profile.stats_6m, sAll = profile.stats_all;
+    const s = (s6?.sample_size >= 5) ? s6 : (sAll?.sample_size >= 5 ? sAll : null);
+    return s?.top2_rate != null ? clamp(s.top2_rate, 0, 100) : null;
+  })();
+  components.profile_f3 = (() => {
+    if (!profile) return null;
+    const s6 = profile.stats_6m, sAll = profile.stats_all;
+    const s = (s6?.sample_size >= 5) ? s6 : (sAll?.sample_size >= 5 ? sAll : null);
+    return s?.top3_rate != null ? clamp(s.top3_rate, 0, 100) : null;
+  })();
+  components.profile_course_win = (() => {
+    if (!profile || !entry.boat_number) return null;
+    const cs = profile.course_stats?.[String(entry.boat_number)];
+    if (!cs || cs.samples < 3) return null;
+    return cs.win_rate != null ? clamp(cs.win_rate, 0, 100) : null;
+  })();
+  components.profile_course_f2 = (() => {
+    if (!profile || !entry.boat_number) return null;
+    const cs = profile.course_stats?.[String(entry.boat_number)];
+    if (!cs || cs.samples < 3) return null;
+    return cs.top2_rate != null ? clamp(cs.top2_rate, 0, 100) : null;
+  })();
+  components.front_runner = profile?.winning_style?.front_runner_score != null ? clamp(profile.winning_style.front_runner_score, 0, 100) : null;
+  components.chaser = profile?.winning_style?.chaser_score != null ? clamp(profile.winning_style.chaser_score, 0, 100) : null;
+  components.st_stability = profile?.winning_style?.st_stability != null ? clamp(profile.winning_style.st_stability, 0, 100) : null;
+  components.attack = profile?.winning_style?.attack_score != null ? clamp(profile.winning_style.attack_score, 0, 100) : null;
+  components.momentum = profile?.momentum != null ? clamp(50 + profile.momentum * 20, 0, 100) : null;
+  const profileConfidence = profile?.data_confidence != null ? profile.data_confidence : 0;
+
   // 穴期待度: 総合力は低いが展示や節間が良い → 穴
   components.ana_potential = null; // 後段で計算
 
@@ -120,6 +159,7 @@ export function computeBoatScores(entry, settings) {
     totalW.push(weightOf(key));
   };
 
+  const profileWeight = profileConfidence / 100;
   add(components.national_win, "national_win");
   add(components.local_win, "local_win");
   add(components.national_f2, "f2_rate");
@@ -136,6 +176,10 @@ export function computeBoatScores(entry, settings) {
   add(components.local_fit, "local_fit");
   add(components.section, "section");
   if (isFinal) add(components.exhibition, "exhibition");
+  if (components.profile_win !== null) add(components.profile_win, "national_win");
+  if (components.profile_f2 !== null) add(components.profile_f2, "f2_rate");
+  if (components.profile_f3 !== null) add(components.profile_f3, "f3_rate");
+  if (components.momentum !== null) add(components.momentum, "section");
 
   const total_power = totalW.length ? clamp(totalRaw.reduce((a, b) => a + b, 0) / totalW.reduce((a, b) => a + b, 0), 0, 100) : 50;
 
@@ -146,8 +190,12 @@ export function computeBoatScores(entry, settings) {
   // 旧ロジックは「総合力」と「小さなコース加点」を同じ配列で平均してしまい、
   // 1着力が不自然に30前後まで圧縮されて全レースC判定になりやすかった。
   // v2では各要素を0-100スケールに揃えてから加重平均する。
-  const courseFirstScore = { 1: 100, 2: 78, 3: 66, 4: 54, 5: 43, 6: 34 }[entry.boat_number] || 50;
-  const courseSecondScore = { 1: 72, 2: 82, 3: 78, 4: 68, 5: 58, 6: 50 }[entry.boat_number] || 60;
+  const courseFirstScore = components.profile_course_win !== null
+    ? components.profile_course_win
+    : { 1: 100, 2: 78, 3: 66, 4: 54, 5: 43, 6: 34 }[entry.boat_number] || 50;
+  const courseSecondScore = components.profile_course_f2 !== null
+    ? components.profile_course_f2
+    : { 1: 72, 2: 82, 3: 78, 4: 68, 5: 58, 6: 50 }[entry.boat_number] || 60;
   const courseThirdScore = { 1: 68, 2: 76, 3: 78, 4: 74, 5: 66, 6: 58 }[entry.boat_number] || 65;
 
   const weightedAverage = (pairs, fallback = 50) => {
@@ -157,24 +205,37 @@ export function computeBoatScores(entry, settings) {
     return denom > 0 ? validPairs.reduce((a, [score, weight]) => a + score * weight, 0) / denom : fallback;
   };
 
+  const styleBonus1 = (() => {
+    if (entry.boat_number <= 3 && components.front_runner !== null) return components.front_runner;
+    if (entry.boat_number >= 4 && components.chaser !== null) return components.chaser;
+    return null;
+  })();
+
   const first_power = clamp(weightedAverage([
-    [total_power, isFinal ? 0.50 : 0.60],
-    [components.st, isFinal ? 0.15 : 0.20],
+    [total_power, isFinal ? 0.45 : 0.50],
+    [components.profile_win, 0.15],
+    [components.st, isFinal ? 0.10 : 0.15],
     [courseFirstScore, 0.20],
+    [styleBonus1, 0.05],
+    [components.momentum, 0.05],
     [isFinal ? components.exhibition : null, 0.15],
   ]), 5, 100);
 
   const second_power = clamp(weightedAverage([
-    [total_power, isFinal ? 0.55 : 0.65],
-    [components.section, 0.15],
+    [total_power, isFinal ? 0.50 : 0.55],
+    [components.profile_f2, 0.15],
+    [components.section, 0.10],
     [courseSecondScore, 0.10],
+    [components.momentum, 0.05],
     [isFinal ? components.exhibition : null, 0.20],
   ]), 5, 100);
 
   const third_power = clamp(weightedAverage([
-    [total_power, 0.68],
-    [components.section, 0.12],
-    [courseThirdScore, 0.12],
+    [total_power, 0.60],
+    [components.profile_f3, 0.13],
+    [components.section, 0.10],
+    [courseThirdScore, 0.10],
+    [components.momentum, 0.07],
     [isFinal ? components.exhibition : null, 0.08],
   ]), 5, 100);
 
@@ -208,11 +269,20 @@ export function computeBoatScores(entry, settings) {
   if (isFinal && components.exhibition !== null && components.exhibition >= 70) reasons.push(`展示タイム${entry.exhibition_rank}位`);
   if (components.section !== null && components.section >= 65) reasons.push("節間好調");
   if (components.st !== null && components.st >= 70) reasons.push("スタート安定");
+  if (components.profile_win !== null && components.profile_win >= 50) reasons.push(`直近勝率${components.profile_win}%`);
+  if (components.profile_course_win !== null && components.profile_course_win >= 40) reasons.push(`${entry.boat_number}コース勝率${components.profile_course_win}%`);
+  if (components.front_runner !== null && components.front_runner >= 60 && entry.boat_number <= 3) reasons.push("逃げ型(内コース得意)");
+  if (components.chaser !== null && components.chaser >= 50 && entry.boat_number >= 4) reasons.push("追込型(外コース差し)");
+  if (components.st_stability !== null && components.st_stability >= 70) reasons.push("ST安定性高い");
+  if (components.momentum !== null && components.momentum >= 65) reasons.push("勢い上向き");
+  if (components.attack !== null && components.attack >= 50) reasons.push("攻撃型(位置上げ)");
 
   if (components.st !== null && components.st < 55) notes.push("平均STがやや遅い");
   if (components.f_penalty !== null && entry.f_count > 0) notes.push(`F数${entry.f_count}`);
   if (components.motor_f2 !== null && components.motor_f2 < 40) notes.push("モーター低調");
   if (isFinal && components.exhibition !== null && components.exhibition < 45) notes.push("展示伸び悩む");
+  if (components.momentum !== null && components.momentum < 40) notes.push("最近調子落ち");
+  if (profile && profile.total_samples < 5) notes.push("プロファイルデータ少");
 
   return {
     boat_number: entry.boat_number,
