@@ -1,0 +1,272 @@
+{
+  "name": "RacerPerformanceProfile",
+  "type": "object",
+  "properties": {
+    "registration_number": {
+      "type": "string",
+      "description": "\u9078\u624b\u767b\u9332\u756a\u53f7"
+    },
+    "racer_name": {
+      "type": "string"
+    },
+    "grade_class": {
+      "type": "string"
+    },
+    "stats_6m": {
+      "type": "object",
+      "description": "\u904e\u53bb6\u30f6\u6708\u6210\u7e3e",
+      "properties": {
+        "sample_size": {
+          "type": "number"
+        },
+        "win_rate": {
+          "type": "number"
+        },
+        "top2_rate": {
+          "type": "number"
+        },
+        "top3_rate": {
+          "type": "number"
+        },
+        "avg_finish": {
+          "type": "number"
+        },
+        "avg_st": {
+          "type": "number"
+        }
+      }
+    },
+    "stats_1y": {
+      "type": "object",
+      "description": "\u904e\u53bb1\u5e74\u6210\u7e3e",
+      "properties": {
+        "sample_size": {
+          "type": "number"
+        },
+        "win_rate": {
+          "type": "number"
+        },
+        "top2_rate": {
+          "type": "number"
+        },
+        "top3_rate": {
+          "type": "number"
+        },
+        "avg_finish": {
+          "type": "number"
+        },
+        "avg_st": {
+          "type": "number"
+        }
+      }
+    },
+    "stats_3y": {
+      "type": "object",
+      "description": "\u904e\u53bb3\u5e74\u6210\u7e3e",
+      "properties": {
+        "sample_size": {
+          "type": "number"
+        },
+        "win_rate": {
+          "type": "number"
+        },
+        "top2_rate": {
+          "type": "number"
+        },
+        "top3_rate": {
+          "type": "number"
+        },
+        "avg_finish": {
+          "type": "number"
+        },
+        "avg_st": {
+          "type": "number"
+        }
+      }
+    },
+    "stats_all": {
+      "type": "object",
+      "description": "\u5168\u671f\u9593\u6210\u7e3e",
+      "properties": {
+        "sample_size": {
+          "type": "number"
+        },
+        "win_rate": {
+          "type": "number"
+        },
+        "top2_rate": {
+          "type": "number"
+        },
+        "top3_rate": {
+          "type": "number"
+        },
+        "avg_finish": {
+          "type": "number"
+        },
+        "avg_st": {
+          "type": "number"
+        }
+      }
+    },
+    "course_stats": {
+      "type": "object",
+      "description": "\u30b3\u30fc\u30b9\u5225\u6210\u7e3e(1-6)",
+      "properties": {
+        "1": {
+          "type": "object",
+          "properties": {
+            "samples": {
+              "type": "number"
+            },
+            "win_rate": {
+              "type": "number"
+            },
+            "top2_rate": {
+              "type": "number"
+            },
+            "top3_rate": {
+              "type": "number"
+            }
+          }
+        },
+        "2": {
+          "type": "object",
+          "properties": {
+            "samples": {
+              "type": "number"
+            },
+            "win_rate": {
+              "type": "number"
+            },
+            "top2_rate": {
+              "type": "number"
+            },
+            "top3_rate": {
+              "type": "number"
+            }
+          }
+        },
+        "3": {
+          "type": "object",
+          "properties": {
+            "samples": {
+              "type": "number"
+            },
+            "win_rate": {
+              "type": "number"
+            },
+            "top2_rate": {
+              "type": "number"
+            },
+            "top3_rate": {
+              "type": "number"
+            }
+          }
+        },
+        "4": {
+          "type": "object",
+          "properties": {
+            "samples": {
+              "type": "number"
+            },
+            "win_rate": {
+              "type": "number"
+            },
+            "top2_rate": {
+              "type": "number"
+            },
+            "top3_rate": {
+              "type": "number"
+            }
+          }
+        },
+        "5": {
+          "type": "object",
+          "properties": {
+            "samples": {
+              "type": "number"
+            },
+            "win_rate": {
+              "type": "number"
+            },
+            "top2_rate": {
+              "type": "number"
+            },
+            "top3_rate": {
+              "type": "number"
+            }
+          }
+        },
+        "6": {
+          "type": "object",
+          "properties": {
+            "samples": {
+              "type": "number"
+            },
+            "win_rate": {
+              "type": "number"
+            },
+            "top2_rate": {
+              "type": "number"
+            },
+            "top3_rate": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    },
+    "winning_style": {
+      "type": "object",
+      "description": "\u52dd\u3061\u65b9\u30d7\u30ed\u30d5\u30a1\u30a4\u30eb",
+      "properties": {
+        "front_runner_score": {
+          "type": "number",
+          "description": "\u9003\u3052\u578b\u30b9\u30b3\u30a20-100"
+        },
+        "chaser_score": {
+          "type": "number",
+          "description": "\u8ffd\u8fbc\u578b\u30b9\u30b3\u30a20-100"
+        },
+        "st_stability": {
+          "type": "number",
+          "description": "ST\u5b89\u5b9a\u60270-100"
+        },
+        "attack_score": {
+          "type": "number",
+          "description": "\u653b\u6483\u578b\u30b9\u30b3\u30a20-100"
+        },
+        "defense_score": {
+          "type": "number",
+          "description": "\u5b88\u5099\u578b\u30b9\u30b3\u30a20-100"
+        }
+      }
+    },
+    "recent_finishes": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "\u76f4\u8fd110\u7740\u9806"
+    },
+    "momentum": {
+      "type": "number",
+      "description": "\u52e2\u3044\u30b9\u30b3\u30a2(\u6700\u8fd1vs\u904e\u53bb)"
+    },
+    "total_samples": {
+      "type": "number",
+      "description": "\u7dcf\u30b5\u30f3\u30d7\u30eb\u6570"
+    },
+    "data_confidence": {
+      "type": "number",
+      "description": "\u30c7\u30fc\u30bf\u4fe1\u983c\u5ea60-100"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "registration_number"
+  ]
+}
