@@ -63,7 +63,16 @@ export function mapRace(bw) {
     exhibition_ready: !!bw.exhibition_ready,
     scratched_boats: Array.isArray(bw.scratched_boats) ? bw.scratched_boats.map((n) => num(n)).filter((n) => n !== null) : [],
     status: str(bw.status) || "scheduled",
+    // 結果データ(APIはresults配列ではなくraceオブジェクト直下に格納)
+    result_trifecta: str(bw.result_trifecta) || null,
+    payout_trifecta: num(bw.payout_trifecta) != null ? num(bw.payout_trifecta) : num(bw.payout),
   };
+}
+
+// result_trifecta("6-4-3")から着順配列[6,4,3]を逆算。4-6着は不明なので1-3着のみ。
+export function trifectaToFinishOrder(trifecta) {
+  if (!trifecta) return [];
+  return String(trifecta).split("-").map((n) => num(n)).filter((n) => n !== null);
 }
 
 // BOAT WORKS RaceEntry + SeriesRacerPoint → BOAT WORKS 2 RaceEntry
@@ -147,9 +156,10 @@ export function mapEntry(bw, series = {}) {
 }
 
 // BOAT WORKS RaceResult → BOAT WORKS 2 RaceResult
+// APIはresults配列またはraceオブジェクト直下に結果を格納する。両方に対応。
 export function mapResult(bw) {
-  const trifecta = str(bw.trifecta) || (bw.result_1 && bw.result_2 && bw.result_3 ? `${bw.result_1}-${bw.result_2}-${bw.result_3}` : null);
-  const finish_order = [bw.result_1, bw.result_2, bw.result_3].map((n) => num(n)).filter((n) => n !== null);
+  const trifecta = str(bw.result_trifecta) || str(bw.trifecta) || (bw.result_1 && bw.result_2 && bw.result_3 ? `${bw.result_1}-${bw.result_2}-${bw.result_3}` : null);
+  const finish_order = trifectaToFinishOrder(trifecta);
   return {
     race_key: bw.race_key,
     result_trifecta: trifecta,

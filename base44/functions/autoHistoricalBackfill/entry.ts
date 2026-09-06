@@ -74,8 +74,9 @@ export default async function(req){
             entriesSaved++;
           }
           const srcResult=(p.results||[]).find((r)=>(r.race_key||buildRaceKey(r.race_date,r.venue_code,r.race_number))===raceData.race_key);
-          if(srcResult){
-            const m=mapResult(srcResult);
+          const raceResultData=srcResult||(srcRace.result_trifecta?srcRace:null);
+          if(raceResultData&&raceResultData.result_trifecta){
+            const m=mapResult(raceResultData);
             if(m.result_trifecta){
               const old=(await base44.asServiceRole.entities.RaceResult.filter({race_id:race.id},'-finished_at',1).catch(()=>[]))[0];
               const doc={race_id:race.id,race_key:raceData.race_key,result_trifecta:m.result_trifecta,finish_order:m.finish_order||[],payout:m.payout||0,is_finished:true,finished_at:new Date().toISOString()};

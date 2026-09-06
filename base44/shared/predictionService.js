@@ -387,11 +387,12 @@ export async function syncAndPredict(client, payload, opts = {}) {
         } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "FINAL予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
       }
 
-      // 結果
+      // 結果: APIはresults配列またはraceオブジェクト直下(result_trifecta)に格納
       const res = results.find((r) => (r.race_key || buildRaceKey(r.race_date, r.venue_code, r.race_number)) === raceData.race_key);
-      if (res) {
+      const raceResultData = res || (bwRace.result_trifecta ? bwRace : null);
+      if (raceResultData && raceResultData.result_trifecta) {
         try {
-          const mapped = mapResult(res);
+          const mapped = mapResult(raceResultData);
           if (opts.skip_verification) await upsertResultOnly(client, race, mapped);
           else await upsertResultAndVerify(client, race, mapped);
           summary.results_saved++; addVenue(raceData.venue_code, "result");
