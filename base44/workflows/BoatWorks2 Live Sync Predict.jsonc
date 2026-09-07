@@ -30,16 +30,15 @@
         "sync_predict": {
           "call": "invoke_backend_function",
           "with": {
-            "function_name": "syncFromBoatWorks",
+            "function_name": "runIncrementalBoatWorksRecovery",
             "args": {
-              "mode": "api",
               "date": "2026-09-08"
             }
           },
           "then": "end",
           "x-base44": {
-            "title": "BOAT WORKS 2 \u540c\u671f\u30fb\u4e8b\u524d\u4e88\u60f3",
-            "description": "BOAT WORKS\u306e9\u67088\u65e5\u30c7\u30fc\u30bf\u3092\u540c\u671f\u3057\u3001\u5168\u30ec\u30fc\u30b9\u4e88\u60f3\u3092\u751f\u6210"
+            "title": "BOAT WORKS 2 \u6bb5\u968e\u540c\u671f\u30fb\u4e8b\u524d\u4e88\u60f3",
+            "description": "\u672a\u540c\u671f\u30fb\u672aPRE\u306e\u5834\u3060\u30511\u56de2\u5834\u305a\u3064\u51e6\u7406\u3057\u3001Rate limit\u3092\u56de\u907f\u3057\u3066\u5168\u4ef6\u3092\u5b8c\u4e86\u3055\u305b\u308b"
           }
         }
       }
