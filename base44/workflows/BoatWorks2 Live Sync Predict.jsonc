@@ -1,0 +1,48 @@
+{
+  "name": "BoatWorks2 Live Sync Predict",
+  "description": "BOAT WORKS\u304b\u3089\u5f53\u65e5\u30c7\u30fc\u30bf\u3092\u540c\u671f\u3057\u3001BOAT WORKS 2\u306e\u4e8b\u524d\u4e88\u60f3\u3092\u81ea\u52d5\u751f\u6210\u3059\u308b\u3002",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "*/5 * * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "boatworks2_live_sync_predict",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "sync_predict": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "syncFromBoatWorks",
+            "args": {
+              "mode": "api",
+              "date": "2026-09-08"
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "BOAT WORKS 2 \u540c\u671f\u30fb\u4e8b\u524d\u4e88\u60f3",
+            "description": "BOAT WORKS\u306e9\u67088\u65e5\u30c7\u30fc\u30bf\u3092\u540c\u671f\u3057\u3001\u5168\u30ec\u30fc\u30b9\u4e88\u60f3\u3092\u751f\u6210"
+          }
+        }
+      }
+    ]
+  }
+}
