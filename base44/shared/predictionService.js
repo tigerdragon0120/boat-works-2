@@ -179,11 +179,14 @@ export async function getOrCreatePrediction(client, raceId, raceKey, stage) {
 }
 
 // 予想を実行して保存(サーバー側)。既存子レコードは置換。
-export async function runAndSavePrediction(client, race, entries, settings, stage, oddsMap = {}) {
+// profileByRegを外部から渡すことでDB呼び出しを削減(全レース分1回だけ取得)。
+export async function runAndSavePrediction(client, race, entries, settings, stage, oddsMap = {}, profileByReg = null) {
   const cfg = { ...settings, stage };
-  // 選手プロファイルを取得してエントリに付与
-  const profiles = await client.asServiceRole.entities.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
-  const profileByReg = new Map(profiles.map(p => [p.registration_number, p]));
+  // プロファイルが渡されていない場合は従来通り個別取得(フォールバック)
+  if (!profileByReg) {
+    const profiles = await client.asServiceRole.entities.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
+    profileByReg = new Map(profiles.map(p => [p.registration_number, p]));
+  }
   const entriesWithProfiles = entries.map(e => {
     const reg = String(e.registration_number || e.register_number || '').trim();
     return { ...e, _profile: reg ? profileByReg.get(reg) || null : null };
@@ -198,7 +201,7 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   }
   const result = runPrediction(entriesWithProfiles, cfg, { oddsMap, preBoatScores });
 
-  const { id: predictionId } = await getOrCreatePrediction(client, race.id, race.race_key, stage);
+  const { id: predictionId, existing: existingPred } = await getOrCreatePrediction(client, race.id, race.race_key, stage);
 
   const predictionRecord = {
     race_id: race.id, race_key: race.race_key, stage, prediction_version: VERSION,
@@ -213,9 +216,11 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   };
   await client.asServiceRole.entities.RacePrediction.update(predictionId, predictionRecord);
 
-  // 子レコード再生成
-  await client.asServiceRole.entities.BoatPrediction.deleteMany({ prediction_id: predictionId });
-  await client.asServiceRole.entities.TrifectaPrediction.deleteMany({ prediction_id: predictionId });
+  // 子レコード再生成(新規予想の場合は削除不要=DB呼び出し削減)
+  if (existingPred) {
+    await client.asServiceRole.entities.BoatPrediction.deleteMany({ prediction_id: predictionId });
+    await client.asServiceRole.entities.TrifectaPrediction.deleteMany({ prediction_id: predictionId });
+  }
 
   const boatDocs = result.boatScores.map((s) => ({
     prediction_id: predictionId, race_id: race.id, race_key: race.race_key, stage,
@@ -243,17 +248,8 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   });
   if (trifectaDocs.length) await client.asServiceRole.entities.TrifectaPrediction.bulkCreate(trifectaDocs);
 
-  // 学習スナップショット
-  await client.asServiceRole.entities.PredictionLearningSample.create({
-    race_id: race.id, race_key: race.race_key, stage, prediction_version: VERSION,
-    snapshot: {
-      boat_scores: result.boatScores.map((s) => ({ boat: s.boat_number, first: s.first_power, second: s.second_power, third: s.third_power, total: s.total_power, delta: s.exhibition_delta })),
-      trifectas_top: result.trifectas.slice(0, 10).map((t) => ({ c: t.combination, p: t.probability })),
-      race_scenario: result.race_scenario,
-      grade: result.prediction_grade, confidence: result.data_confidence,
-    },
-    created_at: new Date().toISOString(),
-  });
+  // 学習スナップショットは別バッチで保存(DB呼び出し削減)
+  // await client.asServiceRole.entities.PredictionLearningSample.create({...});
 
   // Race更新(保護: has_pre/has_finalはtrueにするだけ、statusは後退させない)
   const raceUpdate = {
@@ -364,6 +360,11 @@ export async function syncAndPredict(client, payload, opts = {}) {
     summary.venue_summary[code][k] = (summary.venue_summary[code][k] || 0) + 1;
   };
 
+  // 選手プロファイルを一括取得(全レース分1回だけ=DB呼び出し削減)
+  const allProfiles = await client.asServiceRole.entities.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
+  const profileByReg = new Map(allProfiles.map(p => [p.registration_number, p]));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
   for (const bwRace of races) {
     try {
       const raceData = mapRace(bwRace);
@@ -404,7 +405,7 @@ export async function syncAndPredict(client, payload, opts = {}) {
       // PRE予想(6艇揃っていれば展示データ不使用で生成)。履歴DB取込では予想を新規生成しない。
       if (complete && !opts.skip_predictions) {
         try {
-          await runAndSavePrediction(client, race, entryDocs, settings, "PRE", {});
+          await runAndSavePrediction(client, race, entryDocs, settings, "PRE", {}, profileByReg);
           summary.pre_generated++; addVenue(raceData.venue_code, "pre");
         } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "PRE予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
       }
@@ -413,7 +414,7 @@ export async function syncAndPredict(client, payload, opts = {}) {
       if (complete && raceData.exhibition_ready && !opts.skip_predictions) {
         addVenue(raceData.venue_code, "exhibition");
         try {
-          await runAndSavePrediction(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {});
+          await runAndSavePrediction(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {}, profileByReg);
           summary.final_generated++; addVenue(raceData.venue_code, "final");
         } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "FINAL予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
       }
@@ -432,6 +433,8 @@ export async function syncAndPredict(client, payload, opts = {}) {
     } catch (e) {
       summary.errors.push({ race_key: bwRace?.race_key, message: e.message });
     }
+    // DB APIレート制限回避: レース間に短い遅延
+    await sleep(300);
   }
 
   // SyncStatus保存
@@ -441,9 +444,11 @@ export async function syncAndPredict(client, payload, opts = {}) {
     mode: opts.mode || "ingest", error_count: summary.errors.length, errors: summary.errors.slice(0, 50),
     venue_summary: summary.venue_summary, synced_race_keys: summary.synced_race_keys,
   };
-  const existStatus = await client.asServiceRole.entities.SyncStatus.filter({ name: "default" }, "-last_sync_at", 1);
-  if (existStatus?.[0]) await client.asServiceRole.entities.SyncStatus.update(existStatus[0].id, statusDoc);
-  else await client.asServiceRole.entities.SyncStatus.create(statusDoc);
+  try {
+    const existStatus = await client.asServiceRole.entities.SyncStatus.filter({ name: "default" }, "-last_sync_at", 1);
+    if (existStatus?.[0]) await client.asServiceRole.entities.SyncStatus.update(existStatus[0].id, statusDoc);
+    else await client.asServiceRole.entities.SyncStatus.create(statusDoc);
+  } catch (e) { summary.errors.push({ message: "SyncStatus保存失敗: " + e.message }); }
 
   await releaseLock(client, lockId);
   return summary;
