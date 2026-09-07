@@ -36,10 +36,13 @@ export function mapRace(bw) {
   const venue_code = str(bw.venue_code) || str(bw.venue);
   const race_number = num(bw.race_number) || num(bw.race_no);
   const race_key = bw.race_key || buildRaceKey(race_date, venue_code, race_number);
+  // race_keyから逆算して補完(ソースに個別フィールドが無い場合の保険)
+  const fallback = parseRaceKey(race_key);
   return {
     race_key,
-    race_date,
-    venue_code,
+    race_date: race_date || fallback.race_date,
+    venue_code: venue_code || fallback.venue_code,
+    race_number: race_number || fallback.race_number,
     venue: str(bw.venue_name) || str(bw.venue) || "",
     venue_name: str(bw.venue_name) || str(bw.venue) || "",
     race_number,

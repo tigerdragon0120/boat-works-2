@@ -1,7 +1,7 @@
 // サーバー側 同期+予想サービス。バックエンド関数から呼ばれる。
 // client は createClientFromRequest(req) または asServiceRole。
 import { runPrediction, judgeTrifecta } from "./predictionEngine.js";
-import { buildRaceKey, mapRace, mapEntry, mapResult } from "./raceKey.js";
+import { buildRaceKey, parseRaceKey, mapRace, mapEntry, mapResult } from "./raceKey.js";
 import { acquireLock, releaseLock, cleanupExpiredLocks } from "./concurrencyLock.js";
 
 const VERSION = "v3";
@@ -12,11 +12,13 @@ const DEFAULT_SETTINGS = {
   weights: { national_win: 1.0, local_win: 1.2, f2_rate: 1.0, f3_rate: 0.8, st: 1.0, motor: 1.1, boat: 0.9, exhibition: 1.3, local_fit: 1.0, section: 1.0 },
 };
 
-// 既存レコードを保護しつつマージ: incomingの非nullだけ上書き。空配列で上書きしない。
+// 既存レコードを保護しつつマージ: incomingの非null/非空/非NaNだけ上書き。空配列で上書きしない。
 function mergeProtect(existing, incoming) {
   const out = { ...existing };
   for (const [k, v] of Object.entries(incoming)) {
     if (v === null || v === undefined) continue;
+    if (typeof v === "number" && !Number.isFinite(v)) continue; // NaNをスキップ
+    if (typeof v === "string" && v === "") continue; // 空文字で上書きしない
     if (Array.isArray(v) && v.length === 0 && Array.isArray(existing?.[k]) && existing[k].length > 0) continue;
     out[k] = v;
   }
@@ -106,9 +108,10 @@ export async function dedupEntriesForRace(client, raceId, raceKey) {
     if (list.length <= 1) continue;
     // 完全度: 展示/登録番号/勝率/更新時刻
     const sorted = list.sort((a, b) => {
-      const ca = (a.exhibition_time != null ? 10 : 0) + (a.registration_number ? 5 : 0) + (a.national_win_rate != null ? 3 : 0) + String(a.updated_date || "").localeCompare(String(b.updated_date || ""));
+      const ca = (a.exhibition_time != null ? 10 : 0) + (a.registration_number ? 5 : 0) + (a.national_win_rate != null ? 3 : 0);
       const cb = (b.exhibition_time != null ? 10 : 0) + (b.registration_number ? 5 : 0) + (b.national_win_rate != null ? 3 : 0);
-      return cb - ca;
+      if (cb !== ca) return cb - ca;
+      return String(b.updated_date || "").localeCompare(String(a.updated_date || ""));
     });
     const winner = sorted[0];
     const losers = sorted.slice(1);
@@ -380,13 +383,16 @@ export async function syncAndPredict(client, payload, opts = {}) {
         // 親Raceを正としてキー情報を強制補完する。
         // BOAT WORKS側のRaceEntryフィールド欠落や古いexportが混じっても、race_keyだけでなく
         // race_date / venue_code / race_number を必ずBOAT WORKS 2側へ保存する。
+        // race_keyから逆算してrace_date/venue_code/race_numberを必ず補完。
+        // ソースの個別フィールドが欠けていても、race_keyが正しければ正しい値が入る。
+        const parsedKey = parseRaceKey(raceData.race_key);
         const entryData = {
           ...mapEntry(bwEntry, seriesMap[skey] || {}),
           race_id: race.id,
           race_key: raceData.race_key,
-          race_date: raceData.race_date,
-          venue_code: String(raceData.venue_code || "").padStart(2, "0"),
-          race_number: Number(raceData.race_number),
+          race_date: raceData.race_date || parsedKey?.race_date || null,
+          venue_code: raceData.venue_code || parsedKey?.venue_code || null,
+          race_number: raceData.race_number || parsedKey?.race_number || null,
         };
         const saved = await upsertEntry(client, entryData);
         entryDocs.push(saved);
