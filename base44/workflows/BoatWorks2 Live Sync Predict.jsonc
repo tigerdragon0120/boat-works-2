@@ -31,9 +31,7 @@
           "call": "invoke_backend_function",
           "with": {
             "function_name": "runIncrementalBoatWorksRecovery",
-            "args": {
-              "date": "2026-09-08"
-            }
+            "args": {}
           },
           "then": "end",
           "x-base44": {
