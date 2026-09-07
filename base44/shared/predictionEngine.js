@@ -19,7 +19,7 @@ const stToScore = (st, refSt = 0.15) => {
 // 期間別重み付けスコア: 6m=45%, 1y=30%, 3y=15% (サンプル不足時は再正規化)
 function periodWeightedScore(profile, metric) {
   if (!profile) return null;
-  const s6m = profile.stats_6m, s1y = profile.stats_1y, s3y = profile.stats_3y;
+  const s6m = profile.stats_6m, s1y = profile.stats_1y, s3y = profile.stats_3y, sAll = profile.stats_all;
   const use6m = s6m?.sample_size >= 5 ? 0.45 : 0;
   const use1y = s1y?.sample_size >= 5 ? 0.30 : 0;
   const use3y = s3y?.sample_size >= 5 ? 0.15 : 0;
@@ -27,9 +27,13 @@ function periodWeightedScore(profile, metric) {
   const v1y = use1y > 0 && s1y[metric] != null ? s1y[metric] : null;
   const v3y = use3y > 0 && s3y[metric] != null ? s3y[metric] : null;
   const pairs = [[v6m, use6m], [v1y, use1y], [v3y, use3y]].filter(([v]) => v != null);
-  if (!pairs.length) return null;
-  const totalW = pairs.reduce((s, [, w]) => s + w, 0);
-  return clamp(pairs.reduce((s, [v, w]) => s + v * w, 0) / totalW, 0, 100);
+  if (pairs.length) {
+    const totalW = pairs.reduce((s, [, w]) => s + w, 0);
+    return clamp(pairs.reduce((s, [v, w]) => s + v * w, 0) / totalW, 0, 100);
+  }
+  // 期間別データ不足時は全期間統計をフォールバック
+  if (sAll?.sample_size >= 3 && sAll[metric] != null) return clamp(sAll[metric], 0, 100);
+  return null;
 }
 
 // コース別スコア

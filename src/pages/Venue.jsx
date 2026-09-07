@@ -5,7 +5,6 @@ import {
   listTodayRaces, getRaceEntries, getPrediction, getBoatPredictions, getTrifectaPredictions,
   generateAndSavePrediction, getSettings,
 } from "@/lib/predictionService";
-import { decideBetPlan } from "@/lib/predictionEngine";
 import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
@@ -90,7 +89,6 @@ export default function Venue() {
   const allTri = view === "FINAL" ? finTri : preTri;
   const probRank = [...allTri].sort((a, b) => a.rank - b.rank).slice(0, 10);
   const evRank = [...allTri].sort((a, b) => b.expected_value - a.expected_value).slice(0, 10);
-  const betPlan = activePred ? decideBetPlan(allTri, { min_confidence: 40 }, { dataConfidence: activePred.data_confidence, stage: view }) : null;
   const compareData = preBoats.length && finBoats.length
     ? [1, 2, 3, 4, 5, 6].map((n) => {
         const pb = preBoats.find((b) => b.boat_number === n);
@@ -142,7 +140,7 @@ export default function Venue() {
             race={race} pre={pre} fin={fin} view={view} setView={setView}
             run={run} busy={busy} entries={entries}
             activePred={activePred} activeBoats={activeBoats} allTri={allTri}
-            betPlan={betPlan} compareData={compareData}
+            compareData={compareData}
           />
           <EntryTable
             race={race} entries={entries}

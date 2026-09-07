@@ -1,6 +1,6 @@
 // 予想の保存・取得・照合をEntity経由で行うサービス層
 import { base44 } from "@/api/base44Client";
-import { runPrediction } from "@/lib/predictionEngine";
+import { runPrediction, judgeTrifecta } from "@/lib/predictionEngine";
 
 const VERSION = "v3";
 
@@ -66,7 +66,25 @@ export async function getTrifectaPredictions(predictionId) {
 // 予想を実行して保存(PRE/FINAL)。重複作成しない。
 export async function generateAndSavePrediction(race, entries, settings, stage, oddsMap = {}) {
   const cfg = { ...settings, stage };
-  const result = runPrediction(entries, cfg, { oddsMap });
+
+  // 選手プロファイルを取得してエントリに付与
+  const profiles = await base44.entities.RacerPerformanceProfile.list('-updated_at', 5000).catch(() => []);
+  const profileByReg = new Map(profiles.map(p => [p.registration_number, p]));
+  const entriesWithProfiles = entries.map(e => {
+    const reg = String(e.registration_number || e.register_number || '').trim();
+    return { ...e, _profile: reg ? profileByReg.get(reg) || null : null };
+  });
+
+  // FINAL時: PRE予想を基準に展示補正を適用
+  let preBoatScores = null;
+  if (stage === "FINAL") {
+    const prePred = await getPrediction(race.id, "PRE");
+    if (prePred) {
+      preBoatScores = await getBoatPredictions(prePred.id);
+    }
+  }
+
+  const result = runPrediction(entriesWithProfiles, cfg, { oddsMap, preBoatScores });
 
   // 既存確認(上書きしない方針だが、同一version/stageが無ければ新規作成)
   const existing = await getPrediction(race.id, stage);
@@ -86,9 +104,10 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     keshi_boat: result.keshi_boat,
     top_trifecta: result.top_trifecta,
     top_probability: result.top_probability,
-    top_odds: result.top_odds,
-    top_expected_value: result.top_expected_value,
-    top_judgment: result.top_judgment,
+    race_scenario: result.race_scenario,
+    first_ranking: result.first_ranking,
+    second_ranking: result.second_ranking,
+    third_ranking: result.third_ranking,
     status: "COMPLETED",
   };
 
@@ -120,6 +139,9 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     local_fit: s.local_fit,
     section_form: s.section_form,
     ana_potential: s.ana_potential,
+    pre_score: s.pre_first,
+    final_score: stage === "FINAL" ? s.first_power : null,
+    delta: s.exhibition_delta,
     reasons: s.reasons,
     notes: s.notes,
   }));
@@ -127,20 +149,26 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
 
   // TrifectaPrediction保存: 3連単120通りをすべて保持する
   const maxBets = settings.max_bets || 10;
-  const trifectaDocs = result.trifectas.map((t) => ({
-    prediction_id: pid,
-    race_id: race.id,
-    race_key: race.race_key,
-    stage,
-    combination: t.combination,
-    rank: t.rank,
-    probability: t.probability,
-    estimated_odds: t.estimated_odds,
-    actual_odds: t.actual_odds,
-    expected_value: t.expected_value,
-    judgment: t.judgment,
-    basis: t.basis,
-  }));
+  const trifectaDocs = result.trifectas.map((t) => {
+    const { judgment, basis } = judgeTrifecta(t, { settings, dataConfidence: result.data_confidence, stage });
+    const actualOdds = oddsMap?.[t.combination] || null;
+    const estimatedOdds = Math.max(1.0, Math.round((100 / Math.max(t.probability, 0.1)) * 0.75 * 10) / 10);
+    const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
+    return {
+      prediction_id: pid,
+      race_id: race.id,
+      race_key: race.race_key,
+      stage,
+      combination: t.combination,
+      rank: t.rank,
+      probability: t.probability,
+      estimated_odds: estimatedOdds,
+      actual_odds: actualOdds,
+      expected_value: ev,
+      judgment,
+      basis,
+    };
+  });
   if (trifectaDocs.length) await base44.entities.TrifectaPrediction.bulkCreate(trifectaDocs);
 
   // 学習用スナップショット保存
@@ -151,11 +179,12 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     snapshot: {
       boat_scores: result.boatScores.map((s) => ({
         boat: s.boat_number,
-        first: s.first_power, second: s.second_power, third: s.third_power, total: s.total_power,
+        first: s.first_power, second: s.second_power, third: s.third_power, total: s.total_power, delta: s.exhibition_delta,
       })),
       trifectas_top: result.trifectas.slice(0, maxBets).map((t) => ({
-        c: t.combination, p: t.probability, ev: t.expected_value, j: t.judgment,
+        c: t.combination, p: t.probability,
       })),
+      race_scenario: result.race_scenario,
       weather: { weather: race.weather, wind_dir: race.wind_dir, wind_speed: race.wind_speed, water_temp: race.water_temp },
       odds: oddsMap,
       grade: result.prediction_grade,
@@ -172,7 +201,6 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     ana_boat: result.ana_boat,
     top_trifecta: result.top_trifecta,
     top_probability: result.top_probability,
-    final_judgment: result.top_judgment,
     status: race.status === "finished" ? "finished" : (stage === "FINAL" ? "final" : "pre"),
   };
   if (stage === "PRE") raceUpdate.has_pre = true;

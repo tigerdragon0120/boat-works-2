@@ -5,7 +5,6 @@ import {
   getRaceEntries, getPrediction, getBoatPredictions, getTrifectaPredictions,
   generateAndSavePrediction, getSettings,
 } from "@/lib/predictionService";
-import { decideBetPlan } from "@/lib/predictionEngine";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
 import { ArrowLeft } from "lucide-react";
@@ -69,7 +68,6 @@ export default function RaceDetail() {
   const allTri = view === "FINAL" ? finTri : preTri;
   const probRank = [...allTri].sort((a, b) => a.rank - b.rank).slice(0, 10);
   const evRank = [...allTri].sort((a, b) => b.expected_value - a.expected_value).slice(0, 10);
-  const betPlan = activePred ? decideBetPlan(allTri, { min_confidence: 40 }, { dataConfidence: activePred.data_confidence, stage: view }) : null;
 
   // PRE→FINAL比較
   const compareData = preBoats.length && finBoats.length
@@ -93,7 +91,7 @@ export default function RaceDetail() {
           race={race} pre={pre} fin={fin} view={view} setView={setView}
           run={run} busy={busy} entries={entries}
           activePred={activePred} activeBoats={activeBoats} allTri={allTri}
-          betPlan={betPlan} compareData={compareData}
+          compareData={compareData}
         />
         <EntryTable
           race={race} entries={entries}
