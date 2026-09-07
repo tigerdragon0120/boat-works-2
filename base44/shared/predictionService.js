@@ -434,7 +434,7 @@ export async function syncAndPredict(client, payload, opts = {}) {
       summary.errors.push({ race_key: bwRace?.race_key, message: e.message });
     }
     // DB APIレート制限回避: レース間に短い遅延
-    await sleep(300);
+    await sleep(600);
   }
 
   // SyncStatus保存
