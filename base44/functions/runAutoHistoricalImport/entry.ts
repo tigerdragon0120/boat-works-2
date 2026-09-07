@@ -41,17 +41,48 @@ export default async function(req) {
     if (!base || !key) throw new Error('BOAT_WORKS_API_BASE / BOAT_WORKS_API_KEY が未設定です');
     const normalized = String(base).replace(/\/$/,'');
     const endpoint = normalized.includes('exportBoatWorksData') ? normalized : `${normalized}/exportBoatWorksData`;
-    const fetchJson = async (url) => {
-      const controller = new AbortController();
-      const timer = setTimeout(()=>controller.abort(),45000);
-      try {
-        const res = await fetch(url,{headers:{Authorization:`Bearer ${key}`},signal:controller.signal});
-        if(!res.ok) throw new Error(`BOAT WORKS API ${res.status}: ${(await res.text().catch(()=>'' )).slice(0,200)}`);
-        return await res.json();
-      } finally { clearTimeout(timer); }
+    // 指数バックオフ付きfetch(Rate limit回避)
+    const fetchWithRetry = async (url, maxRetries = 3) => {
+      let lastError = null;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 60000);
+          let res;
+          try {
+            res = await fetch(url, { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal });
+          } finally { clearTimeout(timer); }
+          if (res.status === 429 || res.status >= 500) {
+            lastError = new Error(`Rate limit exceeded (HTTP ${res.status})`);
+            if (attempt < maxRetries) {
+              const delay = Math.min(10000 * Math.pow(2, attempt), 120000);
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+            const detail = await res.text().catch(() => '');
+            throw new Error(`BOAT WORKS API ${res.status}: ${detail.slice(0, 300)}`);
+          }
+          if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            throw new Error(`BOAT WORKS API ${res.status}: ${detail.slice(0, 300)}`);
+          }
+          return await res.json();
+        } catch (e) {
+          lastError = e;
+          if (e.name === 'AbortError' || /fetch|network|timeout|rate limit/i.test(e.message || '')) {
+            if (attempt < maxRetries) {
+              const delay = Math.min(10000 * Math.pow(2, attempt), 120000);
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+          }
+          throw e;
+        }
+      }
+      throw lastError || new Error('fetch failed');
     };
 
-    const manifest = await fetchJson(`${endpoint}?date=${encodeURIComponent(targetDate)}&manifest=1`);
+    const manifest = await fetchWithRetry(`${endpoint}?date=${encodeURIComponent(targetDate)}&manifest=1`);
     const venueCodes = Array.isArray(manifest.venue_codes) ? manifest.venue_codes.map(v=>String(v).padStart(2,'0')) : [];
     const raceCount = Number(manifest.race_count || 0);
     if (!raceCount || !venueCodes.length) {
@@ -59,17 +90,16 @@ export default async function(req) {
       return Response.json({status:'source_not_ready',target_date:targetDate,race_count:0});
     }
 
+    // 全場一括取得(1回のAPI呼び出し)でRate limit回避
     let importedRaces = 0, importedResults = 0, errors = [];
-    for (const vc of venueCodes) {
-      try {
-        const payload = await fetchJson(`${endpoint}?date=${encodeURIComponent(targetDate)}&venue_code=${encodeURIComponent(vc)}`);
-        const summary = await syncAndPredict(base44,payload,{mode:'auto_backfill',venue_code:vc,skip_predictions:true,skip_verification:true});
-        importedRaces += Number(summary?.races_upserted || 0);
-        importedResults += Number(summary?.results_saved || 0);
-        if (Array.isArray(summary?.errors) && summary.errors.length) errors.push(...summary.errors);
-      } catch(e) {
-        errors.push({venue_code:vc,message:e?.message||String(e)});
-      }
+    try {
+      const payload = await fetchWithRetry(`${endpoint}?date=${encodeURIComponent(targetDate)}`);
+      const summary = await syncAndPredict(base44, payload, { mode: 'auto_backfill', skip_predictions: true, skip_verification: true });
+      importedRaces = Number(summary?.races_upserted || 0);
+      importedResults = Number(summary?.results_saved || 0);
+      if (Array.isArray(summary?.errors) && summary.errors.length) errors.push(...summary.errors);
+    } catch (e: any) {
+      errors.push({ message: e?.message || String(e) });
     }
 
     // 集計DBも自動更新。内部呼び出しが失敗しても履歴取込自体は成功扱いにする。

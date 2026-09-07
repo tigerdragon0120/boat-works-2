@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
+import { base44 } from "@/api/base44Client";
 import { getSettings, invokeSync, getSyncStatus, listTodayRaceStatus, todayStr } from "@/lib/predictionService";
-import { RefreshCw, Database, CloudDownload, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { RefreshCw, Database, CloudDownload, AlertTriangle, CheckCircle2, XCircle, ChevronDown, ChevronRight, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const stateInfo = {
@@ -15,63 +16,57 @@ export default function SyncPanel() {
   const [settings, setSettings] = useState(null);
   const [status, setStatus] = useState(null);
   const [races, setRaces] = useState([]);
+  const [manifest, setManifest] = useState(null);
+  const [profileStats, setProfileStats] = useState(null);
   const [busy, setBusy] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
+  const [expandedErrors, setExpandedErrors] = useState({});
 
   const load = async () => {
     const s = await getSettings();
     setSettings(s);
     setStatus(await getSyncStatus());
     setRaces(await listTodayRaceStatus());
+    // BOAT WORKS側のmanifestを取得(開催場・Race数)
+    try {
+      const mres = await invokeSync("api", { date: todayStr(), manifest: true });
+      setManifest(mres.data || mres || null);
+    } catch { setManifest(null); }
+    // プロフィール接続状況
+    try {
+      const [entries, profiles] = await Promise.all([
+        base44.entities.RaceEntry.filter({ race_date: todayStr() }, "boat_number", 5000),
+        base44.entities.RacerPerformanceProfile.list("registration_number", 5000),
+      ]);
+      const profileRegs = new Set((profiles || []).map(p => p.registration_number));
+      const connected = (entries || []).filter(e => {
+        const reg = String(e.registration_number || e.register_number || "").trim();
+        return reg && profileRegs.has(reg);
+      }).length;
+      setProfileStats({ total_entries: entries?.length || 0, connected, total_profiles: profiles?.length || 0 });
+    } catch { setProfileStats(null); }
   };
   useEffect(() => { load(); }, []);
 
   const runApi = async () => {
     setBusy(true); setMsg(""); setErr("");
     try {
-      // 504回避: まず軽量manifestで開催場だけ取得し、場単位で分割同期する。
-      const manifestRes = await invokeSync("api", { date: todayStr(), manifest: true });
-      const manifest = manifestRes.data || manifestRes || {};
-      const venues = manifest.venue_codes || [];
-      if (!venues.length) throw new Error("BOAT WORKSから本日の開催場を取得できませんでした");
-
-       let totalRaces = 0, totalPre = 0, totalFinal = 0, totalErrors = 0;
-      const venueErrors = [];
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      for (let i = 0; i < venues.length; i++) {
-        const venue = venues[i];
-        // Base44側のレート制限を避けるため、各場の間に少し間隔を空ける。
-        if (i > 0) await sleep(800);
-        setMsg(`同期中 ${i + 1}/${venues.length}場（${venue}）…`);
-        let lastError = null;
-        let done = false;
-        // レート制限(Rate limit exceeded)は一時的なものなので、間隔を空けて最大3回まで再試行する。
-        for (let attempt = 0; attempt < 3 && !done; attempt++) {
-          try {
-            if (attempt > 0) await sleep(3000 * attempt);
-            const res = await invokeSync("api", { date: todayStr(), venue_code: venue });
-            const sum = res.data?.summary || res.summary || {};
-            totalRaces += sum.races_upserted || 0;
-            totalPre += sum.pre_generated || 0;
-            totalFinal += sum.final_generated || 0;
-            totalErrors += sum.errors?.length || 0;
-            done = true;
-          } catch (e) {
-            lastError = e?.response?.data?.error || e?.response?.data?.message || e?.message || String(e);
-            if (!/rate limit/i.test(lastError)) break; // レート制限以外は再試行しない
-          }
-        }
-        if (!done) {
-          // 1場の失敗で残りの場の同期を止めない。エラーを記録して次の場へ進む。
-          venueErrors.push(`${venue}: ${lastError}`);
-          totalErrors++;
-        }
+      // 全場一括取得: 1回のAPI呼び出しで全データを取得(Rate limit回避)
+      setMsg("BOAT WORKSから全開催データを取得中…");
+      const res = await invokeSync("api", { date: todayStr() });
+      const sum = res.data?.summary || res.summary || {};
+      const totalRaces = sum.races_upserted || 0;
+      const totalPre = sum.pre_generated || 0;
+      const totalFinal = sum.final_generated || 0;
+      const totalErrors = (sum.errors?.length || 0);
+      if (totalErrors > 0) {
+        setErr(`${totalErrors}件のエラー — 詳細は下のエラー一覧を参照`);
+        setMsg(`同期完了(エラーあり): ${totalRaces}レース / PRE ${totalPre} / FINAL ${totalFinal}`);
+      } else {
+        setMsg(`同期完了: ${totalRaces}レース / PRE ${totalPre} / FINAL ${totalFinal}`);
       }
-     setMsg(`同期完了: ${totalRaces}レース / PRE ${totalPre} / FINAL ${totalFinal}`);
-      if (venueErrors.length) setErr(`${venueErrors.length}場でエラー — ${venueErrors.join(" / ")}`);
-      else if (totalErrors) setErr(`${totalErrors}件のエラー`);
       await load();
     } catch (e) { setErr(e?.response?.data?.message || e.message || JSON.stringify(e)); }
     setBusy(false);
@@ -97,31 +92,71 @@ export default function SyncPanel() {
     return a;
   }, { total: 0, complete: 0, exhibition: 0, pre: 0, final: 0, finished: 0 });
 
+  // BOAT WORKS側のデータ
+  const bwVenues = manifest?.venue_codes?.length || 0;
+  const bwRaces = manifest?.race_count || 0;
+  // BOAT WORKS 2側のデータ
+  const bw2Venues = new Set(races.map(r => r.venue_code).filter(Boolean)).size;
+  const bw2Races = counts.total;
+  const bw2Entries = races.reduce((a, r) => a + (r.entries || 0), 0);
+  // 同期判定
+  const allSynced = bwRaces > 0 && bw2Races === bwRaces && counts.complete === bw2Races && (profileStats?.connected || 0) === bw2Entries;
+  const syncLabel = allSynced ? "SYNCED" : (bw2Races > 0 ? "PARTIAL" : "NO_DATA");
+  const syncCls = allSynced ? "bg-emerald-100 text-emerald-700" : (bw2Races > 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500");
+
   return (
     <div className="space-y-4">
-      {/* 同期状態サマリ */}
+      {/* BOAT WORKS vs BOAT WORKS 2 比較 */}
       <div className="bg-white rounded-2xl border border-slate-100 p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Database className="w-4 h-4 text-sky-600" />
-          <h3 className="font-bold text-sm text-slate-900">同期状態</h3>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-sky-600" />
+            <h3 className="font-bold text-sm text-slate-900">同期状態</h3>
+          </div>
+          <span className={cn("px-2.5 h-7 rounded-md font-bold text-xs flex items-center gap-1", syncCls)}>
+            {allSynced ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}{syncLabel}
+          </span>
         </div>
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center">
-          <Stat label="今日のレース" v={counts.total} />
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-sky-50 rounded-xl p-3">
+            <div className="text-[10px] font-bold text-sky-700 mb-2">BOAT WORKS (正本)</div>
+            <div className="space-y-1">
+              <Stat2 label="開催場" v={bwVenues} />
+              <Stat2 label="Race" v={bwRaces} />
+            </div>
+          </div>
+          <div className="bg-slate-50 rounded-xl p-3">
+            <div className="text-[10px] font-bold text-slate-700 mb-2">BOAT WORKS 2</div>
+            <div className="space-y-1">
+              <Stat2 label="開催場" v={bw2Venues} tone={bw2Venues === bwVenues ? "text-emerald-600" : "text-rose-600"} />
+              <Stat2 label="Race" v={bw2Races} tone={bw2Races === bwRaces ? "text-emerald-600" : "text-rose-600"} />
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-center mt-3">
           <Stat label="6艇揃い" v={counts.complete} tone="text-sky-600" />
           <Stat label="展示取得済" v={counts.exhibition} tone="text-amber-600" />
-          <Stat label="PRE済" v={counts.pre} tone="text-sky-600" />
-          <Stat label="FINAL済" v={counts.final} tone="text-emerald-600" />
+          <Stat label="PRE" v={`${counts.pre}/${bw2Races}`} tone="text-sky-600" />
+          <Stat label="FINAL" v={`${counts.final}/${counts.exhibition}`} tone="text-emerald-600" />
           <Stat label="確定" v={counts.finished} tone="text-slate-500" />
+          <Stat label="ERROR" v={status?.error_count || 0} tone={(status?.error_count || 0) > 0 ? "text-rose-600" : "text-slate-500"} />
         </div>
-        <div className="mt-3 flex items-center gap-2 text-xs">
+        {/* プロフィール接続 */}
+        {profileStats && (
+          <div className="mt-3 flex items-center gap-2 text-xs">
+            <Link2 className="w-3.5 h-3.5 text-sky-600" />
+            <span className="text-slate-600">選手プロフィール接続:</span>
+            <span className={cn("font-bold", profileStats.connected === profileStats.total_entries ? "text-emerald-600" : "text-amber-600")}>
+              {profileStats.connected} / {profileStats.total_entries}艇
+            </span>
+            <span className="text-slate-400">(全プロファイル {profileStats.total_profiles}件)</span>
+          </div>
+        )}
+        <div className="mt-2 flex items-center gap-2 text-xs">
           {status ? (
             <>
-              <span className={cn("px-2 h-6 rounded-md font-bold flex items-center gap-1", status.status === "success" ? "bg-emerald-100 text-emerald-700" : status.status === "partial" ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700")}>
-                {status.status === "success" ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}{status.status}
-              </span>
               <span className="text-slate-400">最終同期: {status.last_sync_at ? new Date(status.last_sync_at).toLocaleString("ja-JP") : "—"}</span>
               <span className="text-slate-400">モード: {status.mode}</span>
-              {status.error_count > 0 && <span className="text-rose-500 font-semibold">エラー{status.error_count}件</span>}
             </>
           ) : <span className="text-slate-400">同期履歴なし</span>}
         </div>
@@ -178,14 +213,40 @@ export default function SyncPanel() {
         )}
       </div>
 
-      {/* エラー一覧 */}
+      {/* エラー一覧(展開可能) */}
       {status?.errors?.length > 0 && (
         <div className="bg-white rounded-2xl border border-rose-100 p-4">
-          <div className="flex items-center gap-2 mb-2"><XCircle className="w-4 h-4 text-rose-500" /><h3 className="font-bold text-sm text-rose-700">同期エラー({status.errors.length})</h3></div>
-          <div className="space-y-1 max-h-40 overflow-y-auto">
-            {status.errors.map((e, i) => (
-              <div key={i} className="text-[11px] text-rose-600"><span className="font-mono">{e.race_key || "—"}</span>: {e.message}</div>
-            ))}
+          <div className="flex items-center gap-2 mb-2"><XCircle className="w-4 h-4 text-rose-500" /><h3 className="font-bold text-sm text-rose-700">同期エラー({status.errors.length}件)</h3></div>
+          <div className="space-y-1 max-h-60 overflow-y-auto">
+            {status.errors.map((e, i) => {
+              const key = `${i}_${e.race_key || ""}`;
+              const expanded = expandedErrors[key];
+              const parts = String(e.race_key || "").split("_");
+              const raceNo = parts.length >= 3 ? parts[parts.length - 1] : "—";
+              const venueCode = parts.length >= 3 ? parts[parts.length - 2] : "—";
+              const raceDate = parts.length >= 3 ? parts.slice(0, -2).join("_") : "—";
+              return (
+                <div key={i} className="border border-rose-100 rounded-lg overflow-hidden">
+                  <button onClick={() => setExpandedErrors(prev => ({ ...prev, [key]: !prev[key] }))}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-rose-50">
+                    {expanded ? <ChevronDown className="w-3 h-3 text-rose-400 shrink-0" /> : <ChevronRight className="w-3 h-3 text-rose-400 shrink-0" />}
+                    <span className="font-mono text-[11px] text-rose-700 shrink-0">{e.race_key || "—"}</span>
+                    <span className="text-[11px] text-rose-500 truncate flex-1">{e.message}</span>
+                  </button>
+                  {expanded && (
+                    <div className="px-3 py-2 bg-rose-50/50 text-[11px] space-y-1 border-t border-rose-100">
+                      <ErrRow label="発生時刻" v={status.last_sync_at ? new Date(status.last_sync_at).toLocaleString("ja-JP") : "—"} />
+                      <ErrRow label="raceKey" v={e.race_key || "—"} />
+                      <ErrRow label="raceDate" v={raceDate} />
+                      <ErrRow label="venueCode" v={venueCode} />
+                      <ErrRow label="raceNo" v={raceNo} />
+                      <ErrRow label="Function" v="syncAndPredict" />
+                      <ErrRow label="エラー内容" v={e.message} />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -198,6 +259,24 @@ function Stat({ label, v, tone }) {
     <div className="bg-slate-50 rounded-lg py-2">
       <div className={cn("font-display font-bold text-lg leading-none", tone || "text-slate-900")}>{v}</div>
       <div className="text-[10px] text-slate-400 mt-0.5">{label}</div>
+    </div>
+  );
+}
+
+function Stat2({ label, v, tone }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-[11px] text-slate-500">{label}</span>
+      <span className={cn("font-bold text-sm", tone || "text-slate-900")}>{v}</span>
+    </div>
+  );
+}
+
+function ErrRow({ label, v }) {
+  return (
+    <div className="flex gap-2">
+      <span className="text-slate-400 w-16 shrink-0">{label}</span>
+      <span className="text-slate-700 font-mono break-all">{v}</span>
     </div>
   );
 }
