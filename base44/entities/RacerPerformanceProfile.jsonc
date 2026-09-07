@@ -14,7 +14,7 @@
     },
     "stats_6m": {
       "type": "object",
-      "description": "\u904e\u53bb6\u30f6\u6708\u6210\u7e3e",
+      "description": "\u3010BASE\u3011\u904e\u53bb6\u30f6\u6708\u6210\u7e3e(RacerTermStatV2\u7531\u6765)",
       "properties": {
         "sample_size": {
           "type": "number"
@@ -38,7 +38,7 @@
     },
     "stats_1y": {
       "type": "object",
-      "description": "\u904e\u53bb1\u5e74\u6210\u7e3e",
+      "description": "\u3010BASE\u3011\u904e\u53bb1\u5e74\u6210\u7e3e(RacerTermStatV2\u7531\u6765)",
       "properties": {
         "sample_size": {
           "type": "number"
@@ -62,7 +62,7 @@
     },
     "stats_3y": {
       "type": "object",
-      "description": "\u904e\u53bb3\u5e74\u6210\u7e3e",
+      "description": "\u3010BASE\u3011\u904e\u53bb3\u5e74\u6210\u7e3e(RacerTermStatV2\u7531\u6765)",
       "properties": {
         "sample_size": {
           "type": "number"
@@ -86,7 +86,7 @@
     },
     "stats_all": {
       "type": "object",
-      "description": "\u5168\u671f\u9593\u6210\u7e3e(\u30ad\u30e3\u30ea\u30a2\u901a\u7b97)",
+      "description": "\u3010BASE\u3011\u5168\u671f\u9593\u6210\u7e3e(RacerTermStatV2\u7531\u6765)",
       "properties": {
         "sample_size": {
           "type": "number"
@@ -110,7 +110,7 @@
     },
     "course_stats": {
       "type": "object",
-      "description": "\u30b3\u30fc\u30b9\u5225\u6210\u7e3e(1-6)",
+      "description": "\u3010RACE HISTORY\u3011\u30b3\u30fc\u30b9\u5225\u6210\u7e3e(1-6, start_course\u57fa\u6e96)",
       "properties": {
         "1": {
           "type": "object",
@@ -118,7 +118,22 @@
             "sample_size": {
               "type": "number"
             },
+            "first_count": {
+              "type": "number"
+            },
+            "second_count": {
+              "type": "number"
+            },
+            "third_count": {
+              "type": "number"
+            },
             "win_rate": {
+              "type": "number"
+            },
+            "second_rate": {
+              "type": "number"
+            },
+            "third_rate": {
               "type": "number"
             },
             "top2_rate": {
@@ -131,6 +146,9 @@
               "type": "number"
             },
             "avg_st": {
+              "type": "number"
+            },
+            "st_stddev": {
               "type": "number"
             }
           }
@@ -141,7 +159,22 @@
             "sample_size": {
               "type": "number"
             },
+            "first_count": {
+              "type": "number"
+            },
+            "second_count": {
+              "type": "number"
+            },
+            "third_count": {
+              "type": "number"
+            },
             "win_rate": {
+              "type": "number"
+            },
+            "second_rate": {
+              "type": "number"
+            },
+            "third_rate": {
               "type": "number"
             },
             "top2_rate": {
@@ -154,6 +187,9 @@
               "type": "number"
             },
             "avg_st": {
+              "type": "number"
+            },
+            "st_stddev": {
               "type": "number"
             }
           }
@@ -164,7 +200,22 @@
             "sample_size": {
               "type": "number"
             },
+            "first_count": {
+              "type": "number"
+            },
+            "second_count": {
+              "type": "number"
+            },
+            "third_count": {
+              "type": "number"
+            },
             "win_rate": {
+              "type": "number"
+            },
+            "second_rate": {
+              "type": "number"
+            },
+            "third_rate": {
               "type": "number"
             },
             "top2_rate": {
@@ -177,6 +228,9 @@
               "type": "number"
             },
             "avg_st": {
+              "type": "number"
+            },
+            "st_stddev": {
               "type": "number"
             }
           }
@@ -187,7 +241,22 @@
             "sample_size": {
               "type": "number"
             },
+            "first_count": {
+              "type": "number"
+            },
+            "second_count": {
+              "type": "number"
+            },
+            "third_count": {
+              "type": "number"
+            },
             "win_rate": {
+              "type": "number"
+            },
+            "second_rate": {
+              "type": "number"
+            },
+            "third_rate": {
               "type": "number"
             },
             "top2_rate": {
@@ -200,6 +269,9 @@
               "type": "number"
             },
             "avg_st": {
+              "type": "number"
+            },
+            "st_stddev": {
               "type": "number"
             }
           }
@@ -210,7 +282,22 @@
             "sample_size": {
               "type": "number"
             },
+            "first_count": {
+              "type": "number"
+            },
+            "second_count": {
+              "type": "number"
+            },
+            "third_count": {
+              "type": "number"
+            },
             "win_rate": {
+              "type": "number"
+            },
+            "second_rate": {
+              "type": "number"
+            },
+            "third_rate": {
               "type": "number"
             },
             "top2_rate": {
@@ -223,6 +310,9 @@
               "type": "number"
             },
             "avg_st": {
+              "type": "number"
+            },
+            "st_stddev": {
               "type": "number"
             }
           }
@@ -233,7 +323,22 @@
             "sample_size": {
               "type": "number"
             },
+            "first_count": {
+              "type": "number"
+            },
+            "second_count": {
+              "type": "number"
+            },
+            "third_count": {
+              "type": "number"
+            },
             "win_rate": {
+              "type": "number"
+            },
+            "second_rate": {
+              "type": "number"
+            },
+            "third_rate": {
               "type": "number"
             },
             "top2_rate": {
@@ -247,129 +352,112 @@
             },
             "avg_st": {
               "type": "number"
+            },
+            "st_stddev": {
+              "type": "number"
             }
           }
         }
       }
     },
+    "course_stats_by_period": {
+      "type": "object",
+      "description": "\u3010RACE HISTORY\u3011\u30b3\u30fc\u30b9\u5225\u671f\u9593\u30c7\u30fc\u30bf(6m/1y/3y/all)"
+    },
+    "course_winning_methods": {
+      "type": "object",
+      "description": "\u3010RACE HISTORY\u3011\u9078\u624b\u00d7\u30b3\u30fc\u30b9\u00d7\u6c7a\u307e\u308a\u624b"
+    },
     "winning_methods": {
       "type": "object",
-      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u5168\u671f\u9593)",
+      "description": "\u3010RACE HISTORY\u3011\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u5168\u671f\u9593)",
       "properties": {
-        "escape_rate": {
-          "type": "number",
-          "description": "\u9003\u3052\u52dd\u7387%"
+        "escape_count": {
+          "type": "number"
         },
-        "sashi_rate": {
-          "type": "number",
-          "description": "\u5dee\u3057\u52dd\u7387%"
+        "sashi_count": {
+          "type": "number"
         },
-        "makuri_rate": {
-          "type": "number",
-          "description": "\u307e\u304f\u308a\u52dd\u7387%"
+        "makuri_count": {
+          "type": "number"
         },
-        "makuri_sashi_rate": {
-          "type": "number",
-          "description": "\u307e\u304f\u308a\u5dee\u3057\u52dd\u7387%"
+        "makuri_sashi_count": {
+          "type": "number"
         },
-        "nuki_rate": {
-          "type": "number",
-          "description": "\u629c\u304d\u52dd\u7387%"
+        "nuki_count": {
+          "type": "number"
         },
-        "other_rate": {
-          "type": "number",
-          "description": "\u305d\u306e\u4ed6\u52dd\u7387%"
+        "megumare_count": {
+          "type": "number"
+        },
+        "other_count": {
+          "type": "number"
         },
         "total_wins": {
-          "type": "number",
-          "description": "\u7dcf\u52dd\u5229\u6570"
+          "type": "number"
+        },
+        "escape_rate": {
+          "type": "number"
+        },
+        "sashi_rate": {
+          "type": "number"
+        },
+        "makuri_rate": {
+          "type": "number"
+        },
+        "makuri_sashi_rate": {
+          "type": "number"
+        },
+        "nuki_rate": {
+          "type": "number"
+        },
+        "megumare_rate": {
+          "type": "number"
+        },
+        "other_rate": {
+          "type": "number"
         }
       }
     },
     "winning_methods_6m": {
       "type": "object",
-      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb6\u30f6\u6708)",
-      "properties": {
-        "escape_rate": {
-          "type": "number"
-        },
-        "sashi_rate": {
-          "type": "number"
-        },
-        "makuri_rate": {
-          "type": "number"
-        },
-        "makuri_sashi_rate": {
-          "type": "number"
-        },
-        "nuki_rate": {
-          "type": "number"
-        },
-        "other_rate": {
-          "type": "number"
-        },
-        "total_wins": {
-          "type": "number"
-        }
-      }
+      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb6\u30f6\u6708)"
     },
     "winning_methods_1y": {
       "type": "object",
-      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb1\u5e74)",
-      "properties": {
-        "escape_rate": {
-          "type": "number"
-        },
-        "sashi_rate": {
-          "type": "number"
-        },
-        "makuri_rate": {
-          "type": "number"
-        },
-        "makuri_sashi_rate": {
-          "type": "number"
-        },
-        "nuki_rate": {
-          "type": "number"
-        },
-        "other_rate": {
-          "type": "number"
-        },
-        "total_wins": {
-          "type": "number"
-        }
-      }
+      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb1\u5e74)"
     },
     "winning_methods_3y": {
       "type": "object",
-      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb3\u5e74)",
+      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb3\u5e74)"
+    },
+    "winning_style_type": {
+      "type": "object",
+      "description": "\u3010RACE HISTORY\u3011\u52dd\u3061\u65b9\u30bf\u30a4\u30d7",
       "properties": {
-        "escape_rate": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "ESCAPE_SPECIALIST",
+            "SASHI_SPECIALIST",
+            "MAKURI_ATTACKER",
+            "MAKURI_SASHI_SPECIALIST",
+            "BALANCED",
+            "OUTSIDE_ATTACKER",
+            "DATA_INSUFFICIENT"
+          ]
+        },
+        "confidence": {
           "type": "number"
         },
-        "sashi_rate": {
-          "type": "number"
-        },
-        "makuri_rate": {
-          "type": "number"
-        },
-        "makuri_sashi_rate": {
-          "type": "number"
-        },
-        "nuki_rate": {
-          "type": "number"
-        },
-        "other_rate": {
-          "type": "number"
-        },
-        "total_wins": {
-          "type": "number"
+        "description": {
+          "type": "string"
         }
       }
     },
     "recent_form": {
       "type": "object",
-      "description": "\u6700\u8fd1\u306e\u8abf\u5b50",
+      "description": "\u3010RACE HISTORY\u3011\u6700\u8fd1\u306e\u8abf\u5b50",
       "properties": {
         "recent_5_avg_finish": {
           "type": "number"
@@ -380,7 +468,37 @@
         "recent_20_avg_finish": {
           "type": "number"
         },
+        "recent_5_win_rate": {
+          "type": "number"
+        },
+        "recent_10_win_rate": {
+          "type": "number"
+        },
+        "recent_20_win_rate": {
+          "type": "number"
+        },
+        "recent_5_top2_rate": {
+          "type": "number"
+        },
+        "recent_10_top2_rate": {
+          "type": "number"
+        },
+        "recent_20_top2_rate": {
+          "type": "number"
+        },
+        "recent_5_top3_rate": {
+          "type": "number"
+        },
+        "recent_10_top3_rate": {
+          "type": "number"
+        },
+        "recent_20_top3_rate": {
+          "type": "number"
+        },
         "recent_st": {
+          "type": "number"
+        },
+        "recent_st_stddev": {
           "type": "number"
         },
         "recent_win_rate": {
@@ -390,36 +508,94 @@
           "type": "number"
         },
         "momentum_score": {
-          "type": "number",
-          "description": "\u52e2\u3044\u30b9\u30b3\u30a2(\u6700\u8fd1vs\u904e\u53bb)"
+          "type": "number"
+        },
+        "actual_sample_size": {
+          "type": "number"
         }
       }
     },
+    "recent_finishes": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "\u3010RACE HISTORY\u3011\u76f4\u8fd120\u8d70\u7740\u9806"
+    },
     "losing_pattern": {
       "type": "object",
-      "description": "\u6557\u6226\u30d1\u30bf\u30fc\u30f3",
+      "description": "\u3010RACE HISTORY\u3011\u6557\u6226\u30d1\u30bf\u30fc\u30f3",
       "properties": {
         "outside_top3_rate": {
-          "type": "number",
-          "description": "\u5916\u30b3\u30fc\u30b9(4-6)\u304b\u3089\u306e3\u9023\u5185\u7387"
+          "type": "number"
         },
         "first_course_loss_rate": {
-          "type": "number",
-          "description": "1\u30b3\u30fc\u30b9\u6557\u9000\u7387"
+          "type": "number"
+        },
+        "first_course_escape_fail_rate": {
+          "type": "number"
+        },
+        "second_course_sashi_fail_rate": {
+          "type": "number"
+        },
+        "third_course_attack_fail_rate": {
+          "type": "number"
+        },
+        "fourth_course_attack_fail_rate": {
+          "type": "number"
+        },
+        "outside56_top3_rate": {
+          "type": "number"
         },
         "start_late_rate": {
-          "type": "number",
-          "description": "ST\u9045\u5ef6\u7387"
+          "type": "number"
+        },
+        "st_late_avg_finish": {
+          "type": "number"
         },
         "collapse_rate": {
+          "type": "number"
+        }
+      }
+    },
+    "st_profile": {
+      "type": "object",
+      "description": "\u3010RACE HISTORY\u3011ST\u7279\u6027",
+      "properties": {
+        "overall_avg_st": {
+          "type": "number"
+        },
+        "overall_median_st": {
+          "type": "number"
+        },
+        "overall_st_stddev": {
+          "type": "number"
+        },
+        "st_fast_rate": {
           "type": "number",
-          "description": "\u5d29\u308c\u7387(\u7740\u9806>\u30b3\u30fc\u30b9)"
+          "description": "ST<=0.10\u306e\u7387%"
+        },
+        "st_stable_rate": {
+          "type": "number",
+          "description": "ST<=0.15\u306e\u7387%"
+        },
+        "st_late_rate": {
+          "type": "number",
+          "description": "ST>=0.20\u306e\u7387%"
+        },
+        "course": {
+          "type": "object",
+          "description": "\u30b3\u30fc\u30b9\u5225ST"
         }
       }
     },
     "venue_stats": {
       "type": "object",
-      "description": "\u7af6\u8247\u5834\u5225\u6210\u7e3e venue_code -> stats"
+      "description": "\u3010RACE HISTORY\u3011\u7af6\u8247\u5834\u5225\u6210\u7e3e venue_code -> stats"
+    },
+    "weather_stats": {
+      "type": "object",
+      "description": "\u3010RACE HISTORY\u3011\u5929\u5019\u30fb\u98a8\u6761\u4ef6\u5225\u6210\u7e3e(\u30b5\u30f3\u30d7\u30eb\u5341\u5206\u6642\u306e\u307f)"
     },
     "winning_style": {
       "type": "object",
@@ -442,12 +618,56 @@
         }
       }
     },
-    "recent_finishes": {
-      "type": "array",
-      "items": {
-        "type": "number"
-      },
-      "description": "\u76f4\u8fd110\u7740\u9806"
+    "confidence_split": {
+      "type": "object",
+      "description": "\u3010RACE HISTORY\u3011\u4fe1\u983c\u5ea6\u5206\u5272",
+      "properties": {
+        "base_confidence": {
+          "type": "number"
+        },
+        "recent_confidence": {
+          "type": "number"
+        },
+        "course_confidence": {
+          "type": "number"
+        },
+        "winning_method_confidence": {
+          "type": "number"
+        },
+        "venue_confidence": {
+          "type": "number"
+        }
+      }
+    },
+    "race_history": {
+      "type": "object",
+      "description": "\u3010RACE HISTORY\u3011\u5c65\u6b74\u30e1\u30bf",
+      "properties": {
+        "race_history_count": {
+          "type": "number"
+        },
+        "oldest_race_date": {
+          "type": "string"
+        },
+        "newest_race_date": {
+          "type": "string"
+        },
+        "finished_count": {
+          "type": "number"
+        },
+        "absent_count": {
+          "type": "number"
+        },
+        "disqualified_count": {
+          "type": "number"
+        },
+        "f_count": {
+          "type": "number"
+        },
+        "l_count": {
+          "type": "number"
+        }
+      }
     },
     "momentum": {
       "type": "number",
@@ -458,7 +678,7 @@
     },
     "data_confidence": {
       "type": "number",
-      "description": "\u30c7\u30fc\u30bf\u4fe1\u983c\u5ea60-100"
+      "description": "\u30c7\u30fc\u30bf\u4fe1\u983c\u5ea60-100(\u4e92\u63db\u7528)"
     },
     "source_meta": {
       "type": "object",
@@ -466,21 +686,17 @@
       "properties": {
         "source_updated_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "\u5143\u30c7\u30fc\u30bf\u306e\u6700\u7d42\u66f4\u65b0\u65e5\u6642"
+          "format": "date-time"
         },
         "profile_calculated_at": {
           "type": "string",
-          "format": "date-time",
-          "description": "\u30d7\u30ed\u30d5\u30a1\u30a4\u30eb\u8a08\u7b97\u65e5\u6642"
+          "format": "date-time"
         },
         "source_version": {
-          "type": "string",
-          "description": "\u5143\u30c7\u30fc\u30bf\u30d0\u30fc\u30b8\u30e7\u30f3"
+          "type": "string"
         },
         "source_race_count": {
-          "type": "number",
-          "description": "\u4f7f\u7528\u30ec\u30fc\u30b9\u6570"
+          "type": "number"
         }
       }
     },
