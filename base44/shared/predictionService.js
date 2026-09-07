@@ -402,12 +402,18 @@ export async function syncAndPredict(client, payload, opts = {}) {
       const complete = entryDocs.filter((e) => e && !e.is_scratched && e.boat_number).length >= 6;
       if (complete) addVenue(raceData.venue_code, "complete");
 
-      // PRE予想(6艇揃っていれば展示データ不使用で生成)。履歴DB取込では予想を新規生成しない。
+      // PRE予想(6艇揃っていれば展示データ不使用で生成)。
+      // 既にPRE済みのレースは再生成しない。5分周期同期で全件を毎回再計算すると
+      // DB APIレート制限を誘発するため、未生成レースだけを処理する。
       if (complete && !opts.skip_predictions) {
-        try {
-          await runAndSavePrediction(client, race, entryDocs, settings, "PRE", {}, profileByReg);
-          summary.pre_generated++; addVenue(raceData.venue_code, "pre");
-        } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "PRE予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
+        if (race.has_pre === true && opts.force_predictions !== true) {
+          addVenue(raceData.venue_code, "pre");
+        } else {
+          try {
+            await runAndSavePrediction(client, race, entryDocs, settings, "PRE", {}, profileByReg);
+            summary.pre_generated++; addVenue(raceData.venue_code, "pre");
+          } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "PRE予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
+        }
       }
 
       // FINAL予想(展示取得済みの場合のみ)
