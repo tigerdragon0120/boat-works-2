@@ -86,7 +86,7 @@
     },
     "stats_all": {
       "type": "object",
-      "description": "\u5168\u671f\u9593\u6210\u7e3e",
+      "description": "\u5168\u671f\u9593\u6210\u7e3e(\u30ad\u30e3\u30ea\u30a2\u901a\u7b97)",
       "properties": {
         "sample_size": {
           "type": "number"
@@ -254,7 +254,7 @@
     },
     "winning_methods": {
       "type": "object",
-      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u63a8\u5b9a)",
+      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u5168\u671f\u9593)",
       "properties": {
         "escape_rate": {
           "type": "number",
@@ -283,6 +283,87 @@
         "total_wins": {
           "type": "number",
           "description": "\u7dcf\u52dd\u5229\u6570"
+        }
+      }
+    },
+    "winning_methods_6m": {
+      "type": "object",
+      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb6\u30f6\u6708)",
+      "properties": {
+        "escape_rate": {
+          "type": "number"
+        },
+        "sashi_rate": {
+          "type": "number"
+        },
+        "makuri_rate": {
+          "type": "number"
+        },
+        "makuri_sashi_rate": {
+          "type": "number"
+        },
+        "nuki_rate": {
+          "type": "number"
+        },
+        "other_rate": {
+          "type": "number"
+        },
+        "total_wins": {
+          "type": "number"
+        }
+      }
+    },
+    "winning_methods_1y": {
+      "type": "object",
+      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb1\u5e74)",
+      "properties": {
+        "escape_rate": {
+          "type": "number"
+        },
+        "sashi_rate": {
+          "type": "number"
+        },
+        "makuri_rate": {
+          "type": "number"
+        },
+        "makuri_sashi_rate": {
+          "type": "number"
+        },
+        "nuki_rate": {
+          "type": "number"
+        },
+        "other_rate": {
+          "type": "number"
+        },
+        "total_wins": {
+          "type": "number"
+        }
+      }
+    },
+    "winning_methods_3y": {
+      "type": "object",
+      "description": "\u6c7a\u307e\u308a\u624b\u5225\u52dd\u7387(\u904e\u53bb3\u5e74)",
+      "properties": {
+        "escape_rate": {
+          "type": "number"
+        },
+        "sashi_rate": {
+          "type": "number"
+        },
+        "makuri_rate": {
+          "type": "number"
+        },
+        "makuri_sashi_rate": {
+          "type": "number"
+        },
+        "nuki_rate": {
+          "type": "number"
+        },
+        "other_rate": {
+          "type": "number"
+        },
+        "total_wins": {
+          "type": "number"
         }
       }
     },

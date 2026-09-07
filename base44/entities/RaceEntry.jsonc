@@ -4,24 +4,24 @@
   "properties": {
     "race_id": {
       "type": "string",
-      "description": "対象Raceのid"
+      "description": "\u5bfe\u8c61Race\u306eid"
     },
     "race_key": {
       "type": "string",
-      "description": "共通キー(親Raceと同じ)"
+      "description": "\u5171\u901a\u30ad\u30fc(\u89aaRace\u3068\u540c\u3058)"
     },
     "race_date": {
       "type": "string",
       "format": "date",
-      "description": "レース開催日(画面側の日付フィルターで使用)"
+      "description": "\u30ec\u30fc\u30b9\u958b\u50ac\u65e5(\u753b\u9762\u5074\u306e\u65e5\u4ed8\u30d5\u30a3\u30eb\u30bf\u30fc\u3067\u4f7f\u7528)"
     },
     "venue_code": {
       "type": "string",
-      "description": "競艇場コード"
+      "description": "\u7af6\u8247\u5834\u30b3\u30fc\u30c9"
     },
     "race_number": {
       "type": "number",
-      "description": "レース番号"
+      "description": "\u30ec\u30fc\u30b9\u756a\u53f7"
     },
     "boat_number": {
       "type": "number",
@@ -105,6 +105,18 @@
     },
     "course_stats": {
       "type": "object"
+    },
+    "c1_win_rate": {
+      "type": "number",
+      "description": "1\u30b3\u30fc\u30b9\u52dd\u7387(BOAT WORKS\u7531\u6765\u30ad\u30e3\u30ea\u30a2\u7d71\u8a08)"
+    },
+    "c1_2rate": {
+      "type": "number",
+      "description": "1\u30b3\u30fc\u30b92\u9023\u7387(BOAT WORKS\u7531\u6765\u30ad\u30e3\u30ea\u30a2\u7d71\u8a08)"
+    },
+    "c1_3rate": {
+      "type": "number",
+      "description": "1\u30b3\u30fc\u30b93\u9023\u7387(BOAT WORKS\u7531\u6765\u30ad\u30e3\u30ea\u30a2\u7d71\u8a08)"
     },
     "motor_number": {
       "type": "number",

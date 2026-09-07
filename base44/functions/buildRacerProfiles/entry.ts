@@ -85,10 +85,10 @@ function computeRecentForm(records) {
   const r5 = records.slice(0, 5);
   const r10 = records.slice(0, 10);
   const r20 = records.slice(0, 20);
-  const stVals = r10.filter(r => r.st != null).map(r => r.st);
+  const stVals = r20.filter(r => r.st != null).map(r => r.st);
   const recentSt = stVals.length ? round2(stVals.reduce((a, b) => a + b, 0) / stVals.length) : null;
-  const recentWin = r10.length ? pct(r10.filter(r => r.finish === 1).length, r10.length) : null;
-  const recentTop3 = r10.length ? pct(r10.filter(r => r.finish <= 3).length, r10.length) : null;
+  const recentWin = r20.length ? pct(r20.filter(r => r.finish === 1).length, r20.length) : null;
+  const recentTop3 = r20.length ? pct(r20.filter(r => r.finish <= 3).length, r20.length) : null;
   let momentum = null;
   if (r10.length >= 3 && records.length > 10) {
     const older = records.slice(10, 30);
@@ -144,12 +144,24 @@ function computeWinningStyle(records) {
   return { front_runner_score: frontRunner, chaser_score: chaser, st_stability: stStability, attack_score: attackScore, defense_score: defenseScore };
 }
 
-function computeDataConfidence(totalSamples) {
-  if (totalSamples <= 5) return 10;
-  if (totalSamples <= 20) return 30;
-  if (totalSamples <= 50) return 60;
-  if (totalSamples <= 100) return 80;
-  return 100;
+// data_confidence: サンプル数に基づく信頼度(ユーザー指定の目安に準拠)
+// 0-5走→10以下, 6-20走→20-40, 21-50走→40-60, 51-100走→60-80, 101+走→80-100
+// 期間別データ量も考慮(6m/1y/3yに十分なデータがあればボーナス)
+function computeDataConfidence(totalSamples, samples6m, samples1y, samples3y) {
+  let base;
+  if (totalSamples <= 5) base = Math.min(10, totalSamples * 2);
+  else if (totalSamples <= 20) base = 20 + Math.round((totalSamples - 5) / 15 * 20);
+  else if (totalSamples <= 50) base = 40 + Math.round((totalSamples - 20) / 30 * 20);
+  else if (totalSamples <= 100) base = 60 + Math.round((totalSamples - 50) / 50 * 20);
+  else base = Math.min(100, 80 + Math.round((totalSamples - 100) / 100 * 20));
+
+  // 期間別データ充足ボーナス(最大+10)
+  let bonus = 0;
+  if (samples6m >= 10) bonus += 4;
+  if (samples1y >= 30) bonus += 3;
+  if (samples3y >= 50) bonus += 3;
+
+  return Math.min(100, Math.max(0, base + bonus));
 }
 
 export default async function(req) {
@@ -165,29 +177,62 @@ export default async function(req) {
     const existingProfiles = await all(sr.RacerPerformanceProfile, 'registration_number', 50000);
     const profileByReg = new Map(existingProfiles.map(p => [p.registration_number, p]));
 
-    // 全データ取得
-    const [races, results, entries] = await Promise.all([
-      all(sr.Race, 'race_date', 50000),
-      all(sr.RaceResult, '-finished_at', 50000),
-      all(sr.RaceEntry, '-updated_date', 50000)
-    ]);
+    // 全データ取得(エントリは件数が多いため最新数日分に限定)
+    const races = await all(sr.Race, 'race_date', 50000);
+    const results = await all(sr.RaceResult, '-finished_at', 50000);
 
     const raceById = new Map(races.map(r => [r.id, r]));
     const resultByRace = new Map(results.map(r => [r.race_id, r]));
 
-    // 選手ごとにレコードを集約
+    // エントリ: 最新日から順に取得(キャリア統計+結果レース分をカバー)
+    // 全14000+件のページングはレート制限に引っかかるため、最新3000件に限定
+    const entries = await all(sr.RaceEntry, '-race_date', 3000);
+
+    // 選手ごとにレコードを集約 + キャリア統計(最新エントリから取得)
     const racerData = new Map();
     for (const e of entries) {
       const race = raceById.get(e.race_id);
       if (!race) continue;
       const reg = String(e.registration_number || e.register_number || '').trim();
       if (!reg) continue;
+
+      if (!racerData.has(reg)) racerData.set(reg, {
+        name: e.player_name || e.racer_name || '',
+        grade: e.player_class || e.grade_class || '',
+        records: [],
+        latestEntry: null,
+        latestRaceDate: '',
+        careerStats: null,
+      });
+      const a = racerData.get(reg);
+
+      // 最新エントリ(キャリア統計用)を保持
+      const raceDate = String(race.race_date || '');
+      const entryUpdated = String(e.updated_date || e.updated_at || '');
+      if (raceDate >= a.latestRaceDate) {
+        a.latestRaceDate = raceDate;
+        a.latestEntry = e;
+        a.careerStats = {
+          national_win_rate: num(e.national_win_rate),
+          national_2rate: num(e.national_2rate) ?? num(e.national_f2_rate),
+          national_3rate: num(e.national_3rate) ?? num(e.national_f3_rate),
+          local_win_rate: num(e.local_win_rate),
+          local_2rate: num(e.local_2rate) ?? num(e.local_f2_rate),
+          local_3rate: num(e.local_3rate) ?? num(e.local_f3_rate),
+          avg_st: num(e.avg_st),
+          f_count: num(e.f_count),
+          l_count: num(e.l_count),
+          c1_win_rate: num(e.c1_win_rate),
+          c1_2rate: num(e.c1_2rate),
+          c1_3rate: num(e.c1_3rate),
+        };
+      }
+
+      // レース別データ(結果がある場合のみ)
       const res = resultByRace.get(e.race_id);
       const finish = computeFinish(res, e.boat_number);
       if (finish === null) continue;
 
-      if (!racerData.has(reg)) racerData.set(reg, { name: e.player_name || e.racer_name || '', grade: e.player_class || e.grade_class || '', records: [] });
-      const a = racerData.get(reg);
       a.records.push({
         date: race.race_date,
         finish,
@@ -203,26 +248,52 @@ export default async function(req) {
     const cutoff3y = new Date(Date.now() - 1095 * 86400000).toISOString().slice(0, 10);
 
     let upserted = 0, skipped = 0, created = 0;
+    let warning_same_sample = 0;
     for (const [reg, a] of racerData) {
       const records = a.records.sort((x, y) => String(y.date).localeCompare(String(x.date)));
+
       // 差分判定: 元データの最終更新日時 vs プロファイルのsource_updated_at
       const latestSourceUpdate = records.reduce((max, r) => (r.race_updated > max ? r.race_updated : max), '');
+      const careerUpdate = a.latestEntry ? String(a.latestEntry.updated_date || a.latestEntry.updated_at || '') : '';
+      const latestUpdate = latestSourceUpdate > careerUpdate ? latestSourceUpdate : careerUpdate;
       const existing = profileByReg.get(reg);
-      if (existing && existing.source_meta?.source_updated_at && latestSourceUpdate <= existing.source_meta.source_updated_at) {
+      // v2移行: 旧バージョン(v1)のプロファイルは強制更新
+      const isOldVersion = existing && (!existing.source_meta?.source_version || !String(existing.source_meta.source_version).startsWith('v2'));
+      if (existing && !isOldVersion && existing.source_meta?.source_updated_at && latestUpdate <= existing.source_meta.source_updated_at) {
         skipped++;
         continue;
       }
 
+      // 期間別集計(レース別データから日付でフィルタ)
       const stats6m = computeStats(records, cutoff6m);
       const stats1y = computeStats(records, cutoff1y);
       const stats3y = computeStats(records, cutoff3y);
-      const statsAll = computeStats(records, null);
+
+      // stats_all: キャリア通算成績(エントリのnational_win_rate等)を優先使用
+      // これが「長期履歴データ」への接続。レース別データはフォールバック。
+      const career = a.careerStats || {};
+      const statsAll = {
+        sample_size: records.length,
+        win_rate: career.national_win_rate != null ? round1(career.national_win_rate)
+          : (records.length ? pct(records.filter(r => r.finish === 1).length, records.length) : null),
+        top2_rate: career.national_2rate != null ? round1(career.national_2rate)
+          : (records.length ? pct(records.filter(r => r.finish <= 2).length, records.length) : null),
+        top3_rate: career.national_3rate != null ? round1(career.national_3rate)
+          : (records.length ? pct(records.filter(r => r.finish <= 3).length, records.length) : null),
+        avg_finish: records.length ? round2(records.reduce((s, r) => s + r.finish, 0) / records.length) : null,
+        avg_st: career.avg_st != null ? round2(career.avg_st) : null,
+      };
+
+      // 期間別決まり手
       const winningMethods = computeWinningMethods(records);
+      const winningMethods6m = computeWinningMethods(records.filter(r => r.date >= cutoff6m));
+      const winningMethods1y = computeWinningMethods(records.filter(r => r.date >= cutoff1y));
+      const winningMethods3y = computeWinningMethods(records.filter(r => r.date >= cutoff3y));
       const recentForm = computeRecentForm(records);
       const losingPattern = computeLosingPattern(records);
       const winningStyle = computeWinningStyle(records);
 
-      // コース別成績
+      // コース別成績: レース別データから計算。コース1はキャリア統計(c1_win_rate)を優先。
       const courseStats = {};
       for (let c = 1; c <= 6; c++) {
         const cr = records.filter(r => r.course === c);
@@ -235,6 +306,16 @@ export default async function(req) {
             top3_rate: pct(cr.filter(r => r.finish <= 3).length, cr.length),
             avg_finish: round2(cr.reduce((s, r) => s + r.finish, 0) / cr.length),
             avg_st: stVals.length ? round2(stVals.reduce((a, b) => a + b, 0) / stVals.length) : null,
+          };
+        } else if (c === 1 && career.c1_win_rate != null) {
+          // コース1のキャリア統計があれば使用(レース別データがない場合)
+          courseStats[String(c)] = {
+            sample_size: 0,
+            win_rate: round1(career.c1_win_rate),
+            top2_rate: career.c1_2rate != null ? round1(career.c1_2rate) : null,
+            top3_rate: career.c1_3rate != null ? round1(career.c1_3rate) : null,
+            avg_finish: null,
+            avg_st: null,
           };
         } else {
           courseStats[String(c)] = { sample_size: 0, win_rate: null, top2_rate: null, top3_rate: null, avg_finish: null, avg_st: null };
@@ -260,8 +341,13 @@ export default async function(req) {
       }
 
       const totalSamples = records.length;
-      const dataConfidence = computeDataConfidence(totalSamples);
-      const sourceVersion = `v1_${records.length}_${latestSourceUpdate || 'init'}`;
+      const dataConfidence = computeDataConfidence(totalSamples, stats6m.sample_size, stats1y.sample_size, stats3y.sample_size);
+      const sourceVersion = `v2_${records.length}_${latestUpdate || 'init'}`;
+
+      // WARNING: 6m=1y=3yのsample_sizeが同じ場合(全データが6ヶ月以内)
+      if (stats6m.sample_size > 0 && stats6m.sample_size === stats1y.sample_size && stats1y.sample_size === stats3y.sample_size) {
+        warning_same_sample++;
+      }
 
       const doc = {
         registration_number: reg,
@@ -273,6 +359,9 @@ export default async function(req) {
         stats_all: statsAll,
         course_stats: courseStats,
         winning_methods: winningMethods,
+        winning_methods_6m: winningMethods6m,
+        winning_methods_1y: winningMethods1y,
+        winning_methods_3y: winningMethods3y,
         recent_form: recentForm,
         losing_pattern: losingPattern,
         venue_stats: venueStatsOut,
@@ -282,7 +371,7 @@ export default async function(req) {
         total_samples: totalSamples,
         data_confidence: dataConfidence,
         source_meta: {
-          source_updated_at: latestSourceUpdate || now,
+          source_updated_at: latestUpdate || now,
           profile_calculated_at: now,
           source_version: sourceVersion,
           source_race_count: totalSamples,
@@ -306,10 +395,11 @@ export default async function(req) {
       profiles_upserted: upserted,
       profiles_created: created,
       profiles_skipped: skipped,
+      warning_same_sample_6m_1y_3y: warning_same_sample,
       total_results: results.length,
       total_entries: entries.length,
       total_races: races.length,
-      message: `選手プロファイル${upserted}件更新(新規${created}・差分skip${skipped})`
+      message: `選手プロファイル${upserted}件更新(新規${created}・差分skip${skipped}・6m=1y=3y警告${warning_same_sample}件)`
     });
   } catch(error) {
     return Response.json({ status: 'error', message: error?.message || String(error) }, { status: 500 });
