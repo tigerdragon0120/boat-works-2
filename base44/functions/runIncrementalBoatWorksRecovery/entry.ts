@@ -27,7 +27,30 @@ export default async function(req: Request) {
       .filter(x => x.race_count < 12 || x.pre_count < 12)
       .sort((a, b) => (a.race_count - b.race_count) || (a.pre_count - b.pre_count) || a.venue.localeCompare(b.venue));
 
-    const targets = candidates.slice(0, 2);
+    // 未完了が無い場合でも同期を止めない。
+    // 以前は全場が12R/PRE完了するとtargets=[]となり、その時点で展示・オッズ・結果の更新まで完全停止していた。
+    // 完了後は全開催場を5分ごとのラウンドロビンで2場ずつ同期し続ける。
+    let targets = candidates.slice(0, 2);
+    if (targets.length === 0) {
+      const venues = [...byVenue.keys()].sort();
+      if (venues.length > 0) {
+        const slot = Math.floor(Date.now() / (5 * 60 * 1000));
+        const start = (slot * 2) % venues.length;
+        targets = [0, 1]
+          .map(i => venues[(start + i) % venues.length])
+          .filter(Boolean)
+          .map(venue => {
+            const list = byVenue.get(venue) || [];
+            return {
+              venue,
+              race_count: list.length,
+              pre_count: list.filter(r => r.has_pre === true).length,
+              live_refresh: true,
+            };
+          });
+      }
+    }
+
     const results: any[] = [];
     for (const t of targets) {
       try {
