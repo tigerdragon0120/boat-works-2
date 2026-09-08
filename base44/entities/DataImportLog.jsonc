@@ -1,0 +1,66 @@
+{
+  "name": "DataImportLog",
+  "type": "object",
+  "properties": {
+    "import_type": {
+      "type": "string",
+      "enum": [
+        "race_card",
+        "racer_data",
+        "past_results",
+        "motor_boat",
+        "other"
+      ]
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "file_url": {
+      "type": "string"
+    },
+    "imported_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "partial",
+        "failed",
+        "running"
+      ],
+      "default": "running"
+    },
+    "total_rows": {
+      "type": "number",
+      "default": 0
+    },
+    "created_count": {
+      "type": "number",
+      "default": 0
+    },
+    "updated_count": {
+      "type": "number",
+      "default": 0
+    },
+    "skipped_count": {
+      "type": "number",
+      "default": 0
+    },
+    "error_count": {
+      "type": "number",
+      "default": 0
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "details": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "import_type",
+    "file_name"
+  ]
+}

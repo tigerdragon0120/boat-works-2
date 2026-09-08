@@ -1,0 +1,55 @@
+{
+  "name": "OnlineFetchLog",
+  "type": "object",
+  "properties": {
+    "fetch_type": {
+      "type": "string",
+      "enum": [
+        "exhibition",
+        "odds",
+        "result"
+      ]
+    },
+    "race_id": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "no_data",
+        "not_ready",
+        "skipped"
+      ],
+      "default": "success"
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "http_status": {
+      "type": "number"
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "retry_count": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "fetch_type"
+  ]
+}
