@@ -27,6 +27,15 @@ export async function importOfficialFiles(importType, files) {
   return results;
 }
 
+// === 競艇オフィシャルTXT(B/K)保存 ===
+export async function saveBoatraceData(dataType, parsedData, fileName) {
+  return await base44.functions.invoke("saveBoatraceData", {
+    data_type: dataType,
+    parsed_data: parsedData,
+    file_name: fileName,
+  });
+}
+
 // === オンライン取得 ===
 export async function fetchOnlineData(fetchType, raceDate, venueCode, raceNumber, raceId = null) {
   return await base44.functions.invoke("fetchOnlineData", {
