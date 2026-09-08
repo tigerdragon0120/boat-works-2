@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
+import StartTimingPanel from "@/components/race/StartTimingPanel";
 
 
 const boatColors = {
@@ -208,7 +209,10 @@ function renderDataCols(filter, e) {
 function ExhibitionInfo({ entries }) {
   if (!entries.length) return <Empty msg="展示データがありません" />;
   return (
-    <div className="p-3 space-y-2">
+    <div className="p-2.5 sm:p-3 space-y-2.5">
+      {/* スタート展示パネル */}
+      <StartTimingPanel entries={entries} />
+      {/* 各艇展示データ詳細 */}
       {entries.map((e) => (
         <div key={e.boat_number} className="flex items-center gap-2 rounded-lg border border-[#3a404c] bg-[#161a22] p-2">
           <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
