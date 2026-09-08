@@ -104,11 +104,12 @@ function parseRaceHeader(line) {
 function parseBEntryLine(line) {
   const normalized = normalizeWidth(line).trim();
   // 級別(A1/A2/B1/B2)をアンカーとして前後を分割
-  const classMatch = normalized.match(/\s(A[12]|B[12])\s/);
+  // 級別は体重(2桁)の直後に連結される(例: 51A1)ので、直前の空白は不要
+  const classMatch = normalized.match(/(\d{2})(A[12]|B[12])\s/);
   if (!classMatch) return null;
   const idx = classMatch.index;
-  const before = normalized.slice(0, idx).trim();
-  const playerClass = classMatch[1];
+  const before = normalized.slice(0, idx + 2).trim(); // 体重まで含める
+  const playerClass = classMatch[2];
   const after = normalized.slice(idx + classMatch[0].length).trim();
 
   // before: "1 4174赤坂俊輔43長崎51" or "1 4174 赤坂俊輔 43 長崎 51"
