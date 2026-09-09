@@ -110,7 +110,7 @@ export async function saveBoatraceData(dataType, parsedData, fileName, onProgres
 
     // 会場間でも少し休止し、Base44 Function/Entity APIのレート制限を回避する。
     if (i < venues.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 1200));
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
 
