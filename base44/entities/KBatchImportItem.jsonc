@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "batch_id": {
+      "type": "string"
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "order_index": {
+      "type": "number"
+    },
+    "payload_url": {
+      "type": "string"
+    },
+    "created_count": {
+      "type": "number"
+    },
+    "updated_count": {
+      "type": "number"
+    },
+    "skipped_count": {
+      "type": "number"
+    },
+    "error_count": {
+      "type": "number"
+    },
+    "history_verified": {
+      "type": "number"
+    },
+    "history_target": {
+      "type": "number"
+    },
+    "rejected_corrupt": {
+      "type": "number"
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": [],
+  "name": "KBatchImportItem"
+}
