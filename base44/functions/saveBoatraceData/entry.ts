@@ -8,6 +8,25 @@ const num = (v: any) => {
   return Number.isFinite(n) ? n : null;
 };
 const str = (v: any) => (v != null ? String(v).trim() : '');
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Base44 Entity API の短時間連続書込による Rate limit を吸収する。
+// 429/Rate limit のときだけ指数バックオフして再試行する。
+async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 6): Promise<T> {
+  let lastError: any;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastError = e;
+      const msg = String(e?.message || e?.response?.data?.error || e || '');
+      const isRateLimit = /rate\s*limit|too many requests|429/i.test(msg);
+      if (!isRateLimit || attempt === maxRetries) throw e;
+      await sleep(Math.min(8000, 700 * Math.pow(2, attempt)));
+    }
+  }
+  throw lastError;
+}
 
 // =====================================================
 // Bファイル データ保存(全会場対応)
@@ -50,7 +69,7 @@ async function saveBFileData(base44: any, data: any, suppressPrediction = false)
           status: 'scheduled',
           sync_source: 'txt_b_file',
         };
-        const race = await upsertRace(base44, raceData);
+        const race = await withRateLimitRetry(() => upsertRace(base44, raceData));
         const entryDocs = [];
         for (const e of r.entries || []) {
           const bn = num(e.boat_number);
@@ -79,7 +98,7 @@ async function saveBFileData(base44: any, data: any, suppressPrediction = false)
             is_absent: false,
             is_scratched: false,
           };
-          const saved = await upsertEntry(base44, entryData);
+          const saved = await withRateLimitRetry(() => upsertEntry(base44, entryData));
           entryDocs.push(saved);
           updated++;
         }
@@ -89,6 +108,9 @@ async function saveBFileData(base44: any, data: any, suppressPrediction = false)
           try { await runAndSavePrediction(base44, race, entryDocs, settings, 'PRE', {}, profileByReg, rollingByReg); }
           catch (e: any) { errorDetails.push(`${venueName} R${raceNumber}: 予想生成失敗 ${e.message}`); }
         }
+        // 1Rあたり Race + RaceEntry 6艇で複数APIアクセスが発生するため、
+        // 次レース開始前に少し間隔を空けてレート制限を回避する。
+        await sleep(350);
       } catch (e: any) {
         errors++;
         errorDetails.push(`${venueName} R${r.race_number}: ${e.message}`);
