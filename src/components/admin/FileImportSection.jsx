@@ -122,19 +122,31 @@ function TxtImportCard() {
 
   return (
     <div className="bg-white rounded-xl border-2 border-sky-300 p-4 space-y-3">
+      <div className="flex gap-2">
+        <button type="button" onClick={() => { setBatchMode(false); setFiles([]); setBatchResults([]); }} className={cn("px-3 py-1.5 rounded-lg text-xs font-bold", !batchMode ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600")}>B/K 1ファイル</button>
+        <button type="button" onClick={() => { setBatchMode(true); setFile(null); setPreview(null); }} className={cn("px-3 py-1.5 rounded-lg text-xs font-bold", batchMode ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600")}>K過去結果 一括取込</button>
+      </div>
+
       {/* ドロップゾーン */}
       <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
-        onClick={() => document.getElementById("txt-file-input").click()}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); batchMode ? handleBatchFiles(e.dataTransfer.files) : (e.dataTransfer.files[0] && handleFile(e.dataTransfer.files[0])); }}
+        onClick={() => document.getElementById(batchMode ? "txt-batch-input" : "txt-file-input").click()}
         className={cn(
           "border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-colors",
           dragOver ? "border-sky-500 bg-sky-50" : "border-slate-300 bg-slate-50 hover:border-sky-400 hover:bg-sky-50/50"
         )}
       >
         <input id="txt-file-input" type="file" className="hidden" accept=".txt,.TXT" onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])} />
-        {file ? (
+        <input id="txt-batch-input" type="file" multiple className="hidden" accept=".txt,.TXT" onChange={(e) => handleBatchFiles(e.target.files)} />
+        {batchMode && files.length > 0 ? (
+          <div className="space-y-1">
+            <History className="w-8 h-8 text-amber-500 mx-auto" />
+            <div className="text-sm font-bold text-slate-800">Kファイル {files.length}件選択済み</div>
+            <div className="text-[11px] text-slate-500">{files.slice(0, 3).map(f => f.name).join(" / ")}{files.length > 3 ? ` ほか${files.length - 3}件` : ""}</div>
+          </div>
+        ) : file ? (
           <div className="space-y-1">
             <FileText className="w-8 h-8 text-sky-600 mx-auto" />
             <div className="text-sm font-bold text-slate-800">{file.name}</div>
@@ -143,8 +155,8 @@ function TxtImportCard() {
         ) : (
           <div className="space-y-1">
             <Upload className="w-8 h-8 text-slate-400 mx-auto" />
-            <div className="text-sm font-semibold text-slate-600">TXTファイルをドロップ or クリックして選択</div>
-            <div className="text-[11px] text-slate-400">Bファイル(番組表) / Kファイル(結果) 自動判定</div>
+            <div className="text-sm font-semibold text-slate-600">{batchMode ? "Kファイルをまとめてドロップ or 複数選択" : "TXTファイルをドロップ or クリックして選択"}</div>
+            <div className="text-[11px] text-slate-400">{batchMode ? "過去結果Kファイル専用・複数ファイルを順番に登録" : "Bファイル(番組表) / Kファイル(結果) 自動判定"}</div>
           </div>
         )}
       </div>
