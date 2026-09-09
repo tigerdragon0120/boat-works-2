@@ -50,6 +50,10 @@ export default function FileImportSection() {
 // === 競艇オフィシャルTXT取込カード ===
 function TxtImportCard() {
   const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, file: "" });
+  const [batchResults, setBatchResults] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -83,6 +87,35 @@ function TxtImportCard() {
       setPreview(null); setFile(null);
     } catch (e) {
       setSaveError(e?.response?.data?.error || e.message);
+    }
+    setSaving(false);
+  };
+
+  const handleBatchFiles = (selectedFiles) => {
+    const list = Array.from(selectedFiles || []).filter(f => /\.txt$/i.test(f.name));
+    if (!list.length) return;
+    setFiles(list); setBatchMode(true); setBatchResults([]); setResult(null); setPreview(null); setParseError(null); setSaveError(null);
+  };
+
+  const handleBatchSave = async () => {
+    if (!files.length) return;
+    setSaving(true); setBatchResults([]); setSaveError(null);
+    const rows = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      setBatchProgress({ current: i + 1, total: files.length, file: f.name });
+      try {
+        const parsed = parseBoatraceFile(await f.arrayBuffer(), f.name);
+        if (!parsed.ok) throw new Error(parsed.errors?.join(" / ") || "解析失敗");
+        if (parsed.data.type !== "K") throw new Error(`Kファイルではありません (${parsed.data.type})`);
+        const r = await saveBoatraceData("K", parsed.data, f.name);
+        const d = r?.data || {};
+        rows.push({ file: f.name, ok: !d.errors, created: d.created || 0, updated: d.updated || 0, skipped: d.skipped || 0, errors: d.errors || 0, message: d.message || "完了" });
+      } catch (e) {
+        rows.push({ file: f.name, ok: false, created: 0, updated: 0, skipped: 0, errors: 1, message: e?.response?.data?.error || e.message });
+      }
+      setBatchResults([...rows]);
+      if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 3000));
     }
     setSaving(false);
   };
