@@ -263,11 +263,12 @@ export async function getOnlineFetchLogs(limit = 20) {
 // === 今日のダッシュボードデータ ===
 export async function getDashboardData() {
   const date = todayStr();
-  const [races, entries, importLogs, fetchLogs] = await Promise.all([
+  const [races, entries, importLogs, fetchLogs, recentPrePredictions] = await Promise.all([
     base44.entities.Race.filter({ race_date: date }, "-deadline", 500),
     base44.entities.RaceEntry.filter({ race_date: date }, "boat_number", 5000),
     base44.entities.DataImportLog.list("-imported_at", 5),
     base44.entities.OnlineFetchLog.list("-fetched_at", 10),
+    base44.entities.RacePrediction.filter({ stage: "PRE" }, "-computed_at", 500),
   ]);
 
   // race_key / race_key+boat_number で表示側も重複除外する。
@@ -294,7 +295,19 @@ export async function getDashboardData() {
   const venues = new Set(raceList.map((r) => r.venue_code).filter(Boolean));
   const exhibitionReady = raceList.filter((r) => r.exhibition_ready).length;
   const finished = raceList.filter((r) => r.status === "finished").length;
-  const hasPre = raceList.filter((r) => r.has_pre).length;
+  // PREはRace.has_preだけではなく、実際に6〜8点買い目と判定が揃った予想だけを完成扱いにする。
+  const raceKeysToday = new Set(raceList.map((r) => r.race_key).filter(Boolean));
+  const validPreKeys = new Set();
+  for (const p of (recentPrePredictions || [])) {
+    if (!p.race_key || !raceKeysToday.has(p.race_key)) continue;
+    const ticketCount = Number(p.ticket_count || 0);
+    const selected = Array.isArray(p.selected_trifectas) ? p.selected_trifectas : [];
+    const judgmentOk = ["BUY", "WATCH", "SKIP"].includes(String(p.final_judgment || ""));
+    if (p.status === "COMPLETED" && ticketCount >= 6 && ticketCount <= 8 && selected.length === ticketCount && judgmentOk) {
+      validPreKeys.add(p.race_key);
+    }
+  }
+  const hasPre = validPreKeys.size;
   const hasFinal = raceList.filter((r) => r.has_final).length;
 
   // BUY/WATCH/SKIP集計(Raceのfinal_judgment)
