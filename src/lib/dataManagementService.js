@@ -187,6 +187,51 @@ export async function saveBoatraceData(dataType, parsedData, fileName, onProgres
   return { data: aggregate };
 }
 
+// === 不足PRE予想の差分生成 ===
+export async function generateMissingPrePredictions(raceDate = todayStr(), onProgress = null) {
+  let totalGenerated = 0;
+  let totalSkipped = 0;
+  let totalErrors = 0;
+  const errorDetails = [];
+  let safety = 0;
+
+  while (safety++ < 40) {
+    const resp = await base44.functions.invoke("generateMissingPrePredictions", {
+      race_date: raceDate,
+      batch_size: 6,
+    });
+    const d = resp?.data || {};
+    if (!d.ok) throw new Error(d.error || "PRE予想生成に失敗しました");
+
+    totalGenerated += d.generated || 0;
+    totalSkipped += d.skipped || 0;
+    totalErrors += d.errors || 0;
+    if (d.errorDetails?.length) errorDetails.push(...d.errorDetails);
+
+    if (onProgress) {
+      onProgress({
+        total: d.total_races || 0,
+        completed: (d.already_completed || 0) + totalGenerated,
+        remaining: d.remaining || 0,
+        generated: totalGenerated,
+        errors: totalErrors,
+      });
+    }
+
+    if (d.completed || (d.remaining || 0) <= 0) break;
+    if ((d.generated || 0) === 0 && (d.errors || 0) > 0) break;
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+
+  return {
+    ok: totalErrors === 0,
+    generated: totalGenerated,
+    skipped: totalSkipped,
+    errors: totalErrors,
+    errorDetails: errorDetails.slice(0, 50),
+  };
+}
+
 // === オンライン取得 ===
 export async function fetchOnlineData(fetchType, raceDate, venueCode, raceNumber, raceId = null) {
   return await base44.functions.invoke("fetchOnlineData", {
