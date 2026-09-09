@@ -34,6 +34,17 @@ export async function importOfficialFiles(importType, files) {
 export async function saveBoatraceData(dataType, parsedData, fileName, onProgress = null) {
   const venues = parsedData?.venues || [];
 
+  // K過去結果はバックエンド側で日付単位の先読み＋bulk書込を行うため、
+  // 会場分割せず1ファイルを1回で送る。従来の会場ごと3秒待機を廃止。
+  if (dataType === "K") {
+    return await base44.functions.invoke("saveBoatraceData", {
+      data_type: dataType,
+      parsed_data: parsedData,
+      file_name: fileName,
+      fast_historical_k: true,
+    });
+  }
+
   // 旧形式や単一会場データは従来通り1回で保存
   if (!venues.length) {
     return await base44.functions.invoke("saveBoatraceData", {
