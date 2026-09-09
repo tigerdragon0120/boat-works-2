@@ -29,12 +29,88 @@ export async function importOfficialFiles(importType, files) {
 }
 
 // === 競艇オフィシャルTXT(B/K)保存 ===
-export async function saveBoatraceData(dataType, parsedData, fileName) {
-  return await base44.functions.invoke("saveBoatraceData", {
+// 全国1日分を1回で送ると、144R/864艇 + 予想生成でFunctionがタイムアウトしやすい。
+// そのため会場単位で順番に保存し、結果を集計する。
+export async function saveBoatraceData(dataType, parsedData, fileName, onProgress = null) {
+  const venues = parsedData?.venues || [];
+
+  // 旧形式や単一会場データは従来通り1回で保存
+  if (!venues.length) {
+    return await base44.functions.invoke("saveBoatraceData", {
+      data_type: dataType,
+      parsed_data: parsedData,
+      file_name: fileName,
+    });
+  }
+
+  const aggregate = {
+    ok: true,
     data_type: dataType,
-    parsed_data: parsedData,
-    file_name: fileName,
-  });
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    errors: 0,
+    total: 0,
+    errorDetails: [],
+    venueResults: [],
+  };
+
+  for (let i = 0; i < venues.length; i++) {
+    const venue = venues[i];
+    const chunk = {
+      type: dataType,
+      race_date: parsedData.race_date,
+      venues: [venue],
+    };
+
+    try {
+      const resp = await base44.functions.invoke("saveBoatraceData", {
+        data_type: dataType,
+        parsed_data: chunk,
+        file_name: fileName,
+        suppress_prediction_during_import: true,
+      });
+      const d = resp?.data || {};
+      aggregate.created += d.created || 0;
+      aggregate.updated += d.updated || 0;
+      aggregate.skipped += d.skipped || 0;
+      aggregate.errors += d.errors || 0;
+      aggregate.total += d.total || 0;
+      if (d.errorDetails?.length) aggregate.errorDetails.push(...d.errorDetails);
+      aggregate.venueResults.push({
+        venue_code: venue.venue_code,
+        venue_name: venue.venue_name,
+        ok: true,
+        created: d.created || 0,
+        updated: d.updated || 0,
+        skipped: d.skipped || 0,
+        errors: d.errors || 0,
+      });
+    } catch (e) {
+      aggregate.ok = false;
+      aggregate.errors += 1;
+      const msg = `${venue.venue_name || venue.venue_code}: ${e?.response?.data?.error || e.message}`;
+      aggregate.errorDetails.push(msg);
+      aggregate.venueResults.push({
+        venue_code: venue.venue_code,
+        venue_name: venue.venue_name,
+        ok: false,
+        error: msg,
+      });
+    }
+
+    if (onProgress) {
+      onProgress({
+        current: i + 1,
+        total: venues.length,
+        venue_code: venue.venue_code,
+        venue_name: venue.venue_name,
+      });
+    }
+  }
+
+  aggregate.message = `全国取込完了: ${venues.length}場 / ${aggregate.total}R / 更新${aggregate.updated} / スキップ${aggregate.skipped} / エラー${aggregate.errors}`;
+  return { data: aggregate };
 }
 
 // === オンライン取得 ===
