@@ -3,6 +3,7 @@ import { Link, useLocation, Outlet } from "react-router-dom";
 import { Waves, Home, BarChart3, Settings, Search, Ticket, CalendarDays, Newspaper, Video, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { resumeKBatchImport } from "@/lib/kBatchImportManager";
+import { resumeRacerTermImport } from "@/lib/racerTermImportManager";
 
 const nav = [
   { to: "/", label: "レース一覧", icon: Home },
@@ -22,7 +23,10 @@ const subNav = [
 
 export default function Layout() {
   const loc = useLocation();
-  useEffect(() => { resumeKBatchImport(); }, []);
+  useEffect(() => {
+    resumeKBatchImport();
+    resumeRacerTermImport();
+  }, []);
   return (
     <div className="min-h-screen bg-[#11161d] text-slate-100">
       <header className="sticky top-0 z-30 bg-[#161a22] border-b border-[#2d3748]">
