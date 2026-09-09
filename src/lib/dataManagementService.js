@@ -225,8 +225,23 @@ export async function getDashboardData() {
     base44.entities.OnlineFetchLog.list("-fetched_at", 10),
   ]);
 
-  const raceList = races || [];
-  const entryList = entries || [];
+  // race_key / race_key+boat_number で表示側も重複除外する。
+  // 取込途中の一時重複や古いテストデータが残ってもダッシュボード件数を誤表示しない。
+  const raceMap = new Map();
+  for (const r of (races || [])) {
+    const key = r.race_key || `${r.race_date}_${r.venue_code}_${r.race_number}`;
+    if (!raceMap.has(key)) raceMap.set(key, r);
+  }
+  const raceList = [...raceMap.values()];
+
+  const validRaceKeys = new Set(raceList.map((r) => r.race_key).filter(Boolean));
+  const entryMap = new Map();
+  for (const e of (entries || [])) {
+    if (e.race_key && validRaceKeys.size && !validRaceKeys.has(e.race_key)) continue;
+    const key = `${e.race_key || e.race_id}_${Number(e.boat_number)}`;
+    if (!entryMap.has(key)) entryMap.set(key, e);
+  }
+  const entryList = [...entryMap.values()];
   const totalRaces = raceList.length;
   const totalEntries = entryList.length;
   const expectedEntries = totalRaces * 6;
