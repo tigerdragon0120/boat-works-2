@@ -2,6 +2,7 @@
 // ファイル取込・オンライン取得・ダッシュボード・履歴参照
 import { base44 } from "@/api/base44Client";
 import { todayStr } from "@/lib/predictionService";
+import { parseRacerTermFile, detectTermFromFilename } from "@/lib/racerTermParser";
 
 // === ファイル取込 ===
 export async function importOfficialFile(importType, file) {
@@ -121,5 +122,150 @@ export async function getDashboardData() {
     fetchErrors: todayFetchErrors,
     recentImports: importLogs || [],
     recentFetchLogs: fetchLogs || [],
+  };
+}
+
+// === 選手期別成績パース＋プレビュー ===
+export async function parseRacerTermFileForPreview(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  return parseRacerTermFile(arrayBuffer, file.name);
+}
+
+// === 選手期別成績DB保存（バッチ処理・再開可能） ===
+export async function saveRacerTermStats(parsedData, fileName, termOverride = null) {
+  const records = parsedData.records || [];
+  if (!records.length) return { ok: false, error: "レコードが空です" };
+
+  let offset = 0;
+  const batchSize = 500;
+  let logId = null;
+  let totalCreated = 0, totalUpdated = 0, totalErrors = 0;
+  const allErrorDetails = [];
+
+  while (offset < records.length) {
+    const resp = await base44.functions.invoke("importRacerTermStats", {
+      records,
+      file_name: fileName,
+      term_override: termOverride,
+      batch_offset: offset,
+      batch_size: batchSize,
+      log_id: logId,
+    });
+    const d = resp.data;
+    if (!d.ok) throw new Error(d.error || "取込失敗");
+    totalCreated += d.created || 0;
+    totalUpdated += d.updated || 0;
+    totalErrors += d.errors || 0;
+    if (d.error_details?.length) allErrorDetails.push(...d.error_details);
+    logId = d.log_id;
+    if (d.completed || !d.next_offset) break;
+    offset = d.next_offset;
+  }
+
+  return {
+    ok: true,
+    created: totalCreated,
+    updated: totalUpdated,
+    errors: totalErrors,
+    error_details: allErrorDetails.slice(0, 50),
+    total: records.length,
+    log_id: logId,
+  };
+}
+
+// === ローリング統計再計算（バッチ処理） ===
+export async function rebuildRollingStats(onProgress = null) {
+  let offset = 0;
+  const batchSize = 500;
+  let totalComputed = 0, totalCreated = 0, totalUpdated = 0;
+  let totalCount = 0;
+
+  while (true) {
+    const resp = await base44.functions.invoke("buildRollingStats", {
+      batch_offset: offset,
+      batch_size: batchSize,
+    });
+    const d = resp.data;
+    if (!d.ok) throw new Error(d.error || "再計算失敗");
+    totalComputed += d.computed || 0;
+    totalCreated += d.created || 0;
+    totalUpdated += d.updated || 0;
+    totalCount = d.total || totalCount;
+    if (onProgress) onProgress({ processed: d.processed, total: totalCount });
+    if (d.completed || !d.next_offset) break;
+    offset = d.next_offset;
+  }
+
+  return { ok: true, computed: totalComputed, created: totalCreated, updated: totalUpdated, total: totalCount };
+}
+
+// === 選手データ管理ダッシュボード ===
+export async function getRacerDataDashboard() {
+  const [termStats, profiles, rollingStats] = await Promise.all([
+    base44.entities.RacerTermStats.list('registration_number', 500),
+    base44.entities.RacerProfile.list('registration_number', 500),
+    base44.entities.RacerRollingStats.list('registration_number', 500),
+  ]);
+
+  const termList = termStats || [];
+  const profileList = profiles || [];
+  const rollingList = rollingStats || [];
+
+  // 期別サマリー
+  const termSet = new Set();
+  const termMap = new Map(); // term_key -> count
+  for (const t of termList) {
+    termSet.add(t.term_key);
+    termMap.set(t.term_key, (termMap.get(t.term_key) || 0) + 1);
+  }
+  const sortedTerms = [...termSet].sort();
+
+  // 2002年前期から現在までの全期リスト生成
+  const allTerms = [];
+  for (let year = 2002; year <= new Date().getFullYear(); year++) {
+    allTerms.push({ term_key: `${year}_FIRST`, term_year: year, term_half: "FIRST", label: `${year}前期` });
+    allTerms.push({ term_key: `${year}_SECOND`, term_year: year, term_half: "SECOND", label: `${year}後期` });
+  }
+  const termStatus = allTerms.map((t) => ({
+    ...t,
+    imported: termSet.has(t.term_key),
+    count: termMap.get(t.term_key) || 0,
+  }));
+
+  // 最新取込日
+  const importDates = termList.map((t) => t.imported_at).filter(Boolean).sort().reverse();
+  const latestImport = importDates[0] || null;
+
+  return {
+    total_racers: profileList.length,
+    profile_count: profileList.length,
+    term_stats_count: termList.length,
+    rolling_stats_count: rollingList.length,
+    oldest_term: sortedTerms[0] || null,
+    latest_term: sortedTerms[sortedTerms.length - 1] || null,
+    imported_term_count: termSet.size,
+    latest_import_at: latestImport,
+    term_status: termStatus,
+  };
+}
+
+// === 選手詳細データ取得 ===
+export async function getRacerDetailData(registrationNumber) {
+  const [termStats, rollingStats, profile, history] = await Promise.all([
+    base44.entities.RacerTermStats.filter({ registration_number: registrationNumber }, 'term_year', 100),
+    base44.entities.RacerRollingStats.filter({ registration_number: registrationNumber }, '-calculated_at', 1),
+    base44.entities.RacerProfile.filter({ registration_number: registrationNumber }, '-updated_at', 1),
+    base44.entities.RacerRaceHistory.filter({ registration_number: registrationNumber }, '-race_date', 200),
+  ]);
+
+  return {
+    profile: profile?.[0] || null,
+    termStats: (termStats || []).sort((a, b) => {
+      const ka = `${a.term_year}_${a.term_half === "FIRST" ? "0" : "1"}`;
+      const kb = `${b.term_year}_${b.term_half === "FIRST" ? "0" : "1"}`;
+      return ka.localeCompare(kb);
+    }),
+    rollingStats: rollingStats?.[0] || null,
+    history: history || [],
   };
 }

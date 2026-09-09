@@ -1,13 +1,15 @@
 import React, { useState } from "react";
-import { Database, FileSpreadsheet, CloudDownload, BarChart3, Code } from "lucide-react";
+import { Database, FileSpreadsheet, CloudDownload, BarChart3, Code, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import DataDashboard from "@/components/admin/DataDashboard";
 import FileImportSection from "@/components/admin/FileImportSection";
 import OnlineFetchSection from "@/components/admin/OnlineFetchSection";
 import DeveloperTools from "@/components/admin/DeveloperTools";
+import RacerDataSection from "@/components/admin/RacerDataSection";
 
 const tabs = [
   { k: "file", l: "公式ファイル取込", icon: FileSpreadsheet },
+  { k: "racer", l: "選手データ", icon: Users },
   { k: "online", l: "オンライン取得", icon: CloudDownload },
   { k: "status", l: "今日の状態", icon: BarChart3 },
   { k: "dev", l: "開発者向け", icon: Code },
@@ -46,6 +48,7 @@ export default function Admin() {
 
       {/* タブ内容 */}
       {tab === "file" && <FileImportSection />}
+      {tab === "racer" && <RacerDataSection />}
       {tab === "online" && <OnlineFetchSection />}
       {tab === "status" && <DataDashboard />}
       {tab === "dev" && <DeveloperTools />}

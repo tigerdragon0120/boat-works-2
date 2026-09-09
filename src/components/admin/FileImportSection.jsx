@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { importOfficialFile, saveBoatraceData } from "@/lib/dataManagementService";
 import { parseBoatraceFile } from "@/lib/boatraceFileParser";
-import { FileSpreadsheet, Users, History, Cog, Upload, CheckCircle2, AlertTriangle, Loader2, FileText, Zap } from "lucide-react";
+import { FileSpreadsheet, Users, History, Cog, Upload, CheckCircle2, AlertTriangle, Loader2, FileText, Zap, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import RacerTermImportCard from "@/components/admin/RacerTermImportCard";
 
 export default function FileImportSection() {
   return (
@@ -18,13 +19,24 @@ export default function FileImportSection() {
         <TxtImportCard />
       </div>
 
+      {/* 選手期別成績取込 */}
+      <div className="pt-4 border-t border-slate-200">
+        <div className="flex items-center gap-2 mb-2">
+          <TrendingUp className="w-5 h-5 text-emerald-600" />
+          <h2 className="text-lg font-bold text-slate-900">選手期別成績</h2>
+          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">2002年〜現在</span>
+        </div>
+        <p className="text-xs text-slate-500 mb-3">公式ファン手帳データ（LZH解凍後のTXT）を期別履歴として蓄積。複数ファイル一括投入対応。過去データは絶対削除されません。</p>
+        <RacerTermImportCard />
+      </div>
+
       {/* 副次: その他ファイル取込 */}
       <div className="pt-4 border-t border-slate-200">
         <div className="flex items-center gap-2 mb-2">
           <Upload className="w-4 h-4 text-slate-500" />
-          <h3 className="text-sm font-bold text-slate-700">その他ファイル取込(CSV / Excel / JSON)</h3>
+          <h3 className="text-sm font-bold text-slate-700">最新選手プロフィール(CSV / Excel / JSON)</h3>
         </div>
-        <p className="text-[11px] text-slate-400 mb-3">AI抽出による汎用ファイル取込。競艇TXT以外のデータに使用。</p>
+        <p className="text-[11px] text-slate-400 mb-3">AI抽出による汎用ファイル取込。期別成績ではなく現在のプロフィール更新に使用。</p>
         <div className="grid sm:grid-cols-2 gap-3">
           {importTypes.map((t) => (
             <FileImportCard key={t.key} type={t} />

@@ -18,6 +18,7 @@ import RaceDetail from '@/pages/RaceDetail';
 import Verification from '@/pages/Verification';
 import Admin from '@/pages/Admin';
 import Database from '@/pages/Database';
+import RacerDetail from '@/pages/RacerDetail';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -57,6 +58,7 @@ const AuthenticatedApp = () => {
           <Route path="/verify" element={<Verification />} />
           <Route path="/database" element={<Database />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/racer/:reg" element={<RacerDetail />} />
         </Route>
       </Route>
       <Route path="*" element={<PageNotFound />} />
