@@ -133,8 +133,10 @@ export async function upsertRace(client, raceData) {
     return await sr.Race.update(existing[0].id, merged);
   }
   const created = await sr.Race.create(raceData);
-  // 作成直後に同時並行で別ワーカーがcreateしていた場合の安全網
-  return await dedupRace(client, raceData.race_key);
+  // 通常は作成したRaceをそのまま返す。旧実装では直後のdedupRaceが
+  // レート制限等で検索失敗→nullを返し、呼出側でrace.id参照エラーになっていた。
+  // 重複整理は既存の整合性ガード/専用処理に任せる。
+  return created;
 }
 
 // race_key+boat_numberでRaceEntryをupsert(保護付き + 作成後デデアップ安全網)
