@@ -40,6 +40,9 @@
     },
     "message": {
       "type": "string"
+    },
+    "log_id": {
+      "type": "string"
     }
   },
   "required": []
