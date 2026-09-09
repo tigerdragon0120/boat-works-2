@@ -140,13 +140,23 @@ function TxtImportCard() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
             <PreviewStat label="ファイル種別" v={preview.preview.type} />
             <PreviewStat label="開催日" v={preview.preview.race_date || "—"} />
-            <PreviewStat label="場" v={preview.preview.venue || "—"} />
+            <PreviewStat label="開催場数" v={preview.preview.venue_count || "—"} />
             <PreviewStat label="Race数" v={preview.preview.race_count} />
           </div>
-          <div className="grid grid-cols-2 gap-2 text-center">
+          <div className="grid grid-cols-1 gap-2 text-center">
             <PreviewStat label={preview.data.type === "B" ? "RaceEntry数" : "結果艇数"} v={preview.preview.entry_count} />
-            <PreviewStat label="想定" v={preview.data.type === "B" ? "12R / 72艇" : "12R結果"} />
           </div>
+          {preview.preview.venues?.length > 0 && (
+            <div className="bg-white rounded-lg p-2 space-y-1">
+              <div className="text-[10px] font-bold text-slate-500 mb-1">会場別内訳</div>
+              {preview.preview.venues.map((v, i) => (
+                <div key={i} className="flex items-center justify-between text-[11px] py-0.5 border-b border-slate-100 last:border-0">
+                  <span className="font-semibold text-slate-700">{v.venue_name}({v.venue_code})</span>
+                  <span className="text-slate-500">{v.race_count}R / {v.entry_count}艇</span>
+                </div>
+              ))}
+            </div>
+          )}
           {preview.warnings?.length > 0 && (
             <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
               ⚠ {preview.warnings.join(" / ")}
@@ -174,6 +184,16 @@ function TxtImportCard() {
             <div><div className="font-bold text-slate-600 text-sm">{result.skipped}</div><div className="text-slate-500">スキップ</div></div>
             <div><div className="font-bold text-rose-600 text-sm">{result.errors}</div><div className="text-slate-500">エラー</div></div>
           </div>
+          {result.errorDetails?.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-emerald-200">
+              <div className="text-[10px] font-bold text-rose-600 mb-1">エラー詳細(最大20件)</div>
+              <div className="max-h-32 overflow-y-auto space-y-0.5">
+                {result.errorDetails.slice(0, 20).map((e, i) => (
+                  <div key={i} className="text-[10px] text-rose-700">{e}</div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
       {saveError && (

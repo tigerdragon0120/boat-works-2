@@ -1,7 +1,8 @@
 // 競艇オフィシャルTXT(B番組表/K結果)パーサー
-// CP932/Shift-JISデコード → B/K自動判定 → 固定レイアウト解析
+// CP932/Shift-JISデコード → B/K自動判定 → 会場セクション検出 → 固定レイアウト解析
+// 1ファイル = 1日分の全国複数会場対応(XXBBGN/XXKBGN セクション分割)
 
-// === 競艇場コードマップ(app内Home.jsxと同一) ===
+// === 競艇場コードマップ ===
 const VENUE_MAP = {
   "01": "桐生", "02": "戸田", "03": "江戸川", "04": "平和島", "05": "多摩川",
   "06": "浜名湖", "07": "蒲郡", "08": "常滑", "09": "津", "10": "三国",
@@ -9,7 +10,6 @@ const VENUE_MAP = {
   "16": "児島", "17": "宮島", "18": "徳山", "19": "下関", "20": "若松",
   "21": "芦屋", "22": "福岡", "23": "唐津", "24": "大村",
 };
-const VENUE_NAME_TO_CODE = Object.entries(VENUE_MAP).reduce((a, [c, n]) => { a[n] = c; return a; }, {});
 
 // === CP932/Shift-JISデコード ===
 export function decodeFile(arrayBuffer) {
@@ -26,13 +26,12 @@ export function decodeFile(arrayBuffer) {
   }
 }
 
-// === 全角→半角正規化(数字・R・コロンのみ) ===
+// === 全角→半角正規化(数字・R・コロン・ハイフンのみ) ===
 function normalizeWidth(str) {
   return str
     .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
     .replace(/Ｒ/g, "R")
     .replace(/：/g, ":")
-    .replace(/－/g, "-")
     .replace(/－/g, "-");
 }
 
@@ -54,22 +53,56 @@ function extractDateFromFilename(filename) {
   return null;
 }
 
-// === ヘッダから会場コード抽出 (24BBGN → 24) ===
-function extractVenueCode(lines) {
-  for (const line of lines.slice(0, 10)) {
-    const m = line.match(/^(\d{2})[BK]BGN/i);
-    if (m) return m[1].padStart(2, "0");
+// =====================================================
+// 会場セクション検出(最重要修正)
+// Bファイル: XXBBGN ... XXBEND
+// Kファイル: XXKBGN ... XXKEND
+// 次のXXBBGN/XXKBGNが出た時点で前のセクションを確定(終端マーカーなしでも対応)
+// =====================================================
+function splitVenueSections(lines, fileType) {
+  const marker = fileType === "B" ? "B" : "K";
+  const beginRe = new RegExp(`^(\\d{2})${marker}BGN$`, "i");
+  const endRe = new RegExp(`^(\\d{2})${marker}END$`, "i");
+
+  const sections = [];
+  let current = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim().toUpperCase();
+
+    // 開始マーカー検出 → 前のセクション確定 + 新セクション開始
+    const bMatch = trimmed.match(beginRe);
+    if (bMatch) {
+      if (current) sections.push(current);
+      current = { venue_code: bMatch[1].padStart(2, "0"), lines: [] };
+      continue;
+    }
+
+    // 終了マーカー検出 → セクション確定
+    const eMatch = trimmed.match(endRe);
+    if (eMatch && current) {
+      sections.push(current);
+      current = null;
+      continue;
+    }
+
+    // セクション内の行を蓄積
+    if (current) {
+      current.lines.push(lines[i]);
+    }
   }
-  return null;
+
+  // 最後のセクション(終了マーカーなしの場合)
+  if (current) sections.push(current);
+  return sections;
 }
 
-// === 会場名抽出 (ボートレース大村 → 大村) ===
-function extractVenueName(lines) {
-  for (const line of lines.slice(0, 10)) {
+// === 会場名抽出(セクション内先頭20行から) ===
+function extractVenueNameFromLines(lines) {
+  for (const line of lines.slice(0, 20)) {
     const m = line.match(/ボートレース(.+)/);
     if (m) {
-      const name = m[1].trim();
-      return name;
+      return m[1].trim().replace(/[\s　]+$/, "");
     }
   }
   return null;
@@ -87,42 +120,34 @@ function extractRaceType(text) {
 // === レースヘッダ判定・解析 ===
 function parseRaceHeader(line) {
   const normalized = normalizeWidth(line).trim();
-  // "1R 予選 ..." or "12R 優勝戦 ..."
   const m = normalized.match(/^(\d{1,2})R\s+(.+)/);
   if (!m) return null;
   const raceNumber = parseInt(m[1]);
   const rest = m[2];
   const raceType = extractRaceType(rest);
-  // 締切時刻: "電話投票締切予定15:15" or "締切予定15:15"
   const dl = rest.match(/締切(?:予定)?(\d{1,2}):(\d{2})/);
   const deadlineTime = dl ? `${dl[1].padStart(2, "0")}:${dl[2]}` : null;
   return { race_number: raceNumber, race_type: raceType, race_name: raceType, deadline_time: deadlineTime };
 }
 
 // === Bファイル 選手行解析 ===
-// 例: "1 4174赤坂俊輔43長崎51A1 6.38 44.44 6.41 43.72 17 39.34 51 35.82 ..."
 function parseBEntryLine(line) {
   const normalized = normalizeWidth(line).trim();
-  // 級別(A1/A2/B1/B2)をアンカーとして前後を分割
-  // 級別は体重(2桁)の直後に連結される(例: 51A1)ので、直前の空白は不要
   const classMatch = normalized.match(/(\d{2})(A[12]|B[12])\s/);
   if (!classMatch) return null;
   const idx = classMatch.index;
-  const before = normalized.slice(0, idx + 2).trim(); // 体重まで含める
+  const before = normalized.slice(0, idx + 2).trim();
   const playerClass = classMatch[2];
   const after = normalized.slice(idx + classMatch[0].length).trim();
 
-  // before: "1 4174赤坂俊輔43長崎51" or "1 4174 赤坂俊輔 43 長崎 51"
   const beforeParts = before.split(/\s+/);
   const boatNumber = parseInt(beforeParts[0]);
   if (!boatNumber || boatNumber < 1 || boatNumber > 6) return null;
-  // 残りを結合して正規表現で分解
   const personal = beforeParts.slice(1).join("");
   const pm = personal.match(/^(\d{4})(\D+?)(\d{2})(\D+?)(\d{2})$/);
   if (!pm) return null;
   const [, registrationNumber, playerName, age, branch, weight] = pm;
 
-  // after: 数値フィールド群
   const stats = after.split(/\s+/).map((s) => {
     const n = parseFloat(s);
     return Number.isFinite(n) ? n : null;
@@ -149,7 +174,6 @@ function parseBEntryLine(line) {
 }
 
 // === Kファイル 選手行解析 ===
-// 例: "01 3 3716 石渡鉄兵 45 12 7.00 3 0.27 1.52.5"
 function parseKEntryLine(line) {
   const normalized = normalizeWidth(line).trim();
   const parts = normalized.split(/\s+/);
@@ -158,7 +182,6 @@ function parseKEntryLine(line) {
   const boatNumber = parseInt(parts[1]);
   const registrationNumber = parts[2];
   if (!finishOrder || !boatNumber || !registrationNumber) return null;
-  // 末尾6トークン: モーター ボート 展示 進入 ST タイム
   const raceTime = parts[parts.length - 1];
   const st = parts[parts.length - 2];
   const course = parts[parts.length - 3];
@@ -167,7 +190,6 @@ function parseKEntryLine(line) {
   const motorNumber = parts[parts.length - 6];
   const playerName = parts.slice(3, parts.length - 6).join(" ").trim();
 
-  // finish_status判定
   let finishStatus = "";
   let isAbsent = false, isDisqualified = false;
   const nameUpper = playerName.toUpperCase();
@@ -195,7 +217,6 @@ function parseKEntryLine(line) {
 }
 
 // === Kファイル 払戻行解析 ===
-// 例: "1R 3-1-2 4490"
 function parsePayoutLine(line) {
   const normalized = normalizeWidth(line).trim();
   const m = normalized.match(/^(\d{1,2})R\s+(\d-\d-\d)\s+(\d+)/);
@@ -203,69 +224,85 @@ function parsePayoutLine(line) {
   return { race_number: parseInt(m[1]), result_trifecta: m[2], payout: parseInt(m[3]) };
 }
 
-// === Bファイル解析 ===
+// =====================================================
+// Bファイル解析(全会場対応)
+// =====================================================
 function parseBFile(text, filename) {
   const lines = text.split(/\r?\n/);
   const errors = [], warnings = [];
   const raceDate = extractDateFromFilename(filename);
-  let venueCode = extractVenueCode(lines);
-  const venueName = extractVenueName(lines);
-  // 会場名から会場コードを補完
-  if (!venueCode && venueName) {
-    venueCode = VENUE_NAME_TO_CODE[venueName] || null;
-  }
   if (!raceDate) errors.push("開催日を抽出できません(ファイル名: BYYMMDD.TXT)");
-  if (!venueCode) errors.push("会場コードを抽出できません");
 
-  const races = [];
-  let currentRace = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
-    // レースヘッダ判定
-    const header = parseRaceHeader(line);
-    if (header) {
-      if (currentRace) races.push(currentRace);
-      currentRace = { ...header, entries: [] };
-      continue;
-    }
-    // 選手行判定(先頭が1-6 + 空白 + 4桁数字)
-    if (currentRace && /^[1-6]\s+\d{4}/.test(normalizeWidth(line))) {
-      const entry = parseBEntryLine(line);
-      if (entry) currentRace.entries.push(entry);
-    }
+  const sections = splitVenueSections(lines, "B");
+  if (sections.length === 0) {
+    errors.push("会場セクション(XXBBGN)を検出できません");
   }
-  if (currentRace) races.push(currentRace);
 
-  // 整合性チェック
-  const validRaces = races.filter((r) => r.race_number >= 1 && r.race_number <= 12);
-  if (validRaces.length === 0) errors.push("レースが検出できませんでした");
-  const raceNumbers = validRaces.map((r) => r.race_number);
-  const dupes = raceNumbers.filter((n, i) => raceNumbers.indexOf(n) !== i);
-  if (dupes.length) errors.push(`レース番号重複: ${dupes.join(", ")}`);
+  const venues = [];
+  const globalKeys = new Set();
 
-  let totalEntries = 0;
-  for (const r of validRaces) {
-    if (r.entries.length !== 6) warnings.push(`R${r.race_number}: ${r.entries.length}艇(6艇期待)`);
-    const boats = r.entries.map((e) => e.boat_number);
-    const boatDupes = boats.filter((b, i) => boats.indexOf(b) !== i);
-    if (boatDupes.length) warnings.push(`R${r.race_number}: 艇番重複 ${boatDupes.join(",")}`);
-    totalEntries += r.entries.length;
+  for (const section of sections) {
+    const venueCode = section.venue_code;
+    const venueName = VENUE_MAP[venueCode] || extractVenueNameFromLines(section.lines) || venueCode;
+
+    const races = [];
+    let currentRace = null;
+
+    for (const line of section.lines) {
+      if (!line.trim()) continue;
+      const header = parseRaceHeader(line);
+      if (header) {
+        if (currentRace) races.push(currentRace);
+        currentRace = { ...header, entries: [] };
+        continue;
+      }
+      if (currentRace && /^[1-6]\s+\d{4}/.test(normalizeWidth(line))) {
+        const entry = parseBEntryLine(line);
+        if (entry) currentRace.entries.push(entry);
+      }
+    }
+    if (currentRace) races.push(currentRace);
+
+    // 会場内バリデーション
+    const validRaces = races.filter((r) => r.race_number >= 1 && r.race_number <= 12);
+    if (validRaces.length === 0) warnings.push(`${venueName}: レースが検出できません`);
+
+    const raceNumbers = validRaces.map((r) => r.race_number);
+    const dupes = raceNumbers.filter((n, i) => raceNumbers.indexOf(n) !== i);
+    if (dupes.length) errors.push(`${venueName}: レース番号重複 ${dupes.join(",")}`);
+
+    for (const r of validRaces) {
+      if (r.entries.length !== 6) warnings.push(`${venueName} R${r.race_number}: ${r.entries.length}艇(6艇期待)`);
+      const boats = r.entries.map((e) => e.boat_number);
+      const boatDupes = boats.filter((b, i) => boats.indexOf(b) !== i);
+      if (boatDupes.length) warnings.push(`${venueName} R${r.race_number}: 艇番重複 ${boatDupes.join(",")}`);
+
+      // 全国全体のRaceKey重複チェック
+      const key = `${raceDate}_${venueCode}_${r.race_number}`;
+      if (globalKeys.has(key)) errors.push(`RaceKey重複: ${key}`);
+      globalKeys.add(key);
+    }
+
+    venues.push({
+      venue_code: venueCode,
+      venue_name: venueName,
+      races: validRaces.map((r) => ({
+        race_number: r.race_number,
+        race_name: r.race_name,
+        race_type: r.race_type,
+        deadline_time: r.deadline_time,
+        entries: r.entries,
+      })),
+    });
   }
+
+  const totalRaces = venues.reduce((a, v) => a + v.races.length, 0);
+  const totalEntries = venues.reduce((a, v) => a + v.races.reduce((s, r) => s + r.entries.length, 0), 0);
 
   const data = {
     type: "B",
     race_date: raceDate,
-    venue_code: venueCode,
-    venue_name: venueName,
-    races: validRaces.map((r) => ({
-      race_number: r.race_number,
-      race_name: r.race_name,
-      race_type: r.race_type,
-      deadline_time: r.deadline_time,
-      entries: r.entries,
-    })),
+    venues,
   };
 
   return {
@@ -275,78 +312,104 @@ function parseBFile(text, filename) {
     preview: {
       type: "番組表(B)",
       race_date: raceDate,
-      venue: venueName ? `${venueName}(${venueCode})` : venueCode,
-      race_count: validRaces.length,
+      venue_count: venues.length,
+      race_count: totalRaces,
       entry_count: totalEntries,
+      venues: venues.map((v) => ({
+        venue_code: v.venue_code,
+        venue_name: v.venue_name,
+        race_count: v.races.length,
+        entry_count: v.races.reduce((s, r) => s + r.entries.length, 0),
+      })),
     },
   };
 }
 
-// === Kファイル解析 ===
+// =====================================================
+// Kファイル解析(全会場対応)
+// =====================================================
 function parseKFile(text, filename) {
   const lines = text.split(/\r?\n/);
   const errors = [], warnings = [];
   const raceDate = extractDateFromFilename(filename);
-  let venueCode = extractVenueCode(lines);
-  const venueName = extractVenueName(lines);
-  if (!venueCode && venueName) venueCode = VENUE_NAME_TO_CODE[venueName] || null;
   if (!raceDate) errors.push("開催日を抽出できません(ファイル名: KYYMMDD.TXT)");
-  if (!venueCode) errors.push("会場コードを抽出できません");
 
-  // 払戻セクション解析
-  const payouts = {};
-  let inPayout = false;
-  const results = [];
-  let currentResult = null;
+  const sections = splitVenueSections(lines, "K");
+  if (sections.length === 0) {
+    errors.push("会場セクション(XXKBGN)を検出できません");
+  }
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line.trim()) continue;
-    if (line.includes("払戻")) { inPayout = true; continue; }
-    if (inPayout) {
-      const p = parsePayoutLine(line);
-      if (p) { payouts[p.race_number] = p; continue; }
-      // 払戻セクション終了判定(レースヘッダが出てきたら)
-      if (parseRaceHeader(line)) { inPayout = false; }
-    }
-    if (!inPayout) {
-      const header = parseRaceHeader(line);
-      if (header) {
-        if (currentResult) results.push(currentResult);
-        currentResult = { race_number: header.race_number, race_name: header.race_type, entries: [] };
-        continue;
+  const venues = [];
+  const globalKeys = new Set();
+
+  for (const section of sections) {
+    const venueCode = section.venue_code;
+    const venueName = VENUE_MAP[venueCode] || extractVenueNameFromLines(section.lines) || venueCode;
+
+    const payouts = {};
+    let inPayout = false;
+    const results = [];
+    let currentResult = null;
+
+    for (const line of section.lines) {
+      if (!line.trim()) continue;
+      if (line.includes("払戻")) { inPayout = true; continue; }
+      if (inPayout) {
+        const p = parsePayoutLine(line);
+        if (p) { payouts[p.race_number] = p; continue; }
+        if (parseRaceHeader(line)) { inPayout = false; }
       }
-      // 選手行判定(先頭が2桁数字 + 空白 + 1桁数字 + 空白 + 4桁数字)
-      if (currentResult && /^\d{2}\s+\d\s+\d{4}/.test(normalizeWidth(line))) {
-        const entry = parseKEntryLine(line);
-        if (entry) currentResult.entries.push(entry);
+      if (!inPayout) {
+        const header = parseRaceHeader(line);
+        if (header) {
+          if (currentResult) results.push(currentResult);
+          currentResult = { race_number: header.race_number, race_name: header.race_type, entries: [] };
+          continue;
+        }
+        if (currentResult && /^\d{2}\s+\d\s+\d{4}/.test(normalizeWidth(line))) {
+          const entry = parseKEntryLine(line);
+          if (entry) currentResult.entries.push(entry);
+        }
       }
     }
-  }
-  if (currentResult) results.push(currentResult);
+    if (currentResult) results.push(currentResult);
 
-  // 払戻を結果にマージ
-  for (const r of results) {
-    const p = payouts[r.race_number];
-    if (p) { r.result_trifecta = p.result_trifecta; r.payout = p.payout; }
+    // 払戻を結果にマージ
+    for (const r of results) {
+      const p = payouts[r.race_number];
+      if (p) { r.result_trifecta = p.result_trifecta; r.payout = p.payout; }
+    }
+
+    // 会場内バリデーション
+    const validResults = results.filter((r) => r.race_number >= 1 && r.race_number <= 12);
+    if (validResults.length === 0) warnings.push(`${venueName}: 結果が検出できません`);
+
+    for (const r of validResults) {
+      if (!r.result_trifecta) warnings.push(`${venueName} R${r.race_number}: 3連単結果なし`);
+      const finishes = r.entries.map((e) => e.finish_order);
+      const dupes = finishes.filter((f, i) => finishes.indexOf(f) !== i);
+      if (dupes.length) warnings.push(`${venueName} R${r.race_number}: 着順重複 ${dupes.join(",")}`);
+
+      // 全国全体のRaceKey重複チェック
+      const key = `${raceDate}_${venueCode}_${r.race_number}`;
+      if (globalKeys.has(key)) errors.push(`RaceKey重複: ${key}`);
+      globalKeys.add(key);
+    }
+
+    venues.push({
+      venue_code: venueCode,
+      venue_name: venueName,
+      results: validResults,
+    });
   }
 
-  // 整合性チェック
-  const validResults = results.filter((r) => r.race_number >= 1 && r.race_number <= 12);
-  if (validResults.length === 0) errors.push("結果が検出できませんでした");
-  for (const r of validResults) {
-    if (!r.result_trifecta) warnings.push(`R${r.race_number}: 3連単結果なし`);
-    const finishes = r.entries.map((e) => e.finish_order);
-    const dupes = finishes.filter((f, i) => finishes.indexOf(f) !== i);
-    if (dupes.length) warnings.push(`R${r.race_number}: 着順重複 ${dupes.join(",")}`);
-  }
+  const totalResults = venues.reduce((a, v) => a + v.results.length, 0);
+  const totalEntries = venues.reduce((a, v) => a + v.results.reduce((s, r) => s + r.entries.length, 0), 0);
 
   const data = {
     type: "K",
     race_date: raceDate,
-    venue_code: venueCode,
-    venue_name: venueName,
-    results: validResults,
+    venues,
   };
 
   return {
@@ -356,9 +419,15 @@ function parseKFile(text, filename) {
     preview: {
       type: "結果(K)",
       race_date: raceDate,
-      venue: venueName ? `${venueName}(${venueCode})` : venueCode,
-      race_count: validResults.length,
-      entry_count: validResults.reduce((a, r) => a + r.entries.length, 0),
+      venue_count: venues.length,
+      race_count: totalResults,
+      entry_count: totalEntries,
+      venues: venues.map((v) => ({
+        venue_code: v.venue_code,
+        venue_name: v.venue_name,
+        race_count: v.results.length,
+        entry_count: v.results.reduce((s, r) => s + r.entries.length, 0),
+      })),
     },
   };
 }

@@ -9,7 +9,10 @@ const num = (v: any) => {
 };
 const str = (v: any) => (v != null ? String(v).trim() : '');
 
-// === Bファイル データ保存 ===
+// =====================================================
+// Bファイル データ保存(全会場対応)
+// data.venues = [{ venue_code, venue_name, races: [...] }]
+// =====================================================
 async function saveBFileData(base44: any, data: any) {
   const sr = base44.asServiceRole.entities;
   const settings = await getSettings(base44);
@@ -18,152 +21,175 @@ async function saveBFileData(base44: any, data: any) {
   const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
   const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
   let created = 0, updated = 0, skipped = 0, errors = 0;
+  const errorDetails: string[] = [];
   const raceDate = str(data.race_date);
-  const venueCode = str(data.venue_code);
+  const venues = data.venues || [];
 
-  for (const r of data.races || []) {
-    try {
-      const raceNumber = num(r.race_number);
-      if (!raceNumber) { skipped++; continue; }
-      const raceKey = buildRaceKey(raceDate, venueCode, raceNumber);
-      const deadlineTime = str(r.deadline_time);
-      const deadline = deadlineTime ? `${raceDate}T${deadlineTime}:00+09:00` : undefined;
-      const raceData: any = {
-        race_key: raceKey,
-        race_date: raceDate,
-        venue_code: venueCode,
-        venue: str(data.venue_name) || undefined,
-        venue_name: str(data.venue_name) || undefined,
-        race_number: raceNumber,
-        race_name: str(r.race_name) || undefined,
-        race_type: str(r.race_type) || undefined,
-        grade: str(r.grade) || undefined,
-        deadline,
-        status: 'scheduled',
-        sync_source: 'txt_b_file',
-      };
-      const race = await upsertRace(base44, raceData);
-      const entryDocs = [];
-      for (const e of r.entries || []) {
-        const bn = num(e.boat_number);
-        if (!bn || bn < 1 || bn > 6) { skipped++; continue; }
-        const entryData: any = {
-          race_id: race.id,
+  for (const venue of venues) {
+    const venueCode = str(venue.venue_code);
+    const venueName = str(venue.venue_name) || venueCode;
+
+    for (const r of venue.races || []) {
+      try {
+        const raceNumber = num(r.race_number);
+        if (!raceNumber) { skipped++; errorDetails.push(`${venueName}: race_number不正`); continue; }
+        const raceKey = buildRaceKey(raceDate, venueCode, raceNumber);
+        const deadlineTime = str(r.deadline_time);
+        const deadline = deadlineTime ? `${raceDate}T${deadlineTime}:00+09:00` : undefined;
+        const raceData: any = {
           race_key: raceKey,
           race_date: raceDate,
           venue_code: venueCode,
+          venue: venueName || undefined,
+          venue_name: venueName || undefined,
           race_number: raceNumber,
-          boat_number: bn,
-          player_name: str(e.player_name),
-          racer_name: str(e.player_name),
-          register_number: str(e.registration_number),
-          registration_number: str(e.registration_number),
-          player_class: str(e.player_class) || undefined,
-          grade_class: str(e.player_class) || undefined,
-          motor_number: num(e.motor_number) || undefined,
-          boat_number_id: str(e.boat_number_id) || undefined,
-          national_win_rate: num(e.national_win_rate),
-          local_win_rate: num(e.local_win_rate),
-          national_f2_rate: num(e.national_2rate),
-          national_2rate: num(e.national_2rate),
-          local_f2_rate: num(e.local_2rate),
-          local_2rate: num(e.local_2rate),
-          is_absent: false,
-          is_scratched: false,
+          race_name: str(r.race_name) || undefined,
+          race_type: str(r.race_type) || undefined,
+          grade: str(r.grade) || undefined,
+          deadline,
+          status: 'scheduled',
+          sync_source: 'txt_b_file',
         };
-        const saved = await upsertEntry(base44, entryData);
-        entryDocs.push(saved);
-        updated++;
+        const race = await upsertRace(base44, raceData);
+        const entryDocs = [];
+        for (const e of r.entries || []) {
+          const bn = num(e.boat_number);
+          if (!bn || bn < 1 || bn > 6) { skipped++; continue; }
+          const entryData: any = {
+            race_id: race.id,
+            race_key: raceKey,
+            race_date: raceDate,
+            venue_code: venueCode,
+            race_number: raceNumber,
+            boat_number: bn,
+            player_name: str(e.player_name),
+            racer_name: str(e.player_name),
+            register_number: str(e.registration_number),
+            registration_number: str(e.registration_number),
+            player_class: str(e.player_class) || undefined,
+            grade_class: str(e.player_class) || undefined,
+            motor_number: num(e.motor_number) || undefined,
+            boat_number_id: str(e.boat_number_id) || undefined,
+            national_win_rate: num(e.national_win_rate),
+            local_win_rate: num(e.local_win_rate),
+            national_f2_rate: num(e.national_2rate),
+            national_2rate: num(e.national_2rate),
+            local_f2_rate: num(e.local_2rate),
+            local_2rate: num(e.local_2rate),
+            is_absent: false,
+            is_scratched: false,
+          };
+          const saved = await upsertEntry(base44, entryData);
+          entryDocs.push(saved);
+          updated++;
+        }
+        // 6艇揃いならPRE予想生成
+        if (entryDocs.length >= 6) {
+          try { await runAndSavePrediction(base44, race, entryDocs, settings, 'PRE', {}, profileByReg, rollingByReg); }
+          catch (e: any) { errorDetails.push(`${venueName} R${raceNumber}: 予想生成失敗 ${e.message}`); }
+        }
+      } catch (e: any) {
+        errors++;
+        errorDetails.push(`${venueName} R${r.race_number}: ${e.message}`);
       }
-      // 6艇揃いならPRE予想生成
-      if (entryDocs.length >= 6) {
-        try { await runAndSavePrediction(base44, race, entryDocs, settings, 'PRE', {}, profileByReg, rollingByReg); }
-        catch (e: any) { /* 予想失敗は続行 */ }
-      }
-    } catch (e: any) { errors++; }
+    }
   }
-  return { created, updated, skipped, errors, total: (data.races || []).length };
+
+  const total = venues.reduce((a: number, v: any) => a + (v.races || []).length, 0);
+  return { created, updated, skipped, errors, errorDetails, total };
 }
 
-// === Kファイル データ保存 ===
+// =====================================================
+// Kファイル データ保存(全会場対応)
+// data.venues = [{ venue_code, venue_name, results: [...] }]
+// =====================================================
 async function saveKFileData(base44: any, data: any) {
   const sr = base44.asServiceRole.entities;
   let created = 0, updated = 0, skipped = 0, errors = 0;
   const errorDetails: string[] = [];
   const raceDate = str(data.race_date);
-  const venueCode = str(data.venue_code);
+  const venues = data.venues || [];
 
-  for (const r of data.results || []) {
-    try {
-      const raceNumber = num(r.race_number);
-      if (!raceNumber) { skipped++; continue; }
-      const raceKey = buildRaceKey(raceDate, venueCode, raceNumber);
-      // Race検索(なければ作成)
-      let race = null;
-      const existingRaces = await sr.Race.filter({ race_key: raceKey }, '-updated_date', 1).catch(() => []);
-      if (existingRaces && existingRaces[0]) {
-        race = existingRaces[0];
-      } else {
-        race = await sr.Race.create({
-          race_key: raceKey, race_date: raceDate, venue_code: venueCode,
-          venue: str(data.venue_name) || undefined, venue_name: str(data.venue_name) || undefined,
-          race_number: raceNumber, race_name: str(r.race_name) || undefined,
-          status: 'finished', sync_source: 'txt_k_file',
-        });
-      }
-      // RaceResult upsert + 検証
-      const resultTrifecta = str(r.result_trifecta);
-      const finishOrder = r.entries ? r.entries.sort((a: any, b: any) => a.finish_order - b.finish_order).map((e: any) => e.boat_number) : [];
-      if (resultTrifecta) {
-        await upsertResultAndVerify(base44, race, {
-          result_trifecta: resultTrifecta,
-          finish_order: finishOrder,
-          payout: num(r.payout) || 0,
-        });
-        updated++;
-      } else {
-        skipped++;
-      }
-      // RaceEntry展示データ更新 + RacerRaceHistory蓄積
-      for (const e of r.entries || []) {
-        const bn = num(e.boat_number);
-        if (!bn) continue;
-        // RaceEntry更新(展示タイム・ST・進入)
-        const existingEntry = await sr.RaceEntry.filter({ race_id: race.id, boat_number: bn }, 'boat_number', 1).catch(() => []);
-        if (existingEntry && existingEntry[0]) {
-          const update: any = {};
-          if (num(e.exhibition_time) != null) update.exhibition_time = num(e.exhibition_time);
-          if (num(e.st) != null) update.exhibition_st = num(e.st);
-          if (num(e.course) != null) update.exhibition_course = num(e.course);
-          if (e.is_absent) { update.is_absent = true; update.is_scratched = true; }
-          if (Object.keys(update).length) await sr.RaceEntry.update(existingEntry[0].id, update);
+  for (const venue of venues) {
+    const venueCode = str(venue.venue_code);
+    const venueName = str(venue.venue_name) || venueCode;
+
+    for (const r of venue.results || []) {
+      try {
+        const raceNumber = num(r.race_number);
+        if (!raceNumber) { skipped++; errorDetails.push(`${venueName}: race_number不正`); continue; }
+        const raceKey = buildRaceKey(raceDate, venueCode, raceNumber);
+        // Race検索(なければ作成)
+        let race = null;
+        const existingRaces = await sr.Race.filter({ race_key: raceKey }, '-updated_date', 1).catch(() => []);
+        if (existingRaces && existingRaces[0]) {
+          race = existingRaces[0];
+        } else {
+          race = await sr.Race.create({
+            race_key: raceKey, race_date: raceDate, venue_code: venueCode,
+            venue: venueName || undefined, venue_name: venueName || undefined,
+            race_number: raceNumber, race_name: str(r.race_name) || undefined,
+            status: 'finished', sync_source: 'txt_k_file',
+          });
         }
-        // RacerRaceHistory
-        const reg = str(e.registration_number);
-        if (reg) {
-          const histKey = { registration_number: reg, race_date: raceDate, venue_code: venueCode, race_number: raceNumber };
-          const existingHist = await sr.RacerRaceHistory.filter(histKey, '-created_date', 1).catch(() => []);
-          const histDoc = {
-            registration_number: reg,
-            race_date: raceDate,
-            venue_code: venueCode,
-            race_number: raceNumber,
-            boat_number: bn,
-            course: num(e.course) || undefined,
-            finish_order: num(e.finish_order) || undefined,
-            st: num(e.st) || undefined,
-            motor_number: num(e.motor_number) || undefined,
-            is_absent: !!e.is_absent,
-            is_disqualified: !!e.is_disqualified,
-            finish_status: str(e.finish_status) || undefined,
-          };
-          if (existingHist && existingHist[0]) await sr.RacerRaceHistory.update(existingHist[0].id, histDoc);
-          else await sr.RacerRaceHistory.create(histDoc);
+        // RaceResult upsert + 検証
+        const resultTrifecta = str(r.result_trifecta);
+        const finishOrder = r.entries ? r.entries.sort((a: any, b: any) => a.finish_order - b.finish_order).map((e: any) => e.boat_number) : [];
+        if (resultTrifecta) {
+          await upsertResultAndVerify(base44, race, {
+            result_trifecta: resultTrifecta,
+            finish_order: finishOrder,
+            payout: num(r.payout) || 0,
+          });
+          updated++;
+        } else {
+          skipped++;
         }
+        // RaceEntry展示データ更新 + RacerRaceHistory蓄積
+        for (const e of r.entries || []) {
+          const bn = num(e.boat_number);
+          if (!bn) continue;
+          const existingEntry = await sr.RaceEntry.filter({ race_id: race.id, boat_number: bn }, 'boat_number', 1).catch(() => []);
+          if (existingEntry && existingEntry[0]) {
+            const update: any = {};
+            if (num(e.exhibition_time) != null) update.exhibition_time = num(e.exhibition_time);
+            if (num(e.st) != null) update.exhibition_st = num(e.st);
+            if (num(e.course) != null) update.exhibition_course = num(e.course);
+            if (e.is_absent) { update.is_absent = true; update.is_scratched = true; }
+            if (Object.keys(update).length) await sr.RaceEntry.update(existingEntry[0].id, update);
+          }
+          // RacerRaceHistory
+          const reg = str(e.registration_number);
+          if (reg) {
+            const histKey = { registration_number: reg, race_date: raceDate, venue_code: venueCode, race_number: raceNumber };
+            const existingHist = await sr.RacerRaceHistory.filter(histKey, '-created_date', 1).catch(() => []);
+            const histDoc = {
+              registration_number: reg,
+              race_date: raceDate,
+              venue_code: venueCode,
+              race_number: raceNumber,
+              boat_number: bn,
+              course: num(e.course) || undefined,
+              finish_order: num(e.finish_order) || undefined,
+              st: num(e.st) || undefined,
+              motor_number: num(e.motor_number) || undefined,
+              is_absent: !!e.is_absent,
+              is_disqualified: !!e.is_disqualified,
+              finish_status: str(e.finish_status) || undefined,
+            };
+            if (existingHist && existingHist[0]) await sr.RacerRaceHistory.update(existingHist[0].id, histDoc);
+            else await sr.RacerRaceHistory.create(histDoc);
+          }
+        }
+      } catch (e: any) {
+        errors++;
+        errorDetails.push(`${venueName} R${r.race_number}: ${e.message}`);
       }
-    } catch (e: any) { errors++; errorDetails.push(`R${r.race_number}: ${e.message}`); }
+    }
   }
-  return { created, updated, skipped, errors, errorDetails, total: (data.results || []).length };
+
+  const total = venues.reduce((a: number, v: any) => a + (v.results || []).length, 0);
+  return { created, updated, skipped, errors, errorDetails, total };
 }
 
 export default async function(req: Request) {
@@ -211,7 +237,7 @@ export default async function(req: Request) {
         updated_count: result.updated,
         skipped_count: result.skipped,
         error_count: result.errors,
-        error_message: result.errorDetails?.join('; ') || undefined,
+        error_message: result.errorDetails?.slice(0, 20).join('; ') || undefined,
       });
 
       return Response.json({
