@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { importOfficialFile, saveBoatraceData } from "@/lib/dataManagementService";
 import { parseBoatraceFile } from "@/lib/boatraceFileParser";
-import { getKBatchImportState, startKBatchImport, subscribeKBatchImport } from "@/lib/kBatchImportManager";
+import { getKBatchImportState, startKBatchImport, subscribeKBatchImport, resumeKBatchImport } from "@/lib/kBatchImportManager";
 import { FileSpreadsheet, Users, History, Cog, Upload, CheckCircle2, AlertTriangle, Loader2, FileText, Zap, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import RacerTermImportCard from "@/components/admin/RacerTermImportCard";
@@ -65,12 +65,16 @@ function TxtImportCard() {
   const [result, setResult] = useState(null);
   const [saveError, setSaveError] = useState(null);
 
-  useEffect(() => subscribeKBatchImport((s) => {
-    setBackgroundRunning(!!s.running);
-    if (s.running || (s.total || 0) > 0) setBatchMode(true);
-    setBatchProgress({ current: s.current || 0, total: s.total || 0, file: s.file || "" });
-    setBatchResults(s.results || []);
-  }), []);
+  useEffect(() => {
+    // 画面遷移から戻った時にサーバー側ジョブのポーリングを再開する
+    resumeKBatchImport();
+    return subscribeKBatchImport((s) => {
+      setBackgroundRunning(!!s.running);
+      if (s.running || (s.total || 0) > 0) setBatchMode(true);
+      setBatchProgress({ current: s.current || 0, total: s.total || 0, file: s.file || "" });
+      setBatchResults(s.results || []);
+    });
+  }, []);
 
   const handleFile = async (f) => {
     if (!f) return;

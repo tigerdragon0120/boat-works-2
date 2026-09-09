@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 
 const str = (v:any) => v == null ? '' : String(v).trim();
 const MAX_ATTEMPTS = 4;
+const STALE_MS = 300_000; // 5分以上processingのままならタイムアウト扱い
 
 function isTransientError(v:any) {
   const msg = String(v?.message || v?.response?.data?.error || v || '');
@@ -27,8 +28,35 @@ export default async function(req: Request) {
 
     const items = await sr.KBatchImportItem.filter({ batch_id: batchId }, 'order_index', 500);
     const ordered = [...(items || [])].sort((a:any,b:any) => Number(a.order_index||0)-Number(b.order_index||0));
-    let item = ordered.find((x:any) => x.status === 'queued');
-    if (!item) item = ordered.find((x:any) => x.status === 'processing');
+
+    // stale検出: processingが5分以上経過していたら、タイムアウト扱いでqueuedに戻す
+    const nowMs = Date.now();
+    for (const x of ordered) {
+      if (x.status === 'processing' && x.last_attempt_at) {
+        const age = nowMs - new Date(x.last_attempt_at).getTime();
+        if (age > STALE_MS) {
+          const att = Number(x.attempt_count || 0);
+          if (att >= MAX_ATTEMPTS) {
+            await sr.KBatchImportItem.update(x.id, {
+              status: 'failed',
+              message: `AUTO_RETRY_EXHAUSTED (stale ${Math.round(age/1000)}s, ${att} attempts)`,
+            });
+          } else {
+            await sr.KBatchImportItem.update(x.id, {
+              status: 'queued',
+              error_count: 0,
+              message: `タイムアウト検出のため再試行(${att}/${MAX_ATTEMPTS})`,
+            });
+          }
+        }
+      }
+    }
+
+    // 再取得(stale修正後)
+    const refreshed = await sr.KBatchImportItem.filter({ batch_id: batchId }, 'order_index', 500);
+    const ordered2 = [...(refreshed || [])].sort((a:any,b:any) => Number(a.order_index||0)-Number(b.order_index||0));
+    let item = ordered2.find((x:any) => x.status === 'queued');
+    if (!item) item = ordered2.find((x:any) => x.status === 'processing');
 
     if (!item) {
       const completed = ordered.filter((x:any) => x.status === 'success').length;

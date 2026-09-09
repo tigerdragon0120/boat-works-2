@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { parseRacerTermFileForPreview, rebuildRollingStats } from "@/lib/dataManagementService";
-import { getRacerTermImportState, startRacerTermImport, subscribeRacerTermImport } from "@/lib/racerTermImportManager";
+import { getRacerTermImportState, startRacerTermImport, subscribeRacerTermImport, resumeRacerTermImport } from "@/lib/racerTermImportManager";
 import { Users, Upload, CheckCircle2, AlertTriangle, Loader2, Zap, RefreshCw, FileText, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -45,11 +45,15 @@ export default function RacerTermImportCard() {
     setParsing(false);
   }, []);
 
-  useEffect(() => subscribeRacerTermImport((s) => {
-    setSaving(!!s.running);
-    setProgress(s.running || s.total ? { current: s.current, total: s.total, file: s.file } : null);
-    setResults(s.results || []);
-  }), []);
+  useEffect(() => {
+    // 画面遷移から戻った時にサーバー側ジョブのポーリングを再開する
+    resumeRacerTermImport();
+    return subscribeRacerTermImport((s) => {
+      setSaving(!!s.running);
+      setProgress(s.running || s.total ? { current: s.current, total: s.total, file: s.file } : null);
+      setResults(s.results || []);
+    });
+  }, []);
 
   const handleSave = async () => {
     if (!previews.length) return;

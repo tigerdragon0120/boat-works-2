@@ -160,8 +160,11 @@ export default async function(req: Request) {
     // RacerProfileは「全件完了時に全選手を1人ずつ検索」しない。
     // それが504の主因だったため、このバッチに含まれる選手だけを更新する。
     const batchRegs = [...new Set(batch.map((r:any) => String(r.registration_number || '').trim()).filter(Boolean))];
-    const existingProfiles = await sr.RacerProfile.list('registration_number', 5000).catch(() => []);
-    const profileByReg = new Map((existingProfiles || []).map((p:any) => [String(p.registration_number || ''), p]));
+    const profileByReg = new Map();
+    for (const reg of batchRegs) {
+      const existing = await sr.RacerProfile.filter({ registration_number: reg }, '-updated_at', 1).catch(() => []);
+      if (existing && existing[0]) profileByReg.set(reg, existing[0]);
+    }
     const latestInBatch = new Map();
     for (const rec of batch) {
       const reg = String(rec.registration_number || '').trim();
