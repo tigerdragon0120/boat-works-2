@@ -1,0 +1,37 @@
+{
+  "name": "RacerTermImportJob",
+  "type": "object",
+  "properties": {
+    "batch_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "total_files": {
+      "type": "number"
+    },
+    "current_index": {
+      "type": "number"
+    },
+    "current_file": {
+      "type": "string"
+    },
+    "completed_files": {
+      "type": "number"
+    },
+    "failed_files": {
+      "type": "number"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "finished_at": {
+      "type": "string"
+    },
+    "last_error": {
+      "type": "string"
+    }
+  },
+  "required": []
+}
