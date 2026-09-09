@@ -1,23 +1,24 @@
-// K過去結果の永続バックグラウンド一括取込マネージャー
-// 選択したKファイル本体をIndexedDBへ保存し、進捗をlocalStorageへ保存する。
-// これにより管理タブのアンマウント、アプリ内画面遷移、ページ再読込後でも残りから再開できる。
+// K過去結果 一括取込マネージャー
+// 取込本体はサーバー側ジョブで1ファイルずつ処理する。
+// ブラウザ側は、解析済みKデータをアップロードしてジョブ開始→進捗監視だけを担当する。
+import { base44 } from "@/api/base44Client";
 import { parseBoatraceFile } from "@/lib/boatraceFileParser";
-import { saveBoatraceData } from "@/lib/dataManagementService";
 
-const STATE_KEY = "boatworks2_k_batch_state_v2";
-const DB_NAME = "boatworks2_k_batch_files";
-const STORE_NAME = "files";
-let workerPromise = null;
+const STATE_KEY = "boatworks2_k_server_batch_v1";
 const listeners = new Set();
+let runnerPromise = null;
+let pollTimer = null;
 
 const emptyState = () => ({
   running: false,
+  batchId: "",
   current: 0,
-  nextIndex: 0,
   total: 0,
   file: "",
-  queue: [],
   results: [],
+  uploading: false,
+  uploadCurrent: 0,
+  uploadTotal: 0,
   startedAt: null,
   finishedAt: null,
 });
@@ -26,9 +27,7 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STATE_KEY);
     return raw ? { ...emptyState(), ...JSON.parse(raw) } : emptyState();
-  } catch {
-    return emptyState();
-  }
+  } catch { return emptyState(); }
 }
 
 let state = typeof window !== "undefined" ? loadState() : emptyState();
@@ -36,152 +35,144 @@ let state = typeof window !== "undefined" ? loadState() : emptyState();
 function persist() {
   try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch {}
 }
-
 function emit() {
   persist();
-  const snapshot = { ...state, queue: [...(state.queue || [])], results: [...(state.results || [])] };
-  for (const fn of listeners) {
-    try { fn(snapshot); } catch {}
-  }
-}
-
-function openDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: "key" });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error("IndexedDBを開けませんでした"));
-  });
-}
-
-async function putFile(key, file) {
-  const db = await openDb();
-  try {
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      tx.objectStore(STORE_NAME).put({ key, name: file.name, type: file.type, lastModified: file.lastModified, blob: file });
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error || new Error("Kファイル保存失敗"));
-    });
-  } finally { db.close(); }
-}
-
-async function getStoredFile(key) {
-  const db = await openDb();
-  try {
-    const row = await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const req = tx.objectStore(STORE_NAME).get(key);
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => reject(req.error || new Error("Kファイル読込失敗"));
-    });
-    if (!row?.blob) return null;
-    return new File([row.blob], row.name, { type: row.type || "text/plain", lastModified: row.lastModified || Date.now() });
-  } finally { db.close(); }
-}
-
-async function deleteStoredFile(key) {
-  const db = await openDb();
-  try {
-    await new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      tx.objectStore(STORE_NAME).delete(key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    });
-  } finally { db.close(); }
+  const snap = { ...state, results: [...(state.results || [])] };
+  for (const fn of listeners) { try { fn(snap); } catch {} }
 }
 
 export function getKBatchImportState() {
-  return { ...state, queue: [...(state.queue || [])], results: [...(state.results || [])] };
+  return { ...state, results: [...(state.results || [])] };
 }
-
 export function subscribeKBatchImport(fn) {
-  listeners.add(fn);
-  fn(getKBatchImportState());
+  listeners.add(fn); fn(getKBatchImportState());
   return () => listeners.delete(fn);
 }
 
-async function runQueue() {
-  if (workerPromise) return workerPromise;
-  workerPromise = (async () => {
-    const rows = [...(state.results || [])];
+async function refreshJob() {
+  if (!state.batchId) return;
+  try {
+    const [jobs, items] = await Promise.all([
+      base44.entities.KBatchImportJob.filter({ batch_id: state.batchId }, "-created_date", 5),
+      base44.entities.KBatchImportItem.filter({ batch_id: state.batchId }, "order_index", 500),
+    ]);
+    const job = jobs?.[0];
+    if (!job) return;
+    const ordered = [...(items || [])].sort((a,b) => Number(a.order_index || 0) - Number(b.order_index || 0));
+    const rows = ordered.filter(x => ["success","failed"].includes(x.status)).map(x => ({
+      file: x.file_name,
+      ok: x.status === "success",
+      created: x.created_count || 0,
+      updated: x.updated_count || 0,
+      skipped: x.skipped_count || 0,
+      errors: x.error_count || 0,
+      rejected_corrupt: x.rejected_corrupt || 0,
+      history_verified: x.history_verified || 0,
+      history_target: x.history_target || 0,
+      message: x.message || "",
+    }));
+    state = {
+      ...state,
+      running: job.status !== "completed",
+      current: Number(job.current_index || 0),
+      total: Number(job.total_files || ordered.length || state.total || 0),
+      file: job.current_file || "",
+      results: rows,
+      finishedAt: job.finished_at || null,
+    };
+    emit();
+  } catch {}
+}
+
+async function runServerSteps() {
+  if (runnerPromise || !state.batchId || !state.running) return runnerPromise;
+  runnerPromise = (async () => {
     try {
-      while (state.running && state.nextIndex < state.total) {
-        const i = state.nextIndex;
-        const item = state.queue[i];
-        state = { ...state, current: i + 1, file: item?.name || "" };
-        emit();
-
+      while (state.batchId && state.running) {
         try {
-          const f = item ? await getStoredFile(item.key) : null;
-          if (!f) throw new Error("保存済みKファイルを復元できませんでした");
-          const parsed = parseBoatraceFile(await f.arrayBuffer(), f.name);
-          if (!parsed.ok) throw new Error(parsed.errors?.join(" / ") || "解析失敗");
-          if (parsed.data.type !== "K") throw new Error(`Kファイルではありません (${parsed.data.type})`);
-          const r = await saveBoatraceData("K", parsed.data, f.name);
-          const d = r?.data || {};
-          rows.push({
-            file: f.name,
-            ok: d.ok !== false && !d.errors,
-            created: d.created || 0,
-            updated: d.updated || 0,
-            skipped: d.skipped || 0,
-            errors: d.errors || 0,
-            rejected_corrupt: d.rejected_corrupt || 0,
-            parsed_entries: d.parsed_entries || 0,
-            history_verified: d.history_verified || 0,
-            history_target: d.history_target || 0,
-            message: d.message || "完了",
-          });
-        } catch (e) {
-          rows.push({ file: item?.name || `#${i + 1}`, ok: false, created: 0, updated: 0, skipped: 0, errors: 1, rejected_corrupt: 0, parsed_entries: 0, history_verified: 0, history_target: 0, message: e?.response?.data?.error || e?.message || "取込失敗" });
+          await base44.functions.invoke("processKBatchJobStep", { batch_id: state.batchId });
+        } catch {
+          // 画面遷移などでレスポンスが切れても、サーバー側処理が完了している場合がある。
+          // 状態を再読込して次のステップへ進む。
         }
-
-        if (item?.key) await deleteStoredFile(item.key);
-        state = { ...state, nextIndex: i + 1, results: [...rows] };
-        emit();
-        if (state.nextIndex < state.total) await new Promise((resolve) => setTimeout(resolve, 1500));
-      }
-
-      if (state.nextIndex >= state.total) {
-        state = { ...state, running: false, file: "", current: state.total, results: [...rows], finishedAt: new Date().toISOString() };
-        emit();
+        await refreshJob();
+        if (!state.running) break;
+        await new Promise(r => setTimeout(r, 1200));
       }
     } finally {
-      workerPromise = null;
+      runnerPromise = null;
     }
-    return getKBatchImportState();
   })();
-  return workerPromise;
+  return runnerPromise;
 }
 
 export async function startKBatchImport(files) {
-  const list = Array.from(files || []).filter((f) => /\.txt$/i.test(f?.name || ""));
+  const list = Array.from(files || []).filter(f => /\.txt$/i.test(f?.name || ""));
   if (!list.length) throw new Error("Kファイルが選択されていません");
-  if (state.running) return getKBatchImportState();
+  if (state.running || state.uploading) return getKBatchImportState();
 
-  const batchId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const queue = [];
-  for (let i = 0; i < list.length; i++) {
-    const key = `${batchId}_${i}`;
-    await putFile(key, list[i]);
-    queue.push({ key, name: list[i].name });
-  }
-
-  state = { running: true, current: 0, nextIndex: 0, total: queue.length, file: "", queue, results: [], startedAt: new Date().toISOString(), finishedAt: null };
+  state = {
+    ...emptyState(),
+    uploading: true,
+    uploadCurrent: 0,
+    uploadTotal: list.length,
+    total: list.length,
+    startedAt: new Date().toISOString(),
+  };
   emit();
-  runQueue();
-  return getKBatchImportState();
+
+  const uploaded = [];
+  try {
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      state = { ...state, uploadCurrent: i + 1, file: f.name };
+      emit();
+      const parsed = parseBoatraceFile(await f.arrayBuffer(), f.name);
+      if (!parsed.ok) throw new Error(`${f.name}: ${parsed.errors?.join(" / ") || "解析失敗"}`);
+      if (parsed.data.type !== "K") throw new Error(`${f.name}: Kファイルではありません`);
+
+      const payloadFile = new File(
+        [JSON.stringify(parsed.data)],
+        `${f.name}.parsed.json`,
+        { type: "application/json" }
+      );
+      const up = await base44.integrations.Core.UploadFile({ file: payloadFile });
+      if (!up?.file_url) throw new Error(`${f.name}: サーバーへの一時保存に失敗しました`);
+      uploaded.push({ file_name: f.name, payload_url: up.file_url });
+    }
+
+    const startResp = await base44.functions.invoke("startKBatchJob", { items: uploaded });
+    const d = startResp?.data || {};
+    if (!d.ok || !d.batch_id) throw new Error(d.error || "K一括取込ジョブを開始できませんでした");
+
+    state = {
+      ...state,
+      uploading: false,
+      running: true,
+      batchId: d.batch_id,
+      current: 0,
+      total: d.total_files || list.length,
+      file: "",
+      results: [],
+    };
+    emit();
+    runServerSteps();
+    return getKBatchImportState();
+  } catch (e) {
+    state = { ...state, uploading: false, running: false, file: "" };
+    emit();
+    throw e;
+  }
 }
 
-// Layoutなどアプリ常駐部分から呼ぶ。再読込後にrunning状態が残っていれば自動再開する。
 export function resumeKBatchImport() {
   state = loadState();
   emit();
-  if (state.running && state.nextIndex < state.total) runQueue();
+  if (pollTimer) clearTimeout(pollTimer);
+  const resume = async () => {
+    if (state.batchId) await refreshJob();
+    if (state.running) runServerSteps();
+  };
+  resume();
   return getKBatchImportState();
 }
