@@ -1,6 +1,12 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 
 const str = (v:any) => v == null ? '' : String(v).trim();
+const MAX_ATTEMPTS = 4;
+
+function isTransientError(v:any) {
+  const msg = String(v?.message || v?.response?.data?.error || v || '');
+  return /\b524\b|\b502\b|\b503\b|\b504\b|timeout|timed out|cloudflare|origin web server|econnreset|econnrefused|network error|socket hang up|temporarily unavailable/i.test(msg);
+}
 
 export default async function(req: Request) {
   try {
@@ -22,8 +28,6 @@ export default async function(req: Request) {
     const items = await sr.KBatchImportItem.filter({ batch_id: batchId }, 'order_index', 500);
     const ordered = [...(items || [])].sort((a:any,b:any) => Number(a.order_index||0)-Number(b.order_index||0));
     let item = ordered.find((x:any) => x.status === 'queued');
-
-    // 前回の画面遷移等で processing のまま残った項目は再実行可能にする。
     if (!item) item = ordered.find((x:any) => x.status === 'processing');
 
     if (!item) {
@@ -40,7 +44,13 @@ export default async function(req: Request) {
       return Response.json({ ok: true, done: true, completed, failed });
     }
 
-    await sr.KBatchImportItem.update(item.id, { status: 'processing', message: 'サーバー側で取込中' });
+    const attempt = Number(item.attempt_count || 0) + 1;
+    await sr.KBatchImportItem.update(item.id, {
+      status: 'processing',
+      attempt_count: attempt,
+      last_attempt_at: new Date().toISOString(),
+      message: `サーバー側で取込中（${attempt}/${MAX_ATTEMPTS}）`,
+    });
     await sr.KBatchImportJob.update(job.id, {
       status: 'running',
       current_index: Number(item.order_index || 0) + 1,
@@ -60,6 +70,9 @@ export default async function(req: Request) {
         fast_historical_k: true,
       });
       const d = saveResp?.data || {};
+      const transient = d.ok === false && isTransientError(d.error || d.message || (d.errorDetails || []).join(' '));
+      if (transient) throw new Error(d.error || d.message || 'temporary save error');
+
       const success = d.ok !== false && Number(d.errors || 0) === 0;
       await sr.KBatchImportItem.update(item.id, {
         status: success ? 'success' : 'failed',
@@ -73,11 +86,20 @@ export default async function(req: Request) {
         message: d.message || (success ? '完了' : '取込不完全'),
       });
     } catch (e:any) {
-      await sr.KBatchImportItem.update(item.id, {
-        status: 'failed',
-        error_count: 1,
-        message: e?.message || String(e),
-      });
+      const transient = isTransientError(e);
+      if (transient && attempt < MAX_ATTEMPTS) {
+        await sr.KBatchImportItem.update(item.id, {
+          status: 'queued',
+          error_count: 0,
+          message: `通信一時障害のため自動再試行します（${attempt}/${MAX_ATTEMPTS}）: ${e?.message || String(e)}`,
+        });
+      } else {
+        await sr.KBatchImportItem.update(item.id, {
+          status: 'failed',
+          error_count: 1,
+          message: `${transient ? 'AUTO_REPAIR_EXHAUSTED: ' : ''}${e?.message || String(e)}`,
+        });
+      }
     }
 
     const after = await sr.KBatchImportItem.filter({ batch_id: batchId }, 'order_index', 500);
