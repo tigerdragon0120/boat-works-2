@@ -256,7 +256,10 @@ function parseBFile(text, filename) {
         currentRace = { ...header, entries: [] };
         continue;
       }
-      if (currentRace && /^[1-6]\s+\d{4}/.test(normalizeWidth(line))) {
+      // 公式TXTの艇データ行には先頭空白が入ることがある。
+      // trimStart()せず ^ で判定すると正しい行を全件取りこぼすため、必ず左空白を除去して判定する。
+      const normalizedLine = normalizeWidth(line).trimStart();
+      if (currentRace && /^[1-6]\s+\d{4}/.test(normalizedLine)) {
         const entry = parseBEntryLine(line);
         if (entry) currentRace.entries.push(entry);
       }
@@ -366,7 +369,10 @@ function parseKFile(text, filename) {
           currentResult = { race_number: header.race_number, race_name: header.race_type, entries: [] };
           continue;
         }
-        if (currentResult && /^\d{2}\s+\d\s+\d{4}/.test(normalizeWidth(line))) {
+        // K公式TXTの選手行は通常「  01  3 3716 ...」のように先頭空白を含む。
+        // 旧実装は ^\d で直接判定していたため、結果Rだけ取れて6艇データを全件取りこぼしていた。
+        const normalizedLine = normalizeWidth(line).trimStart();
+        if (currentResult && /^\d{2}\s+\d\s+\d{4}(?:\s|$)/.test(normalizedLine)) {
           const entry = parseKEntryLine(line);
           if (entry) currentResult.entries.push(entry);
         }
@@ -386,6 +392,13 @@ function parseKFile(text, filename) {
 
     for (const r of validResults) {
       if (!r.result_trifecta) warnings.push(`${venueName} R${r.race_number}: 3連単結果なし`);
+      // 払戻がある完走レースは原則6艇の選手行が必要。
+      // ここが欠けたままDB保存するとRacerRaceHistoryが空になるので、取込前に明示的に失敗させる。
+      if (r.result_trifecta && r.entries.length !== 6) {
+        errors.push(`${venueName} R${r.race_number}: K選手行${r.entries.length}艇（6艇必要）`);
+      } else if (!r.result_trifecta && r.entries.length !== 6) {
+        warnings.push(`${venueName} R${r.race_number}: K選手行${r.entries.length}艇`);
+      }
       const finishes = r.entries.map((e) => e.finish_order);
       const dupes = finishes.filter((f, i) => finishes.indexOf(f) !== i);
       if (dupes.length) warnings.push(`${venueName} R${r.race_number}: 着順重複 ${dupes.join(",")}`);
