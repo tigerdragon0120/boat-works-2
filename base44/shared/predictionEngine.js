@@ -36,6 +36,35 @@ function periodWeightedScore(profile, metric) {
   return null;
 }
 
+// ローリング統計からの期間別スコア(RacerRollingStats由来)
+// race_countをサンプル数として使用。profile側と同じ重み付けロジック。
+function rollingWeightedScore(rolling, metric) {
+  if (!rolling) return null;
+  const s6m = rolling.stats_6m, s1y = rolling.stats_1y, s3y = rolling.stats_3y, sAll = rolling.stats_all;
+  const use6m = s6m?.race_count >= 5 ? 0.45 : 0;
+  const use1y = s1y?.race_count >= 5 ? 0.30 : 0;
+  const use3y = s3y?.race_count >= 5 ? 0.15 : 0;
+  const v6m = use6m > 0 && s6m[metric] != null ? s6m[metric] : null;
+  const v1y = use1y > 0 && s1y[metric] != null ? s1y[metric] : null;
+  const v3y = use3y > 0 && s3y[metric] != null ? s3y[metric] : null;
+  const pairs = [[v6m, use6m], [v1y, use1y], [v3y, use3y]].filter(([v]) => v != null);
+  if (pairs.length) {
+    const totalW = pairs.reduce((s, [, w]) => s + w, 0);
+    return clamp(pairs.reduce((s, [v, w]) => s + v * w, 0) / totalW, 0, 100);
+  }
+  if (sAll?.race_count >= 3 && sAll[metric] != null) return clamp(sAll[metric], 0, 100);
+  return null;
+}
+
+// プロファイル+ローリング統計のブレンドスコア
+// 両方あれば平均、片方だけあればそれを採用
+function blendedPeriodScore(profile, rolling, metric) {
+  const ps = periodWeightedScore(profile, metric);
+  const rs = rollingWeightedScore(rolling, metric);
+  if (ps != null && rs != null) return (ps + rs) / 2;
+  return ps != null ? ps : rs;
+}
+
 // コース別スコア
 function getCourseScore(profile, entry, metric) {
   if (!profile || !entry.boat_number) return null;
@@ -101,13 +130,14 @@ function computeOtherScore(profile, entry, metric) {
 // 選手個別分析型スコア計算
 export function computeBoatScores(entry, settings) {
   const profile = entry._profile;
+  const rolling = entry._rollingStats;
   const stage = settings?.stage || "PRE";
   const isFinal = stage === "FINAL";
 
-  // === プロファイル期間別スコア(主軸) ===
-  const profileWin = periodWeightedScore(profile, 'win_rate');
-  const profileF2 = periodWeightedScore(profile, 'top2_rate');
-  const profileF3 = periodWeightedScore(profile, 'top3_rate');
+  // === 期間別スコア(主軸): プロファイル+ローリング統計のブレンド ===
+  const profileWin = blendedPeriodScore(profile, rolling, 'win_rate');
+  const profileF2 = blendedPeriodScore(profile, rolling, 'top2_rate');
+  const profileF3 = blendedPeriodScore(profile, rolling, 'top3_rate');
 
   // === 公式成績(フォールバック) ===
   const officialWin = entry.national_win_rate != null ? clamp(entry.national_win_rate * 10, 0, 100) : null;
@@ -120,7 +150,7 @@ export function computeBoatScores(entry, settings) {
   const otherThird = computeOtherScore(profile, entry, 'top3_rate');
 
   // === 着力計算 ===
-  // プロファイルあり: 90%プロファイル + 10%その他
+  // プロファイル/ローリングあり: 90%ブレンド + 10%その他
   // プロファイルなし: 70%公式 + 30%その他
   const computePower = (profileScore, officialScore, otherScore) => {
     if (profileScore != null) return clamp(profileScore * 0.90 + (otherScore || 50) * 0.10, 5, 100);
@@ -131,6 +161,16 @@ export function computeBoatScores(entry, settings) {
   let first_power = computePower(profileWin, officialWin, otherFirst);
   let second_power = computePower(profileF2, officialF2, otherSecond);
   let third_power = computePower(profileF3, officialF3, otherThird);
+
+  // === トレンド補正(RacerRollingStats.trend_scores) ===
+  // recent_form_score(0-100, 50=平均)から着力に±3pt補正
+  const trend = rolling?.trend_scores;
+  if (trend) {
+    const formAdj = ((trend.recent_form_score ?? 50) - 50) * 0.06; // ±3pt
+    first_power = clamp(first_power + formAdj, 5, 100);
+    second_power = clamp(second_power + formAdj * 0.7, 5, 100);
+    third_power = clamp(third_power + formAdj * 0.5, 5, 100);
+  }
 
   // === 展示補正(FINALのみ) ===
   let exhibition_delta = 0;
@@ -183,6 +223,16 @@ export function computeBoatScores(entry, settings) {
   if (profile && profile.total_samples < 5) notes.push("プロファイルデータ少");
   if (profileWin == null && officialWin != null) notes.push("公式成績ベース予想");
 
+  // === トレンド理由(RacerRollingStats) ===
+  if (trend) {
+    if (trend.recent_form_score != null && trend.recent_form_score >= 65) reasons.push(`調子上向き(${Math.round(trend.recent_form_score)})`);
+    if (trend.recent_form_score != null && trend.recent_form_score <= 35) notes.push("調子下降傾向");
+    if (trend.class_trend_score != null && trend.class_trend_score >= 65) reasons.push("級別上昇中");
+    if (trend.class_trend_score != null && trend.class_trend_score <= 35) notes.push("級別下降傾向");
+    if (trend.st_trend_score != null && trend.st_trend_score >= 65) reasons.push("ST改善傾向");
+    if (trend.st_trend_score != null && trend.st_trend_score <= 35) notes.push("ST悪化傾向");
+  }
+
   return {
     boat_number: entry.boat_number,
     first_power: round1(first_power),
@@ -192,7 +242,8 @@ export function computeBoatScores(entry, settings) {
     start_power, motor_power, exhibition_power, local_fit, section_form, ana_potential,
     exhibition_delta: round1(exhibition_delta),
     reasons, notes,
-    dataCount: profile?.total_samples || 0,
+    dataCount: Math.max(profile?.total_samples || 0, rolling?.stats_all?.race_count || 0),
+    racer_power_score: trend?.racer_power_score != null ? Math.round(trend.racer_power_score) : null,
     _absent: !!entry.is_absent,
   };
 }

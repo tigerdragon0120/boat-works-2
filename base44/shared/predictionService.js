@@ -180,16 +180,21 @@ export async function getOrCreatePrediction(client, raceId, raceKey, stage) {
 
 // 予想を実行して保存(サーバー側)。既存子レコードは置換。
 // profileByRegを外部から渡すことでDB呼び出しを削減(全レース分1回だけ取得)。
-export async function runAndSavePrediction(client, race, entries, settings, stage, oddsMap = {}, profileByReg = null) {
+export async function runAndSavePrediction(client, race, entries, settings, stage, oddsMap = {}, profileByReg = null, rollingByReg = null) {
   const cfg = { ...settings, stage };
   // プロファイルが渡されていない場合は従来通り個別取得(フォールバック)
   if (!profileByReg) {
     const profiles = await client.asServiceRole.entities.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
     profileByReg = new Map(profiles.map(p => [p.registration_number, p]));
   }
+  // ローリング統計が渡されていない場合は個別取得(フォールバック)
+  if (!rollingByReg) {
+    const rolling = await client.asServiceRole.entities.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
+    rollingByReg = new Map(rolling.map(r => [r.registration_number, r]));
+  }
   const entriesWithProfiles = entries.map(e => {
     const reg = String(e.registration_number || e.register_number || '').trim();
-    return { ...e, _profile: reg ? profileByReg.get(reg) || null : null };
+    return { ...e, _profile: reg ? profileByReg.get(reg) || null : null, _rollingStats: reg ? rollingByReg.get(reg) || null : null };
   });
   // FINAL時: PRE予想を基準に展示補正のみ適用
   let preBoatScores = null;
@@ -360,9 +365,11 @@ export async function syncAndPredict(client, payload, opts = {}) {
     summary.venue_summary[code][k] = (summary.venue_summary[code][k] || 0) + 1;
   };
 
-  // 選手プロファイルを一括取得(全レース分1回だけ=DB呼び出し削減)
+  // 選手プロファイル+ローリング統計を一括取得(全レース分1回だけ=DB呼び出し削減)
   const allProfiles = await client.asServiceRole.entities.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
   const profileByReg = new Map(allProfiles.map(p => [p.registration_number, p]));
+  const allRolling = await client.asServiceRole.entities.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
+  const rollingByReg = new Map(allRolling.map(r => [r.registration_number, r]));
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   for (const bwRace of races) {
@@ -410,7 +417,7 @@ export async function syncAndPredict(client, payload, opts = {}) {
           addVenue(raceData.venue_code, "pre");
         } else {
           try {
-            await runAndSavePrediction(client, race, entryDocs, settings, "PRE", {}, profileByReg);
+            await runAndSavePrediction(client, race, entryDocs, settings, "PRE", {}, profileByReg, rollingByReg);
             summary.pre_generated++; addVenue(raceData.venue_code, "pre");
           } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "PRE予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
         }
@@ -420,7 +427,7 @@ export async function syncAndPredict(client, payload, opts = {}) {
       if (complete && raceData.exhibition_ready && !opts.skip_predictions) {
         addVenue(raceData.venue_code, "exhibition");
         try {
-          await runAndSavePrediction(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {}, profileByReg);
+          await runAndSavePrediction(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {}, profileByReg, rollingByReg);
           summary.final_generated++; addVenue(raceData.venue_code, "final");
         } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "FINAL予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
       }

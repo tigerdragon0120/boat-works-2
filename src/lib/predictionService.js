@@ -67,12 +67,14 @@ export async function getTrifectaPredictions(predictionId) {
 export async function generateAndSavePrediction(race, entries, settings, stage, oddsMap = {}) {
   const cfg = { ...settings, stage };
 
-  // 選手プロファイルを取得してエントリに付与
+  // 選手プロファイル+ローリング統計を取得してエントリに付与
   const profiles = await base44.entities.RacerPerformanceProfile.list('-updated_at', 5000).catch(() => []);
   const profileByReg = new Map(profiles.map(p => [p.registration_number, p]));
+  const rolling = await base44.entities.RacerRollingStats.list('-calculated_at', 5000).catch(() => []);
+  const rollingByReg = new Map(rolling.map(r => [r.registration_number, r]));
   const entriesWithProfiles = entries.map(e => {
     const reg = String(e.registration_number || e.register_number || '').trim();
-    return { ...e, _profile: reg ? profileByReg.get(reg) || null : null };
+    return { ...e, _profile: reg ? profileByReg.get(reg) || null : null, _rollingStats: reg ? rollingByReg.get(reg) || null : null };
   });
 
   // FINAL時: PRE予想を基準に展示補正を適用

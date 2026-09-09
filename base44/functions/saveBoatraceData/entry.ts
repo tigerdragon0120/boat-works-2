@@ -15,6 +15,8 @@ async function saveBFileData(base44: any, data: any) {
   const settings = await getSettings(base44);
   const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
   const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
+  const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
+  const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
   let created = 0, updated = 0, skipped = 0, errors = 0;
   const raceDate = str(data.race_date);
   const venueCode = str(data.venue_code);
@@ -75,7 +77,7 @@ async function saveBFileData(base44: any, data: any) {
       }
       // 6艇揃いならPRE予想生成
       if (entryDocs.length >= 6) {
-        try { await runAndSavePrediction(base44, race, entryDocs, settings, 'PRE', {}, profileByReg); }
+        try { await runAndSavePrediction(base44, race, entryDocs, settings, 'PRE', {}, profileByReg, rollingByReg); }
         catch (e: any) { /* 予想失敗は続行 */ }
       }
     } catch (e: any) { errors++; }

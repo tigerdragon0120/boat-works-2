@@ -203,7 +203,7 @@ function computeTrendScores(termRecords, rollingStats) {
     racer_power_score: 50,
   };
 
-  if (sorted.length < 1) return scores;
+  if (sorted.length < 1) return { scores, classHistory: [], sorted: [] };
 
   const latest = sorted[sorted.length - 1];
   const older = sorted.slice(0, -1);
