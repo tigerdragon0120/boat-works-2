@@ -64,7 +64,7 @@ export default async function(req: Request) {
         term_override: termOverride,
         batch_offset: offset,
         batch_size: BATCH_SIZE,
-        log_id: payload?.log_id || null,
+        log_id: item.log_id || null,
       });
       const d = saveResp?.data || {};
       if (d.ok === false) throw new Error(d.error || 'importRacerTermStats failed');
@@ -78,6 +78,7 @@ export default async function(req: Request) {
         updated_count: Number(item.updated_count || 0) + Number(d.updated || 0),
         error_count: Number(item.error_count || 0) + Number(d.errors || 0),
         attempt_count: 0,
+        log_id: d.log_id || item.log_id || '',
         message: doneFile ? `完了 ${records.length}/${records.length}` : `継続 ${nextOffset}/${records.length}`,
       });
     } catch (e:any) {
