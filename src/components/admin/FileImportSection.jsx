@@ -83,8 +83,10 @@ function TxtImportCard() {
     setSaving(true); setSaveError(null); setResult(null);
     try {
       const r = await saveBoatraceData(preview.data.type, preview.data, file.name);
-      setResult(r.data);
-      setPreview(null); setFile(null);
+      const d = r.data;
+      setResult(d);
+      // 不完全取込はファイル/プレビューを残し、原因を確認して再実行できるようにする。
+      if (d?.ok !== false) { setPreview(null); setFile(null); }
     } catch (e) {
       setSaveError(e?.response?.data?.error || e.message);
     }
@@ -110,7 +112,18 @@ function TxtImportCard() {
         if (parsed.data.type !== "K") throw new Error(`Kファイルではありません (${parsed.data.type})`);
         const r = await saveBoatraceData("K", parsed.data, f.name);
         const d = r?.data || {};
-        rows.push({ file: f.name, ok: !d.errors, created: d.created || 0, updated: d.updated || 0, skipped: d.skipped || 0, errors: d.errors || 0, message: d.message || "完了" });
+        rows.push({
+          file: f.name,
+          ok: d.ok !== false && !d.errors,
+          created: d.created || 0,
+          updated: d.updated || 0,
+          skipped: d.skipped || 0,
+          errors: d.errors || 0,
+          parsed_entries: d.parsed_entries || 0,
+          history_verified: d.history_verified || 0,
+          history_target: d.history_target || 0,
+          message: d.message || "完了"
+        });
       } catch (e) {
         rows.push({ file: f.name, ok: false, created: 0, updated: 0, skipped: 0, errors: 1, message: e?.response?.data?.error || e.message });
       }
@@ -172,7 +185,12 @@ function TxtImportCard() {
           </button>
           {batchResults.length > 0 && (
             <div className="max-h-48 overflow-y-auto bg-white rounded-lg p-2 space-y-1">
-              {batchResults.map((r, i) => <div key={i} className={cn("text-[10px] flex justify-between gap-2", r.ok ? "text-emerald-700" : "text-rose-700")}><span>{r.ok ? "✓" : "⚠"} {r.file}</span><span>新{r.created}/更{r.updated}/飛{r.skipped}/エ{r.errors}</span></div>)}
+              {batchResults.map((r, i) => (
+                <div key={i} className={cn("text-[10px] border-b border-slate-100 last:border-0 py-1", r.ok ? "text-emerald-700" : "text-rose-700")}>
+                  <div className="flex justify-between gap-2"><span>{r.ok ? "✓" : "⚠"} {r.file}</span><span>新{r.created}/更{r.updated}/飛{r.skipped}/エ{r.errors}</span></div>
+                  <div className="text-[9px] text-slate-500">艇解析 {r.parsed_entries} / 履歴DB確認 {r.history_verified}/{r.history_target}</div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -236,9 +254,9 @@ function TxtImportCard() {
 
       {/* 保存結果 */}
       {result && (
-        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 space-y-1">
-          <div className="flex items-center gap-1.5 text-sm font-bold text-emerald-700">
-            <CheckCircle2 className="w-4 h-4" /> {result.message || "取込完了"}
+        <div className={cn("rounded-lg border p-3 space-y-1", result.ok === false ? "bg-rose-50 border-rose-200" : "bg-emerald-50 border-emerald-200")}>
+          <div className={cn("flex items-center gap-1.5 text-sm font-bold", result.ok === false ? "text-rose-700" : "text-emerald-700")}>
+            {result.ok === false ? <AlertTriangle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />} {result.message || (result.ok === false ? "取込不完全" : "取込完了")}
           </div>
           <div className="grid grid-cols-4 gap-1 text-center text-[10px]">
             <div><div className="font-bold text-emerald-700 text-sm">{result.created}</div><div className="text-slate-500">新規</div></div>
@@ -247,10 +265,11 @@ function TxtImportCard() {
             <div><div className="font-bold text-rose-600 text-sm">{result.errors}</div><div className="text-slate-500">エラー</div></div>
           </div>
           {result.data_type === "K" && (
-            <div className="grid grid-cols-3 gap-1 text-center text-[10px] pt-2 border-t border-emerald-200">
+            <div className="grid grid-cols-4 gap-1 text-center text-[10px] pt-2 border-t border-slate-200">
               <div><div className="font-bold text-slate-800 text-sm">{result.total ?? 0}</div><div className="text-slate-500">結果R</div></div>
               <div><div className="font-bold text-slate-800 text-sm">{result.parsed_entries ?? 0}</div><div className="text-slate-500">解析艇数</div></div>
-              <div><div className="font-bold text-emerald-700 text-sm">{result.history_saved ?? 0}</div><div className="text-slate-500">選手履歴保存</div></div>
+              <div><div className="font-bold text-sky-700 text-sm">{result.history_saved ?? 0}</div><div className="text-slate-500">保存処理</div></div>
+              <div><div className={cn("font-bold text-sm", result.history_verified === result.history_target ? "text-emerald-700" : "text-rose-600")}>{result.history_verified ?? 0}/{result.history_target ?? 0}</div><div className="text-slate-500">DB実在確認</div></div>
             </div>
           )}
           {result.errorDetails?.length > 0 && (
