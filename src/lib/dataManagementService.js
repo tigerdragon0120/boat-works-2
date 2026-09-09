@@ -107,6 +107,11 @@ export async function saveBoatraceData(dataType, parsedData, fileName, onProgres
         venue_name: venue.venue_name,
       });
     }
+
+    // 会場間でも少し休止し、Base44 Function/Entity APIのレート制限を回避する。
+    if (i < venues.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    }
   }
 
   aggregate.message = `全国取込完了: ${venues.length}場 / ${aggregate.total}R / 更新${aggregate.updated} / スキップ${aggregate.skipped} / エラー${aggregate.errors}`;
