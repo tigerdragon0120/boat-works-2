@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getDashboardData } from "@/lib/dataManagementService";
-import { RefreshCw, Database, Clock, TrendingUp, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { getDashboardData, generateMissingPrePredictions } from "@/lib/dataManagementService";
+import { RefreshCw, Database, Clock, TrendingUp, AlertTriangle, CheckCircle2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function DataDashboard() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [preRunning, setPreRunning] = useState(false);
+  const [preProgress, setPreProgress] = useState(null);
+  const [preMessage, setPreMessage] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -17,6 +20,23 @@ export default function DataDashboard() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const runMissingPre = async () => {
+    if (!data || preRunning) return;
+    setPreRunning(true);
+    setPreProgress(null);
+    setPreMessage("");
+    try {
+      const r = await generateMissingPrePredictions(data.date, setPreProgress);
+      setPreMessage(r.errors > 0
+        ? `PRE生成: ${r.generated}件 / エラー${r.errors}件`
+        : `PRE生成完了: ${r.generated}件`);
+      await load();
+    } catch (e) {
+      setPreMessage(`PRE生成失敗: ${e.message}`);
+    }
+    setPreRunning(false);
+  };
 
   if (loading && !data) return <div className="text-center py-6 text-slate-400 text-sm">読み込み中…</div>;
   if (!data) return <div className="text-center py-6 text-slate-400 text-sm">データがありません</div>;
@@ -42,10 +62,33 @@ export default function DataDashboard() {
           <Database className="w-4 h-4 text-sky-600" />
           <h3 className="font-bold text-sm text-slate-900">今日の状態 ({data.date})</h3>
         </div>
-        <button onClick={load} className="p-1.5 rounded-lg hover:bg-slate-100">
-          <RefreshCw className={cn("w-4 h-4 text-slate-500", loading && "animate-spin")} />
-        </button>
+        <div className="flex items-center gap-2">
+          {data.hasPre < data.totalRaces && (
+            <button
+              onClick={runMissingPre}
+              disabled={preRunning}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-sky-600 text-white text-[11px] font-bold disabled:opacity-50"
+            >
+              <Zap className={cn("w-3.5 h-3.5", preRunning && "animate-pulse")} />
+              {preRunning ? "不足PRE生成中" : "不足PREを生成"}
+            </button>
+          )}
+          <button onClick={load} className="p-1.5 rounded-lg hover:bg-slate-100">
+            <RefreshCw className={cn("w-4 h-4 text-slate-500", loading && "animate-spin")} />
+          </button>
+        </div>
       </div>
+
+      {(preRunning || preMessage) && (
+        <div className={cn(
+          "rounded-lg px-3 py-2 text-[11px] font-medium",
+          preMessage.includes("失敗") || preMessage.includes("エラー") ? "bg-rose-50 text-rose-700" : "bg-sky-50 text-sky-700"
+        )}>
+          {preRunning && preProgress
+            ? `PRE予想生成中: ${preProgress.completed}/${preProgress.total}（残り${preProgress.remaining}）`
+            : preMessage}
+        </div>
+      )}
 
       {/* ステータスグリッド */}
       <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
