@@ -1,0 +1,46 @@
+{
+  "name": "RacerTermImportItem",
+  "type": "object",
+  "properties": {
+    "batch_id": {
+      "type": "string"
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "payload_url": {
+      "type": "string"
+    },
+    "order_index": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string"
+    },
+    "offset": {
+      "type": "number"
+    },
+    "total_records": {
+      "type": "number"
+    },
+    "created_count": {
+      "type": "number"
+    },
+    "updated_count": {
+      "type": "number"
+    },
+    "error_count": {
+      "type": "number"
+    },
+    "attempt_count": {
+      "type": "number"
+    },
+    "last_attempt_at": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "required": []
+}
