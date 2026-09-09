@@ -43,20 +43,86 @@ export async function saveBoatraceData(dataType, parsedData, fileName, onProgres
     });
   }
 
+  // B番組表は再投入時に全864艇を更新し直さない。
+  // 同一race_keyで6艇の登録番号まで一致しているRaceは完全既存としてクライアント側で除外する。
+  let venuesToSave = venues;
+  let completeRaceCount = 0;
+  const sourceRaceCount = venues.reduce((sum, v) => sum + (v.races || []).length, 0);
+
+  if (dataType === "B" && parsedData.race_date) {
+    const [existingRaces, existingEntries] = await Promise.all([
+      base44.entities.Race.filter({ race_date: parsedData.race_date }, "race_key", 500),
+      base44.entities.RaceEntry.filter({ race_date: parsedData.race_date }, "boat_number", 5000),
+    ]);
+
+    const raceKeys = new Set((existingRaces || []).map((r) => r.race_key).filter(Boolean));
+    const existingByKey = new Map();
+    for (const e of existingEntries || []) {
+      if (!e.race_key) continue;
+      if (!existingByKey.has(e.race_key)) existingByKey.set(e.race_key, new Map());
+      existingByKey.get(e.race_key).set(Number(e.boat_number), String(e.registration_number || e.register_number || ""));
+    }
+
+    const makeKey = (venueCode, raceNumber) =>
+      `${parsedData.race_date}_${String(venueCode).padStart(2, "0")}_${String(raceNumber).padStart(2, "0")}`;
+
+    venuesToSave = venues.map((venue) => {
+      const races = (venue.races || []).filter((race) => {
+        const key = makeKey(venue.venue_code, race.race_number);
+        if (!raceKeys.has(key)) return true;
+        const current = existingByKey.get(key);
+        if (!current || current.size < 6) return true;
+
+        // 6艇すべて存在し、艇番ごとの登録番号が今回のBファイルと一致する場合だけ完全既存。
+        for (const incoming of race.entries || []) {
+          const boat = Number(incoming.boat_number);
+          const reg = String(incoming.registration_number || "");
+          if (!boat || !reg || current.get(boat) !== reg) return true;
+        }
+        if ((race.entries || []).length !== 6) return true;
+        completeRaceCount++;
+        return false;
+      });
+      return { ...venue, races };
+    }).filter((venue) => venue.races.length > 0);
+
+    // 全レースが既に完全ならバックエンドFunctionを1回も呼ばず終了。
+    if (venuesToSave.length === 0) {
+      return {
+        data: {
+          ok: true,
+          data_type: dataType,
+          created: 0,
+          updated: 0,
+          skipped: completeRaceCount,
+          errors: 0,
+          total: sourceRaceCount,
+          completeRaces: completeRaceCount,
+          savedRaces: 0,
+          errorDetails: [],
+          venueResults: [],
+          message: `差分確認完了: ${venues.length}場 / ${sourceRaceCount}R中 ${completeRaceCount}R既存完全 / 追加更新0R / エラー0`,
+        },
+      };
+    }
+  }
+
   const aggregate = {
     ok: true,
     data_type: dataType,
     created: 0,
     updated: 0,
-    skipped: 0,
+    skipped: completeRaceCount,
     errors: 0,
-    total: 0,
+    total: sourceRaceCount,
+    completeRaces: completeRaceCount,
+    savedRaces: 0,
     errorDetails: [],
     venueResults: [],
   };
 
-  for (let i = 0; i < venues.length; i++) {
-    const venue = venues[i];
+  for (let i = 0; i < venuesToSave.length; i++) {
+    const venue = venuesToSave[i];
     const chunk = {
       type: dataType,
       race_date: parsedData.race_date,
@@ -73,9 +139,8 @@ export async function saveBoatraceData(dataType, parsedData, fileName, onProgres
       const d = resp?.data || {};
       aggregate.created += d.created || 0;
       aggregate.updated += d.updated || 0;
-      aggregate.skipped += d.skipped || 0;
       aggregate.errors += d.errors || 0;
-      aggregate.total += d.total || 0;
+      aggregate.savedRaces += d.total || 0;
       if (d.errorDetails?.length) aggregate.errorDetails.push(...d.errorDetails);
       aggregate.venueResults.push({
         venue_code: venue.venue_code,
@@ -85,6 +150,7 @@ export async function saveBoatraceData(dataType, parsedData, fileName, onProgres
         updated: d.updated || 0,
         skipped: d.skipped || 0,
         errors: d.errors || 0,
+        races: d.total || 0,
       });
     } catch (e) {
       aggregate.ok = false;
@@ -102,19 +168,22 @@ export async function saveBoatraceData(dataType, parsedData, fileName, onProgres
     if (onProgress) {
       onProgress({
         current: i + 1,
-        total: venues.length,
+        total: venuesToSave.length,
         venue_code: venue.venue_code,
         venue_name: venue.venue_name,
       });
     }
 
-    // 会場間でも少し休止し、Base44 Function/Entity APIのレート制限を回避する。
-    if (i < venues.length - 1) {
+    if (i < venuesToSave.length - 1) {
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
   }
 
-  aggregate.message = `全国取込完了: ${venues.length}場 / ${aggregate.total}R / 更新${aggregate.updated} / スキップ${aggregate.skipped} / エラー${aggregate.errors}`;
+  if (dataType === "B") {
+    aggregate.message = `差分取込完了: ${venues.length}場 / ${sourceRaceCount}R中 ${aggregate.completeRaces}R既存完全 / ${aggregate.savedRaces}R追加更新 / エラー${aggregate.errors}`;
+  } else {
+    aggregate.message = `全国取込完了: ${venues.length}場 / ${aggregate.savedRaces}R / 更新${aggregate.updated} / エラー${aggregate.errors}`;
+  }
   return { data: aggregate };
 }
 
