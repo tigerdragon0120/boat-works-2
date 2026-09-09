@@ -12,7 +12,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Base44 Entity API の短時間連続書込による Rate limit を吸収する。
 // 429/Rate limit のときだけ指数バックオフして再試行する。
-async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 6): Promise<T> {
+async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 10): Promise<T> {
   let lastError: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -22,7 +22,9 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 6): Prom
       const msg = String(e?.message || e?.response?.data?.error || e || '');
       const isRateLimit = /rate\s*limit|too many requests|429/i.test(msg);
       if (!isRateLimit || attempt === maxRetries) throw e;
-      await sleep(Math.min(8000, 700 * Math.pow(2, attempt)));
+      const baseDelay = Math.min(30000, 1000 * Math.pow(2, attempt));
+      const jitter = Math.floor(Math.random() * 500);
+      await sleep(baseDelay + jitter);
     }
   }
   throw lastError;
