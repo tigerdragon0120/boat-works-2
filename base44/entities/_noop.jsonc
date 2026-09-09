@@ -1,0 +1,7 @@
+{
+  "type": "object",
+  "description": "unused placeholder; safe to ignore",
+  "properties": {},
+  "required": [],
+  "name": "_noop"
+}
