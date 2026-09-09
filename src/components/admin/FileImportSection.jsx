@@ -161,15 +161,32 @@ function TxtImportCard() {
         )}
       </div>
 
+      {batchMode && files.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between text-xs font-bold text-amber-800">
+            <span>過去Kファイル一括取込</span><span>{files.length}ファイル</span>
+          </div>
+          {saving && <div className="text-xs text-amber-700 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> {batchProgress.current}/{batchProgress.total} — {batchProgress.file}</div>}
+          <button onClick={handleBatchSave} disabled={saving} className="w-full h-10 rounded-lg bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50">
+            {saving ? `取込中 ${batchProgress.current}/${batchProgress.total}` : `${files.length}件のKファイルを一括登録`}
+          </button>
+          {batchResults.length > 0 && (
+            <div className="max-h-48 overflow-y-auto bg-white rounded-lg p-2 space-y-1">
+              {batchResults.map((r, i) => <div key={i} className={cn("text-[10px] flex justify-between gap-2", r.ok ? "text-emerald-700" : "text-rose-700")}><span>{r.ok ? "✓" : "⚠"} {r.file}</span><span>新{r.created}/更{r.updated}/飛{r.skipped}/エ{r.errors}</span></div>)}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* パース中 */}
-      {parsing && (
+      {!batchMode && parsing && (
         <div className="flex items-center gap-2 text-sm text-sky-600">
           <Loader2 className="w-4 h-4 animate-spin" /> ファイル解析中…
         </div>
       )}
 
       {/* パースエラー */}
-      {parseError && (
+      {!batchMode && parseError && (
         <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-rose-500 mt-0.5 shrink-0" />
           <div className="text-xs text-rose-700 whitespace-pre-line">{parseError}</div>
@@ -177,7 +194,7 @@ function TxtImportCard() {
       )}
 
       {/* プレビュー */}
-      {preview && (
+      {!batchMode && preview && (
         <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center gap-1.5 text-sm font-bold text-sky-800">
             <CheckCircle2 className="w-4 h-4" /> 解析成功 — プレビュー
