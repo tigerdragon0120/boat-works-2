@@ -185,7 +185,7 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
           errors++;
           errorDetails.push(`${venueName} R${raceNumber}: K選手行${raceEntries.length}艇（6艇必要）`);
         }
-        expectedHistoryEntries += raceEntries.length;
+        expectedHistoryEntries += resultTrifecta ? 6 : raceEntries.length;
         const orderedEntries = [...raceEntries].sort((a: any, b: any) => (num(a.finish_order) || 99) - (num(b.finish_order) || 99));
         const finishOrder = orderedEntries.map((e: any) => e.boat_number);
         if (resultTrifecta) {
@@ -338,9 +338,9 @@ export default async function(req: Request) {
       });
 
       return Response.json({
-        ok: true, data_type, ...result,
+        ok: result.errors === 0, data_type, ...result,
         log_id: logRecord.id,
-        message: `取込完了: 新規${result.created} / 更新${result.updated} / スキップ${result.skipped} / エラー${result.errors}`,
+        message: `${result.errors === 0 ? '取込完了' : '取込不完全'}: 新規${result.created} / 更新${result.updated} / スキップ${result.skipped} / エラー${result.errors}`,
       });
     } catch (e: any) {
       await sr.DataImportLog.update(logRecord.id, { status: 'failed', error_message: e.message });
