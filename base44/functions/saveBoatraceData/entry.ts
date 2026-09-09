@@ -154,6 +154,8 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
   const histCreates: any[] = [];
   const histUpdates: any[] = [];
   const entryUpdates: any[] = [];
+  const targetHistKeys = new Set<string>();
+  let expectedHistoryEntries = 0;
 
   for (const venue of venues) {
     const venueCode = str(venue.venue_code);
@@ -176,7 +178,15 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
         }
 
         const resultTrifecta = str(r.result_trifecta);
-        const orderedEntries = [...(r.entries || [])].sort((a: any, b: any) => (num(a.finish_order) || 99) - (num(b.finish_order) || 99));
+        const raceEntries = r.entries || [];
+        // フロントのパーサーだけに依存せず、バックエンドでも6艇完全性を再検査する。
+        // 払戻確定レースで6艇揃っていなければ「成功」にしない。
+        if (resultTrifecta && raceEntries.length !== 6) {
+          errors++;
+          errorDetails.push(`${venueName} R${raceNumber}: K選手行${raceEntries.length}艇（6艇必要）`);
+        }
+        expectedHistoryEntries += raceEntries.length;
+        const orderedEntries = [...raceEntries].sort((a: any, b: any) => (num(a.finish_order) || 99) - (num(b.finish_order) || 99));
         const finishOrder = orderedEntries.map((e: any) => e.boat_number);
         if (resultTrifecta) {
           const saver = fastHistorical ? upsertResultOnly : upsertResultAndVerify;
@@ -216,6 +226,7 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
             finish_status: str(e.finish_status) || undefined,
           };
           const hk = `${reg}_${venueCode}_${raceNumber}`;
+          targetHistKeys.add(hk);
           const old = histByKey.get(hk);
           if (old) histUpdates.push({ id: old.id, ...histDoc });
           else { histCreates.push(histDoc); histByKey.set(hk, histDoc); }
@@ -243,12 +254,39 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
   const total = venues.reduce((a: number, v: any) => a + (v.results || []).length, 0);
   const parsedEntryTotal = venues.reduce((sum: number, v: any) => sum + (v.results || []).reduce((s: number, r: any) => s + (r.entries || []).length, 0), 0);
   const historySaved = histCreates.length + histUpdates.length;
-  // 「結果だけ成功・選手履歴0件」を成功扱いにしない。
-  if (parsedEntryTotal > 0 && historySaved === 0) {
-    errors++;
-    errorDetails.push(`RacerRaceHistory保存0件: K選手行${parsedEntryTotal}件を解析したが履歴が保存されませんでした`);
+
+  // 書込みAPIが成功を返しただけでは完了扱いにしない。DBを再読込して対象キーが実在するか検証する。
+  let historyVerified = 0;
+  if (targetHistKeys.size > 0) {
+    const persisted = await withRateLimitRetry(() => sr.RacerRaceHistory.filter({ race_date: raceDate }, 'race_number', 5000));
+    const persistedKeys = new Set((persisted || []).map((x: any) => `${str(x.registration_number)}_${str(x.venue_code)}_${Number(x.race_number)}`));
+    for (const key of targetHistKeys) if (persistedKeys.has(key)) historyVerified++;
   }
-  return { created, updated, skipped, errors, errorDetails, total, parsed_entries: parsedEntryTotal, history_created: histCreates.length, history_updated: histUpdates.length, history_saved: historySaved };
+
+  // 「結果だけ成功」「解析0件」「DB実在数不足」を絶対にsuccess扱いにしない。
+  if (total > 0 && parsedEntryTotal === 0) {
+    errors++;
+    errorDetails.push(`K選手行解析0件: ${total}Rの結果は検出したが艇データを1件も解析できませんでした`);
+  }
+  if (parsedEntryTotal !== expectedHistoryEntries) {
+    errors++;
+    errorDetails.push(`K選手行件数不整合: parsed=${parsedEntryTotal} expected=${expectedHistoryEntries}`);
+  }
+  if (targetHistKeys.size > 0 && historyVerified !== targetHistKeys.size) {
+    errors++;
+    errorDetails.push(`RacerRaceHistory DB検証不足: ${historyVerified}/${targetHistKeys.size}件のみ確認`);
+  }
+
+  return {
+    created, updated, skipped, errors, errorDetails, total,
+    parsed_entries: parsedEntryTotal,
+    expected_history_entries: expectedHistoryEntries,
+    history_created: histCreates.length,
+    history_updated: histUpdates.length,
+    history_saved: historySaved,
+    history_verified: historyVerified,
+    history_target: targetHistKeys.size,
+  };
 }
 
 export default async function(req: Request) {
