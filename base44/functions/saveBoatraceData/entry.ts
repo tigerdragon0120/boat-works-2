@@ -151,26 +151,26 @@ async function saveKFileData(base44: any, data: any) {
         const raceKey = buildRaceKey(raceDate, venueCode, raceNumber);
         // Race検索(なければ作成)
         let race = null;
-        const existingRaces = await sr.Race.filter({ race_key: raceKey }, '-updated_date', 1).catch(() => []);
+        const existingRaces = await withRateLimitRetry(() => sr.Race.filter({ race_key: raceKey }, '-updated_date', 1)).catch(() => []);
         if (existingRaces && existingRaces[0]) {
           race = existingRaces[0];
         } else {
-          race = await sr.Race.create({
+          race = await withRateLimitRetry(() => sr.Race.create({
             race_key: raceKey, race_date: raceDate, venue_code: venueCode,
             venue: venueName || undefined, venue_name: venueName || undefined,
             race_number: raceNumber, race_name: str(r.race_name) || undefined,
             status: 'finished', sync_source: 'txt_k_file',
-          });
+          }));
         }
         // RaceResult upsert + 検証
         const resultTrifecta = str(r.result_trifecta);
         const finishOrder = r.entries ? r.entries.sort((a: any, b: any) => a.finish_order - b.finish_order).map((e: any) => e.boat_number) : [];
         if (resultTrifecta) {
-          await upsertResultAndVerify(base44, race, {
+          await withRateLimitRetry(() => upsertResultAndVerify(base44, race, {
             result_trifecta: resultTrifecta,
             finish_order: finishOrder,
             payout: num(r.payout) || 0,
-          });
+          }));
           updated++;
         } else {
           skipped++;
@@ -179,20 +179,19 @@ async function saveKFileData(base44: any, data: any) {
         for (const e of r.entries || []) {
           const bn = num(e.boat_number);
           if (!bn) continue;
-          const existingEntry = await sr.RaceEntry.filter({ race_id: race.id, boat_number: bn }, 'boat_number', 1).catch(() => []);
+          const existingEntry = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id, boat_number: bn }, 'boat_number', 1)).catch(() => []);
           if (existingEntry && existingEntry[0]) {
             const update: any = {};
             if (num(e.exhibition_time) != null) update.exhibition_time = num(e.exhibition_time);
-            if (num(e.st) != null) update.exhibition_st = num(e.st);
-            if (num(e.course) != null) update.exhibition_course = num(e.course);
+            // KファイルのST/コースは本番レースの値。展示ST/展示進入へ上書きしない。
             if (e.is_absent) { update.is_absent = true; update.is_scratched = true; }
-            if (Object.keys(update).length) await sr.RaceEntry.update(existingEntry[0].id, update);
+            if (Object.keys(update).length) await withRateLimitRetry(() => sr.RaceEntry.update(existingEntry[0].id, update));
           }
           // RacerRaceHistory
           const reg = str(e.registration_number);
           if (reg) {
             const histKey = { registration_number: reg, race_date: raceDate, venue_code: venueCode, race_number: raceNumber };
-            const existingHist = await sr.RacerRaceHistory.filter(histKey, '-created_date', 1).catch(() => []);
+            const existingHist = await withRateLimitRetry(() => sr.RacerRaceHistory.filter(histKey, '-created_date', 1)).catch(() => []);
             const histDoc = {
               registration_number: reg,
               race_date: raceDate,
@@ -207,10 +206,12 @@ async function saveKFileData(base44: any, data: any) {
               is_disqualified: !!e.is_disqualified,
               finish_status: str(e.finish_status) || undefined,
             };
-            if (existingHist && existingHist[0]) await sr.RacerRaceHistory.update(existingHist[0].id, histDoc);
-            else await sr.RacerRaceHistory.create(histDoc);
+            if (existingHist && existingHist[0]) await withRateLimitRetry(() => sr.RacerRaceHistory.update(existingHist[0].id, histDoc));
+            else await withRateLimitRetry(() => sr.RacerRaceHistory.create(histDoc));
+            await sleep(180);
           }
         }
+        await sleep(300);
       } catch (e: any) {
         errors++;
         errorDetails.push(`${venueName} R${r.race_number}: ${e.message}`);
