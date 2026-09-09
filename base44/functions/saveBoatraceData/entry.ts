@@ -197,8 +197,17 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
             if (Object.keys(patch).length > 1) entryUpdates.push(patch);
           }
 
-          const reg = str(e.registration_number);
-          if (!reg) continue;
+          // K側の登録番号が欠落/異常でも、既存RaceEntryに正しい登録番号があれば補完する。
+          // 過去Kではレイアウト差により registration_number が正しく取れないケースがあるため、
+          // 4桁数字でない値は信用せず RaceEntry を優先フォールバックする。
+          const parsedReg = str(e.registration_number);
+          const entryReg = str(existingEntry?.registration_number || existingEntry?.register_number);
+          const reg = /^\d{4}$/.test(parsedReg) ? parsedReg : (/^\d{4}$/.test(entryReg) ? entryReg : '');
+          if (!reg) {
+            errors++;
+            errorDetails.push(`${venueName} R${raceNumber} ${bn}号艇: 登録番号を特定できません`);
+            continue;
+          }
           const histDoc: any = {
             registration_number: reg, race_date: raceDate, venue_code: venueCode, race_number: raceNumber,
             boat_number: bn, course: num(e.course) || undefined, finish_order: num(e.finish_order) || undefined,
@@ -232,7 +241,14 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
   }
 
   const total = venues.reduce((a: number, v: any) => a + (v.results || []).length, 0);
-  return { created, updated, skipped, errors, errorDetails, total, history_created: histCreates.length, history_updated: histUpdates.length };
+  const parsedEntryTotal = venues.reduce((sum: number, v: any) => sum + (v.results || []).reduce((s: number, r: any) => s + (r.entries || []).length, 0), 0);
+  const historySaved = histCreates.length + histUpdates.length;
+  // 「結果だけ成功・選手履歴0件」を成功扱いにしない。
+  if (parsedEntryTotal > 0 && historySaved === 0) {
+    errors++;
+    errorDetails.push(`RacerRaceHistory保存0件: K選手行${parsedEntryTotal}件を解析したが履歴が保存されませんでした`);
+  }
+  return { created, updated, skipped, errors, errorDetails, total, parsed_entries: parsedEntryTotal, history_created: histCreates.length, history_updated: histUpdates.length, history_saved: historySaved };
 }
 
 export default async function(req: Request) {
