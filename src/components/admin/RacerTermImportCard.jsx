@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from "react";
-import { parseRacerTermFileForPreview, saveRacerTermStats, rebuildRollingStats } from "@/lib/dataManagementService";
-import { detectTermFromFilename } from "@/lib/racerTermParser";
+import React, { useState, useCallback, useEffect } from "react";
+import { parseRacerTermFileForPreview, rebuildRollingStats } from "@/lib/dataManagementService";
+import { getRacerTermImportState, startRacerTermImport, subscribeRacerTermImport } from "@/lib/racerTermImportManager";
 import { Users, Upload, CheckCircle2, AlertTriangle, Loader2, Zap, RefreshCw, FileText, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -10,9 +10,10 @@ export default function RacerTermImportCard() {
   const [parsing, setParsing] = useState(false);
   const [previews, setPreviews] = useState([]);
   const [parseErrors, setParseErrors] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [progress, setProgress] = useState(null);
-  const [results, setResults] = useState([]);
+  const initialImport = getRacerTermImportState();
+  const [saving, setSaving] = useState(!!initialImport.running);
+  const [progress, setProgress] = useState(initialImport.running ? { current: initialImport.current, total: initialImport.total, file: initialImport.file } : null);
+  const [results, setResults] = useState(initialImport.results || []);
   const [rollingBusy, setRollingBusy] = useState(false);
   const [rollingResult, setRollingResult] = useState(null);
 
@@ -44,27 +45,22 @@ export default function RacerTermImportCard() {
     setParsing(false);
   }, []);
 
+  useEffect(() => subscribeRacerTermImport((s) => {
+    setSaving(!!s.running);
+    setProgress(s.running || s.total ? { current: s.current, total: s.total, file: s.file } : null);
+    setResults(s.results || []);
+  }), []);
+
   const handleSave = async () => {
     if (!previews.length) return;
-    setSaving(true);
-    setProgress(null);
     setResults([]);
-
-    const allResults = [];
-    for (const p of previews) {
-      const detected = detectTermFromFilename(p.file.name);
-      const termOverride = detected ? { term_year: detected.term_year, term_half: detected.term_half } : null;
-      try {
-        const r = await saveRacerTermStats(p.data, p.file.name, termOverride);
-        allResults.push({ file: p.file.name, ...r });
-      } catch (e) {
-        allResults.push({ file: p.file.name, ok: false, error: e.message });
-      }
+    try {
+      await startRacerTermImport(previews);
+      setPreviews([]);
+      setFiles([]);
+    } catch (e) {
+      setResults([{ file: "期別成績一括取込", ok: false, error: e.message }]);
     }
-    setResults(allResults);
-    setPreviews([]);
-    setFiles([]);
-    setSaving(false);
   };
 
   const handleRebuildRolling = async () => {
