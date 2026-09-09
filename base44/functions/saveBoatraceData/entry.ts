@@ -160,10 +160,29 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
   for (const venue of venues) {
     const venueCode = str(venue.venue_code);
     const venueName = str(venue.venue_name) || venueCode;
+    for (const rejected of venue.rejected_results || []) {
+      skipped++;
+      errorDetails.push(`${venueName} R${rejected.race_number}: 元データ破損疑いのため保存対象外 — ${(rejected.reasons || []).join(' / ')}`);
+    }
     for (const r of venue.results || []) {
       try {
         const raceNumber = num(r.race_number);
         if (!raceNumber) { skipped++; continue; }
+        const raceEntries = Array.isArray(r.entries) ? r.entries : [];
+        const boats = raceEntries.map((e: any) => num(e.boat_number));
+        const regs = raceEntries.map((e: any) => str(e.registration_number));
+        const tri = str(r.result_trifecta);
+        const invalidReasons: string[] = [];
+        if (raceEntries.length !== 6) invalidReasons.push(`選手行${raceEntries.length}艇`);
+        if (new Set(boats).size !== 6 || ![1,2,3,4,5,6].every((b) => boats.includes(b))) invalidReasons.push('艇番不整合');
+        if (regs.some((x: string) => !/^\d{4}$/.test(x)) || new Set(regs).size !== 6) invalidReasons.push('登録番号不整合');
+        if (!/^([1-6])-([1-6])-([1-6])$/.test(tri) || new Set(tri.split('-')).size !== 3) invalidReasons.push('3連単結果不正');
+        if (invalidReasons.length) {
+          skipped++;
+          errorDetails.push(`${venueName} R${raceNumber}: バックエンド検査で除外 — ${invalidReasons.join(' / ')}`);
+          continue;
+        }
+
         const raceKey = buildRaceKey(raceDate, venueCode, raceNumber);
         let race: any = raceByKey.get(raceKey);
         if (!race) {
@@ -178,14 +197,7 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
         }
 
         const resultTrifecta = str(r.result_trifecta);
-        const raceEntries = r.entries || [];
-        // フロントのパーサーだけに依存せず、バックエンドでも6艇完全性を再検査する。
-        // 払戻確定レースで6艇揃っていなければ「成功」にしない。
-        if (resultTrifecta && raceEntries.length !== 6) {
-          errors++;
-          errorDetails.push(`${venueName} R${raceNumber}: K選手行${raceEntries.length}艇（6艇必要）`);
-        }
-        expectedHistoryEntries += resultTrifecta ? 6 : raceEntries.length;
+        expectedHistoryEntries += 6;
         const orderedEntries = [...raceEntries].sort((a: any, b: any) => (num(a.finish_order) || 99) - (num(b.finish_order) || 99));
         const finishOrder = orderedEntries.map((e: any) => e.boat_number);
         if (resultTrifecta) {
@@ -252,6 +264,7 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
   }
 
   const total = venues.reduce((a: number, v: any) => a + (v.results || []).length, 0);
+  const rejectedTotal = venues.reduce((a: number, v: any) => a + (v.rejected_results || []).length, 0);
   const parsedEntryTotal = venues.reduce((sum: number, v: any) => sum + (v.results || []).reduce((s: number, r: any) => s + (r.entries || []).length, 0), 0);
   const historySaved = histCreates.length + histUpdates.length;
 
@@ -286,6 +299,7 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
     history_saved: historySaved,
     history_verified: historyVerified,
     history_target: targetHistKeys.size,
+    rejected_corrupt: rejectedTotal,
   };
 }
 
