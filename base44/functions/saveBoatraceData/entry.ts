@@ -87,6 +87,7 @@ async function saveBFileData(base44: any, data: any) {
 async function saveKFileData(base44: any, data: any) {
   const sr = base44.asServiceRole.entities;
   let created = 0, updated = 0, skipped = 0, errors = 0;
+  const errorDetails: string[] = [];
   const raceDate = str(data.race_date);
   const venueCode = str(data.venue_code);
 
