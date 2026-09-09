@@ -159,9 +159,9 @@ async function saveKFileData(base44: any, data: any) {
           else await sr.RacerRaceHistory.create(histDoc);
         }
       }
-    } catch (e: any) { errors++; }
+    } catch (e: any) { errors++; errorDetails.push(`R${r.race_number}: ${e.message}`); }
   }
-  return { created, updated, skipped, errors, total: (data.results || []).length };
+  return { created, updated, skipped, errors, errorDetails, total: (data.results || []).length };
 }
 
 export default async function(req: Request) {
@@ -209,6 +209,7 @@ export default async function(req: Request) {
         updated_count: result.updated,
         skipped_count: result.skipped,
         error_count: result.errors,
+        error_message: result.errorDetails?.join('; ') || undefined,
       });
 
       return Response.json({
