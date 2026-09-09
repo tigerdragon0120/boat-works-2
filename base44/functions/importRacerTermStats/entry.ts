@@ -28,7 +28,9 @@ export default async function(req: Request) {
     const fileName = body.file_name || '';
     const termOverride = body.term_override || null;
     const batchOffset = body.batch_offset || 0;
-    const batchSize = body.batch_size || 500;
+    // 504回避のため1回の処理量を小さく制限する。
+    // クライアントが大きい値を送っても最大100件まで。
+    const batchSize = Math.max(20, Math.min(Number(body.batch_size || 100), 100));
     const logId = body.log_id || null;
     const now = new Date().toISOString();
 
@@ -144,15 +146,57 @@ export default async function(req: Request) {
 
     // === バルク書き込み ===
     let createdCount = 0, updatedCount = 0;
-    for (let i = 0; i < toCreate.length; i += 500) {
-      const chunk = toCreate.slice(i, i + 500);
+    for (let i = 0; i < toCreate.length; i += 100) {
+      const chunk = toCreate.slice(i, i + 100);
       await sr.RacerTermStats.bulkCreate(chunk);
       createdCount += chunk.length;
     }
-    for (let i = 0; i < toUpdate.length; i += 500) {
-      const chunk = toUpdate.slice(i, i + 500);
+    for (let i = 0; i < toUpdate.length; i += 100) {
+      const chunk = toUpdate.slice(i, i + 100);
       await sr.RacerTermStats.bulkUpdate(chunk);
       updatedCount += chunk.length;
+    }
+
+    // RacerProfileは「全件完了時に全選手を1人ずつ検索」しない。
+    // それが504の主因だったため、このバッチに含まれる選手だけを更新する。
+    const batchRegs = [...new Set(batch.map((r:any) => String(r.registration_number || '').trim()).filter(Boolean))];
+    const existingProfiles = await sr.RacerProfile.list('registration_number', 5000).catch(() => []);
+    const profileByReg = new Map((existingProfiles || []).map((p:any) => [String(p.registration_number || ''), p]));
+    const latestInBatch = new Map();
+    for (const rec of batch) {
+      const reg = String(rec.registration_number || '').trim();
+      if (!reg) continue;
+      const prev = latestInBatch.get(reg);
+      if (!prev || String(rec.term_key || '') > String(prev.term_key || '')) latestInBatch.set(reg, rec);
+    }
+    const profileCreates:any[] = [];
+    const profileUpdates:any[] = [];
+    for (const [reg, latest] of latestInBatch) {
+      const doc:any = {
+        registration_number: reg,
+        racer_name: latest.racer_name || '',
+        player_name: latest.racer_name || '',
+        player_class: latest.player_class || '',
+        grade_class: latest.player_class || '',
+        branch_name: latest.branch_name || '',
+        age: latest.age,
+        weight: latest.weight,
+        national_win_rate: latest.win_rate,
+        national_2rate: latest.fukusho_rate,
+        avg_st: latest.avg_st,
+        f_count: latest.f_count,
+        l_count: latest.l_count,
+        updated_at: now,
+      };
+      const old = profileByReg.get(reg);
+      if (old) profileUpdates.push({ id: old.id, ...doc });
+      else profileCreates.push(doc);
+    }
+    for (let i = 0; i < profileCreates.length; i += 100) {
+      await sr.RacerProfile.bulkCreate(profileCreates.slice(i, i + 100));
+    }
+    for (let i = 0; i < profileUpdates.length; i += 100) {
+      await sr.RacerProfile.bulkUpdate(profileUpdates.slice(i, i + 100));
     }
 
     const totalProcessed = batchOffset + batch.length;
@@ -196,47 +240,6 @@ export default async function(req: Request) {
       },
     });
 
-    // === 全件完了時: RacerProfile最新化 ===
-    if (isComplete) {
-      // 最新期のレコードでRacerProfileを更新
-      const latestTerms = new Map();
-      for (const rec of processedRecords) {
-        const reg = rec.registration_number;
-        if (!latestTerms.has(reg) || rec.term_key > (latestTerms.get(reg).term_key || '')) {
-          latestTerms.set(reg, rec);
-        }
-      }
-      const profileUpdates = [];
-      for (const [reg, latest] of latestTerms) {
-        const existingProfile = await sr.RacerProfile.filter({ registration_number: reg }, '-updated_at', 1).catch(() => []);
-        const doc = {
-          registration_number: reg,
-          racer_name: latest.racer_name || '',
-          player_name: latest.racer_name || '',
-          player_class: latest.player_class || '',
-          grade_class: latest.player_class || '',
-          branch_name: latest.branch_name || '',
-          age: latest.age,
-          weight: latest.weight,
-          national_win_rate: latest.win_rate,
-          national_2rate: latest.fukusho_rate,
-          avg_st: latest.avg_st,
-          f_count: latest.f_count,
-          l_count: latest.l_count,
-          updated_at: now,
-        };
-        if (existingProfile?.[0]) {
-          profileUpdates.push({ id: existingProfile[0].id, ...doc });
-        } else {
-          // 新規選手はRacerProfile作成
-          await sr.RacerProfile.create(doc).catch(() => {});
-        }
-      }
-      // バルク更新
-      for (let i = 0; i < profileUpdates.length; i += 500) {
-        await sr.RacerProfile.bulkUpdate(profileUpdates.slice(i, i + 500));
-      }
-    }
 
     return Response.json({
       ok: true,
