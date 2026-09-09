@@ -388,7 +388,7 @@ function parseKFile(text, filename) {
         // K公式TXTの選手行は通常「  01  3 3716 ...」のように先頭空白を含む。
         // 旧実装は ^\d で直接判定していたため、結果Rだけ取れて6艇データを全件取りこぼしていた。
         const normalizedLine = normalizeWidth(line).trimStart();
-        if (currentResult && /^\d{2}\s+\d\s+\d{4}(?:\s|$)/.test(normalizedLine)) {
+        if (currentResult && /^(?:\d{2}|F|L[01]?|K[01]?|S[012]?|欠|欠場|中止)\s+\d\s+\d{4}(?:\s|$)/i.test(normalizedLine)) {
           const entry = parseKEntryLine(line);
           if (entry) currentResult.entries.push(entry);
         }
