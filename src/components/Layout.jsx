@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Link, useLocation, Outlet } from "react-router-dom";
 import { Waves, Home, BarChart3, Settings, Search, Ticket, CalendarDays, Newspaper, Video, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resumeKBatchImport } from "@/lib/kBatchImportManager";
 
 const nav = [
   { to: "/", label: "レース一覧", icon: Home },
@@ -21,6 +22,7 @@ const subNav = [
 
 export default function Layout() {
   const loc = useLocation();
+  useEffect(() => { resumeKBatchImport(); }, []);
   return (
     <div className="min-h-screen bg-[#11161d] text-slate-100">
       <header className="sticky top-0 z-30 bg-[#161a22] border-b border-[#2d3748]">
