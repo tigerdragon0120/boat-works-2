@@ -39,6 +39,12 @@
     },
     "message": {
       "type": "string"
+    },
+    "attempt_count": {
+      "type": "number"
+    },
+    "last_attempt_at": {
+      "type": "string"
     }
   },
   "required": [],
