@@ -178,37 +178,53 @@ function parseKEntryLine(line) {
   const normalized = normalizeWidth(line).trim();
   const parts = normalized.split(/\s+/);
   if (parts.length < 9) return null;
-  const finishOrder = parseInt(parts[0]);
-  const boatNumber = parseInt(parts[1]);
-  const registrationNumber = parts[2];
-  if (!finishOrder || !boatNumber || !registrationNumber) return null;
+
+  // 着順欄は通常 01〜06 だが、事故時は F / L0 / L1 / K0 / K1 / S0 / S1 / S2 等になる。
+  // 数字だけを許可すると事故艇が履歴から消えるため、状態コードも正式に扱う。
+  const finishToken = String(parts[0] || "").toUpperCase();
+  const numericFinish = /^\d{1,2}$/.test(finishToken) ? parseInt(finishToken, 10) : null;
+  const boatNumber = parseInt(parts[1], 10);
+  const registrationNumber = String(parts[2] || "").trim();
+  if (!boatNumber || boatNumber < 1 || boatNumber > 6 || !/^\d{4}$/.test(registrationNumber)) return null;
+
   const raceTime = parts[parts.length - 1];
-  const st = parts[parts.length - 2];
+  const stToken = String(parts[parts.length - 2] || "").toUpperCase();
   const course = parts[parts.length - 3];
   const exhibitionTime = parts[parts.length - 4];
   const boatId = parts[parts.length - 5];
   const motorNumber = parts[parts.length - 6];
   const playerName = parts.slice(3, parts.length - 6).join(" ").trim();
 
-  let finishStatus = "";
-  let isAbsent = false, isDisqualified = false;
-  const nameUpper = playerName.toUpperCase();
-  if (nameUpper.includes("F") || nameUpper.includes("フライング")) { finishStatus = "F"; }
-  else if (nameUpper.includes("L") || nameUpper.includes("出遅")) { finishStatus = "L"; }
-  else if (nameUpper.includes("K") || nameUpper.includes("落水")) { finishStatus = "K"; isDisqualified = true; }
-  else if (nameUpper.includes("S") || nameUpper.includes("事故")) { finishStatus = "S"; isDisqualified = true; }
-  else if (nameUpper.includes("欠場") || nameUpper.includes("中止")) { isAbsent = true; finishStatus = "ABS"; }
+  let finishStatus = numericFinish ? "" : finishToken;
+  let isAbsent = false;
+  let isDisqualified = false;
+
+  if (/^F$/.test(finishToken)) finishStatus = "F";
+  else if (/^L[01]?$/.test(finishToken)) finishStatus = finishToken;
+  else if (/^K[01]?$/.test(finishToken)) { finishStatus = finishToken; isDisqualified = true; }
+  else if (/^S[012]?$/.test(finishToken)) { finishStatus = finishToken; isDisqualified = true; }
+  else if (/^(欠|欠場|中止|ABS)$/i.test(finishToken)) { finishStatus = "ABS"; isAbsent = true; }
+
+  // STは通常 0.12、フライング時は F0.03。Fは負数として保存して情報を失わない。
+  let st = null;
+  if (/^F\d*\.?\d+$/.test(stToken)) {
+    const v = parseFloat(stToken.slice(1));
+    st = Number.isFinite(v) ? -Math.abs(v) : null;
+  } else {
+    const v = parseFloat(stToken);
+    st = Number.isFinite(v) ? v : null;
+  }
 
   return {
-    finish_order: finishOrder,
+    finish_order: numericFinish,
     boat_number: boatNumber,
     registration_number: registrationNumber,
     player_name: playerName.replace(/\s+/g, ""),
-    motor_number: parseInt(motorNumber) || null,
+    motor_number: parseInt(motorNumber, 10) || null,
     boat_number_id: boatId,
-    exhibition_time: parseFloat(exhibitionTime) || null,
-    course: parseInt(course) || null,
-    st: parseFloat(st) || null,
+    exhibition_time: Number.isFinite(parseFloat(exhibitionTime)) ? parseFloat(exhibitionTime) : null,
+    course: parseInt(course, 10) || null,
+    st,
     race_time: raceTime,
     finish_status: finishStatus,
     is_absent: isAbsent,
