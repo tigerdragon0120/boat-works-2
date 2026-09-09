@@ -49,6 +49,7 @@ export default async function(req: Request) {
       attempt_count: 0,
       last_attempt_at: '',
       message: '',
+      log_id: '',
     })));
 
     return Response.json({ ok: true, batch_id: batchId, total_files: clean.length });
