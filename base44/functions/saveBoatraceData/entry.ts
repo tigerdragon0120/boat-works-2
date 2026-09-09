@@ -211,6 +211,8 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
           if (old) histUpdates.push({ id: old.id, ...histDoc });
           else { histCreates.push(histDoc); histByKey.set(hk, histDoc); }
         }
+        // 高速化後も瞬間的な連打を避けるため、ごく短い間隔だけ残す。
+        await sleep(120);
       } catch (e: any) {
         errors++;
         errorDetails.push(`${venueName} R${r.race_number}: ${e.message}`);
