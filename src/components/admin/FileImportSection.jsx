@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { importOfficialFile, saveBoatraceData } from "@/lib/dataManagementService";
 import { parseBoatraceFile } from "@/lib/boatraceFileParser";
+import { getKBatchImportState, startKBatchImport, subscribeKBatchImport } from "@/lib/kBatchImportManager";
 import { FileSpreadsheet, Users, History, Cog, Upload, CheckCircle2, AlertTriangle, Loader2, FileText, Zap, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import RacerTermImportCard from "@/components/admin/RacerTermImportCard";
@@ -52,8 +53,10 @@ function TxtImportCard() {
   const [file, setFile] = useState(null);
   const [files, setFiles] = useState([]);
   const [batchMode, setBatchMode] = useState(false);
-  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, file: "" });
-  const [batchResults, setBatchResults] = useState([]);
+  const initialBatch = getKBatchImportState();
+  const [batchProgress, setBatchProgress] = useState({ current: initialBatch.current, total: initialBatch.total, file: initialBatch.file });
+  const [batchResults, setBatchResults] = useState(initialBatch.results || []);
+  const [backgroundRunning, setBackgroundRunning] = useState(!!initialBatch.running);
   const [dragOver, setDragOver] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -61,6 +64,12 @@ function TxtImportCard() {
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
   const [saveError, setSaveError] = useState(null);
+
+  useEffect(() => subscribeKBatchImport((s) => {
+    setBackgroundRunning(!!s.running);
+    setBatchProgress({ current: s.current || 0, total: s.total || 0, file: s.file || "" });
+    setBatchResults(s.results || []);
+  }), []);
 
   const handleFile = async (f) => {
     if (!f) return;
@@ -100,37 +109,13 @@ function TxtImportCard() {
   };
 
   const handleBatchSave = async () => {
-    if (!files.length) return;
-    setSaving(true); setBatchResults([]); setSaveError(null);
-    const rows = [];
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      setBatchProgress({ current: i + 1, total: files.length, file: f.name });
-      try {
-        const parsed = parseBoatraceFile(await f.arrayBuffer(), f.name);
-        if (!parsed.ok) throw new Error(parsed.errors?.join(" / ") || "解析失敗");
-        if (parsed.data.type !== "K") throw new Error(`Kファイルではありません (${parsed.data.type})`);
-        const r = await saveBoatraceData("K", parsed.data, f.name);
-        const d = r?.data || {};
-        rows.push({
-          file: f.name,
-          ok: d.ok !== false && !d.errors,
-          created: d.created || 0,
-          updated: d.updated || 0,
-          skipped: d.skipped || 0,
-          errors: d.errors || 0,
-          parsed_entries: d.parsed_entries || 0,
-          history_verified: d.history_verified || 0,
-          history_target: d.history_target || 0,
-          message: d.message || "完了"
-        });
-      } catch (e) {
-        rows.push({ file: f.name, ok: false, created: 0, updated: 0, skipped: 0, errors: 1, message: e?.response?.data?.error || e.message });
-      }
-      setBatchResults([...rows]);
-      if (i < files.length - 1) await new Promise(resolve => setTimeout(resolve, 3000));
+    if (!files.length || backgroundRunning) return;
+    setSaveError(null);
+    try {
+      await startKBatchImport(files);
+    } catch (e) {
+      setSaveError(e?.message || "バックグラウンド取込を開始できませんでした");
     }
-    setSaving(false);
   };
 
   return (
@@ -179,9 +164,10 @@ function TxtImportCard() {
           <div className="flex items-center justify-between text-xs font-bold text-amber-800">
             <span>過去Kファイル一括取込</span><span>{files.length}ファイル</span>
           </div>
-          {saving && <div className="text-xs text-amber-700 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> {batchProgress.current}/{batchProgress.total} — {batchProgress.file}</div>}
-          <button onClick={handleBatchSave} disabled={saving} className="w-full h-10 rounded-lg bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50">
-            {saving ? `取込中 ${batchProgress.current}/${batchProgress.total}` : `${files.length}件のKファイルを一括登録`}
+          {backgroundRunning && <div className="text-xs text-amber-700 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> バックグラウンド取込中 {batchProgress.current}/{batchProgress.total} — {batchProgress.file}</div>}
+          {backgroundRunning && <div className="text-[10px] text-amber-700 bg-white/70 rounded p-2">この管理画面から別ページへ移動しても取込は続きます。戻ると進捗を再表示します。</div>}
+          <button onClick={handleBatchSave} disabled={backgroundRunning} className="w-full h-10 rounded-lg bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50">
+            {backgroundRunning ? `バックグラウンド取込中 ${batchProgress.current}/${batchProgress.total}` : `${files.length}件のKファイルを一括登録`}
           </button>
           {batchResults.length > 0 && (
             <div className="max-h-48 overflow-y-auto bg-white rounded-lg p-2 space-y-1">
