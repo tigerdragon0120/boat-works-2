@@ -29,7 +29,7 @@ const judgmentStyle = {
   SKIP: "bg-slate-700/40 text-slate-400 border-slate-600",
 };
 
-const subTabs = ["出走表", "直前情報", "オッズ", "3連単", "6艇評価"];
+const subTabs = ["買い目", "出走表", "直前情報", "オッズ", "3連単", "6艇評価"];
 const filterTabs = ["選手成績", "節間成績", "モーター履歴", "全国成績", "当地成績"];
 
 export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode }) {
@@ -73,6 +73,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
 
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-auto">
+        {subTab === "買い目" && <BetTicketView activePred={activePred} allTri={allTri} />}
         {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={activePred} />}
         {subTab === "直前情報" && <ExhibitionInfo entries={entries} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
@@ -273,6 +274,58 @@ function TrifectaView({ probRank, evRank, rankMode, setRankMode }) {
   );
 }
 
+function BetTicketView({ activePred, allTri }) {
+  const selected = (allTri || []).filter((t) => t.is_selected).sort((a, b) => (a.ticket_rank || 99) - (b.ticket_rank || 99));
+  if (!selected.length) return <Empty msg="買い目データがありません。予想を実行してください。" />;
+  const judgment = activePred?.final_judgment || "—";
+  return (
+    <div className="p-2 space-y-2">
+      {/* 判定ヘッダー */}
+      <div className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
+        <div className="flex items-center justify-between mb-1">
+          <span className={cn("px-2 py-0.5 rounded text-xs font-black border", judgmentStyle[judgment] || judgmentStyle.SKIP)}>{judgment}</span>
+          <span className="text-xs text-slate-400">{selected.length}点 · {activePred?.ticket_strategy || ""}</span>
+        </div>
+        <div className="text-[11px] text-slate-400 leading-relaxed">{activePred?.judgment_reason || ""}</div>
+        {activePred?.expand_reason && <div className="text-[10px] text-amber-400/80 mt-1">拡張: {activePred.expand_reason}</div>}
+      </div>
+      {/* 買い目リスト */}
+      {selected.map((t) => {
+        const odds = t.actual_odds ?? t.current_odds ?? t.estimated_odds;
+        const ev = t.expected_value;
+        return (
+          <div key={t.combination} className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className={cn("w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold", t.ticket_rank <= 3 ? "bg-[#f9c836] text-slate-950" : "bg-[#2c3546] text-slate-400")}>{t.ticket_rank}</span>
+              <span className="font-mono font-black text-white text-lg tracking-wider flex-1">{t.combination}</span>
+              {t.set_group && <span className={cn("px-1.5 h-5 rounded text-[10px] font-bold border flex items-center", t.set_group === "A" ? "text-rose-300 bg-rose-500/10 border-rose-400/30" : t.set_group === "B" ? "text-amber-300 bg-amber-500/10 border-amber-400/30" : "text-slate-400 bg-slate-700/30 border-slate-600")}>{t.set_group}</span>}
+            </div>
+            <div className="grid grid-cols-4 gap-1 text-center text-[10px]">
+              <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-200">{t.probability}%</div></div>
+              <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-200">{odds ?? "—"}</div></div>
+              <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", ev != null && ev >= 120 ? "text-emerald-400" : ev != null && ev >= 90 ? "text-amber-400" : "text-slate-400")}>{ev != null ? `${ev}%` : "—"}</div></div>
+              <div><div className="text-slate-500">順位</div><div className="font-bold text-slate-200">{t.rank}/120</div></div>
+            </div>
+            {t.selection_reason && <div className="text-[10px] text-slate-500 mt-1.5 pt-1.5 border-t border-[#2c3546]">{t.selection_reason}</div>}
+          </div>
+        );
+      })}
+      {/* セット分析サマリー */}
+      {activePred?.set_probability != null && (
+        <div className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
+          <div className="text-[10px] font-bold text-blue-400 mb-1.5">セット分析</div>
+          <div className="grid grid-cols-2 gap-1.5 text-center text-[10px]">
+            <div className="rounded bg-[#1e232d] py-1"><div className="font-bold text-slate-200">{activePred.set_probability}%</div><div className="text-slate-500">セット的中率</div></div>
+            <div className="rounded bg-[#1e232d] py-1"><div className="font-bold text-slate-200">{activePred.synthetic_odds != null ? `${activePred.synthetic_odds}倍` : "—"}</div><div className="text-slate-500">合成オッズ</div></div>
+            <div className="rounded bg-[#1e232d] py-1"><div className={cn("font-bold", activePred.set_expected_recovery >= 120 ? "text-emerald-400" : "text-slate-200")}>{activePred.set_expected_recovery != null ? `${activePred.set_expected_recovery}%` : "—"}</div><div className="text-slate-500">期待回収率</div></div>
+            <div className="rounded bg-[#1e232d] py-1"><div className="font-bold text-slate-200">{activePred.avg_payout != null ? `${activePred.avg_payout}円` : "—"}</div><div className="text-slate-500">平均払戻</div></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BoatEvalView({ entries, activeBoats, activePred }) {
   if (!activeBoats?.length) return <Empty msg="6艇評価データがありません。予想を実行してください。" />;
   const roleOf = (n) => {
@@ -303,10 +356,19 @@ function BoatEvalView({ entries, activeBoats, activePred }) {
               <Mini label="モーター" v={bp.motor_power} />
               <Mini label="展示力" v={bp.exhibition_power} />
             </div>
+            {/* RacerRollingStats指標 */}
+            {(bp.racer_power_score != null || bp.recent_form_score != null) && (
+              <div className="grid grid-cols-4 gap-1 text-center text-[10px] mt-1">
+                <Mini label="選手力" v={bp.racer_power_score} />
+                <Mini label="直近調子" v={bp.recent_form_score} />
+                <Mini label="ST推移" v={bp.st_trend_score} />
+                <Mini label="級別推移" v={bp.class_trend_score} />
+              </div>
+            )}
             {bp.reasons?.length > 0 && (
               <div className="mt-2 pt-2 border-t border-[#2c3546]">
                 <div className="text-[9px] font-bold text-blue-400 mb-1">理由</div>
-                {bp.reasons.slice(0, 2).map((r, i) => <div key={i} className="text-[10px] text-slate-400">・{r}</div>)}
+                {bp.reasons.slice(0, 3).map((r, i) => <div key={i} className="text-[10px] text-slate-400">・{r}</div>)}
               </div>
             )}
           </div>

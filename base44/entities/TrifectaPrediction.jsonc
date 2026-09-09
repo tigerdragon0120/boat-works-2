@@ -8,6 +8,9 @@
     "race_id": {
       "type": "string"
     },
+    "race_key": {
+      "type": "string"
+    },
     "stage": {
       "type": "string",
       "enum": [
@@ -21,7 +24,7 @@
     },
     "rank": {
       "type": "number",
-      "description": "\u4e88\u60f3\u9806\u4f4d 1-120"
+      "description": "\u78ba\u7387\u9806\u4f4d 1-120"
     },
     "probability": {
       "type": "number",
@@ -35,18 +38,48 @@
       "type": "number",
       "description": "\u76f4\u524d\u30aa\u30c3\u30ba"
     },
+    "current_odds": {
+      "type": "number",
+      "description": "\u6700\u65b0\u30aa\u30c3\u30ba(actual_odds\u3068\u540c\u671f)"
+    },
     "expected_value": {
       "type": "number",
-      "description": "\u671f\u5f85\u5024(%)"
+      "description": "\u671f\u5f85\u5024(%) = \u78ba\u7387\u00d7\u30aa\u30c3\u30ba"
+    },
+    "is_selected": {
+      "type": "boolean",
+      "default": false,
+      "description": "\u6700\u7d426\u301c8\u70b9\u306b\u9078\u5b9a\u3055\u308c\u305f\u304b"
+    },
+    "ticket_rank": {
+      "type": "number",
+      "description": "\u8cb7\u3044\u76ee\u5185\u512a\u5148\u9806\u4f4d 1-8(\u9078\u5b9a\u5916\u306fnull)"
+    },
+    "set_group": {
+      "type": "string",
+      "enum": [
+        "A",
+        "B",
+        "C"
+      ],
+      "description": "\u8cb7\u3044\u76ee\u30b0\u30eb\u30fc\u30d7 A=\u672c\u7dda B=\u5bfe\u6297 C=\u62bc\u3055\u3048"
+    },
+    "selection_reason": {
+      "type": "string",
+      "description": "\u9078\u5b9a\u7406\u7531"
+    },
+    "recommended_stake": {
+      "type": "number",
+      "description": "\u63a8\u5968\u8cc7\u91d1\u914d\u5206(%) \u5c06\u6765\u7528"
     },
     "judgment": {
       "type": "string",
       "enum": [
-        "STRONG_BUY",
         "BUY",
         "WATCH",
         "SKIP"
-      ]
+      ],
+      "description": "\u500b\u5225\u5224\u5b9a(\u53c2\u8003)"
     },
     "basis": {
       "type": "string",

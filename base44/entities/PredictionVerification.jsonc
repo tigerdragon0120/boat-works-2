@@ -5,6 +5,9 @@
     "race_id": {
       "type": "string"
     },
+    "race_key": {
+      "type": "string"
+    },
     "pre_prediction": {
       "type": "string",
       "description": "PRE\u4e88\u60f31\u4f4d 3\u9023\u5358"
@@ -25,14 +28,34 @@
     },
     "recommended_hit": {
       "type": "boolean",
-      "description": "\u63a8\u5968\u8cb7\u3044\u76ee(BUY\u4ee5\u4e0a)\u7684\u4e2d"
+      "description": "\u63a8\u5968\u8cb7\u3044\u76ee(\u9078\u5b9a6\u301c8\u70b9)\u7684\u4e2d"
+    },
+    "final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ],
+      "description": "\u6700\u7d42\u5224\u5b9a"
+    },
+    "ticket_count": {
+      "type": "number",
+      "description": "\u8cb7\u3044\u76ee\u6570 6/7/8"
+    },
+    "selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "\u6700\u7d426\u301c8\u70b9"
     },
     "payout": {
       "type": "number"
     },
     "investment": {
       "type": "number",
-      "description": "\u63a8\u5968\u8cb7\u3044\u76ee\u7dcf\u6295\u8cc7\u984d"
+      "description": "\u63a8\u5968\u8cb7\u3044\u76ee\u7dcf\u6295\u8cc7\u984d(BUY\u6642\u306e\u307f)"
     },
     "recovery_rate": {
       "type": "number",

@@ -9,15 +9,32 @@
     "buy_ev_threshold": {
       "type": "number",
       "default": 150,
-      "description": "BUY\u671f\u5f85\u5024\u3057\u304d\u3044\u5024(%)"
+      "description": "BUY\u671f\u5f85\u5024\u3057\u304d\u3044\u5024(%) - \u65e7\u4e92\u63db"
     },
     "strong_buy_ev_threshold": {
       "type": "number",
-      "default": 200
+      "default": 200,
+      "description": "\u65e7\u4e92\u63db(STRONG_BUY\u5ec3\u6b62\u5f8c\u306f\u53c2\u7167\u306a\u3057)"
     },
     "watch_ev_threshold": {
       "type": "number",
-      "default": 110
+      "default": 110,
+      "description": "\u65e7\u4e92\u63db"
+    },
+    "buy_set_ev_threshold": {
+      "type": "number",
+      "default": 120,
+      "description": "BUY\u5224\u5b9a \u30bb\u30c3\u30c8\u671f\u5f85\u56de\u53ce\u7387\u3057\u304d\u3044\u5024(%)"
+    },
+    "watch_set_ev_threshold": {
+      "type": "number",
+      "default": 90,
+      "description": "WATCH\u5224\u5b9a \u30bb\u30c3\u30c8\u671f\u5f85\u56de\u53ce\u7387\u3057\u304d\u3044\u5024(%)"
+    },
+    "min_set_probability": {
+      "type": "number",
+      "default": 25,
+      "description": "\u6700\u4f4e\u30bb\u30c3\u30c8\u7684\u4e2d\u78ba\u7387(%)"
     },
     "min_probability": {
       "type": "number",
@@ -34,10 +51,20 @@
       "default": 40,
       "description": "\u6700\u4f4e\u30c7\u30fc\u30bf\u4fe1\u983c\u5ea6"
     },
+    "max_ticket_count": {
+      "type": "number",
+      "default": 8,
+      "description": "\u6700\u5927\u8cb7\u3044\u76ee\u6570"
+    },
+    "default_ticket_count": {
+      "type": "number",
+      "default": 6,
+      "description": "\u57fa\u672c\u8cb7\u3044\u76ee\u6570"
+    },
     "max_bets": {
       "type": "number",
       "default": 10,
-      "description": "\u6700\u5927\u8cb7\u3044\u76ee\u70b9\u6570"
+      "description": "\u65e7\u4e92\u63db(\u6700\u5927\u8cb7\u3044\u76ee\u70b9\u6570)"
     },
     "weights": {
       "type": "object",

@@ -36,6 +36,70 @@
       "type": "number",
       "description": "\u30c7\u30fc\u30bf\u4fe1\u983c\u5ea6 0-100"
     },
+    "final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ],
+      "description": "\u6700\u7d42\u5224\u5b9a BUY/WATCH/SKIP"
+    },
+    "judgment_reason": {
+      "type": "string",
+      "description": "\u5224\u5b9a\u7406\u7531"
+    },
+    "ticket_count": {
+      "type": "number",
+      "description": "\u8cb7\u3044\u76ee\u6570 6/7/8"
+    },
+    "ticket_strategy": {
+      "type": "string",
+      "description": "\u8cb7\u3044\u76ee\u6226\u7565(1\u7740\u56fa\u5b9a\u578b/1\u77402\u982d\u578b/\u78ba\u7387\u4e0a\u4f4d\u578b\u7b49)"
+    },
+    "expand_reason": {
+      "type": "string",
+      "description": "7-8\u70b9\u62e1\u5f35\u7406\u7531"
+    },
+    "selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "\u6700\u7d426\u301c8\u70b9\u306e3\u9023\u5358\u914d\u5217"
+    },
+    "set_probability": {
+      "type": "number",
+      "description": "\u30bb\u30c3\u30c8\u7684\u4e2d\u78ba\u7387(%) \u9078\u629e\u8cb7\u3044\u76ee\u306e\u78ba\u7387\u5408\u8a08"
+    },
+    "set_expected_recovery": {
+      "type": "number",
+      "description": "\u30bb\u30c3\u30c8\u671f\u5f85\u56de\u53ce\u7387(%)"
+    },
+    "synthetic_odds": {
+      "type": "number",
+      "description": "\u5408\u6210\u30aa\u30c3\u30ba"
+    },
+    "min_payout": {
+      "type": "number",
+      "description": "\u6700\u4f4e\u60f3\u5b9a\u6255\u623b(100\u5186\u3042\u305f\u308a)"
+    },
+    "avg_payout": {
+      "type": "number",
+      "description": "\u5e73\u5747\u60f3\u5b9a\u6255\u623b(100\u5186\u3042\u305f\u308a)"
+    },
+    "max_payout": {
+      "type": "number",
+      "description": "\u6700\u9ad8\u60f3\u5b9a\u6255\u623b(100\u5186\u3042\u305f\u308a)"
+    },
+    "best_ev_ticket": {
+      "type": "string",
+      "description": "\u6700\u9ad8\u671f\u5f85\u5024\u8cb7\u3044\u76ee"
+    },
+    "worst_efficiency_ticket": {
+      "type": "string",
+      "description": "\u6700\u3082\u4f4e\u52b9\u7387\u306e\u8cb7\u3044\u76ee"
+    },
     "honmei_boat": {
       "type": "number"
     },
@@ -63,7 +127,6 @@
     "top_judgment": {
       "type": "string",
       "enum": [
-        "STRONG_BUY",
         "BUY",
         "WATCH",
         "SKIP"

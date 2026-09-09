@@ -213,8 +213,23 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     computed_at: new Date().toISOString(),
     prediction_grade: result.prediction_grade,
     data_confidence: result.data_confidence,
+    final_judgment: result.final_judgment,
+    judgment_reason: result.judgment_reason,
+    ticket_count: result.ticket_count,
+    ticket_strategy: result.ticket_strategy,
+    expand_reason: result.expand_reason,
+    selected_trifectas: result.selected_trifectas,
+    set_probability: result.set_metrics?.set_probability,
+    set_expected_recovery: result.set_metrics?.set_expected_recovery,
+    synthetic_odds: result.set_metrics?.synthetic_odds,
+    min_payout: result.set_metrics?.min_payout,
+    avg_payout: result.set_metrics?.avg_payout,
+    max_payout: result.set_metrics?.max_payout,
+    best_ev_ticket: result.set_metrics?.best_ev_ticket,
+    worst_efficiency_ticket: result.set_metrics?.worst_efficiency_ticket,
     honmei_boat: result.honmei_boat, taiko_boat: result.taiko_boat, ana_boat: result.ana_boat, keshi_boat: result.keshi_boat,
     top_trifecta: result.top_trifecta, top_probability: result.top_probability,
+    top_judgment: result.final_judgment,
     race_scenario: result.race_scenario,
     first_ranking: result.first_ranking, second_ranking: result.second_ranking, third_ranking: result.third_ranking,
     status: "COMPLETED",
@@ -231,15 +246,26 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     prediction_id: predictionId, race_id: race.id, race_key: race.race_key, stage,
     boat_number: s.boat_number,
     first_power: s.first_power, second_power: s.second_power, third_power: s.third_power, total_power: s.total_power,
+    current_power: s.current_power,
     start_power: s.start_power, motor_power: s.motor_power, exhibition_power: s.exhibition_power,
+    exhibition_score: s.exhibition_score,
     local_fit: s.local_fit, section_form: s.section_form, ana_potential: s.ana_potential,
+    course_strength: s.course_strength, start_skill: s.start_skill,
+    recent_form_score: s.recent_form_score, st_trend_score: s.st_trend_score,
+    class_trend_score: s.class_trend_score, performance_trend: s.performance_trend,
+    racer_power_score: s.racer_power_score,
     pre_score: s.pre_first, final_score: stage === "FINAL" ? s.first_power : null, delta: s.exhibition_delta,
     reasons: s.reasons, notes: s.notes,
   }));
   if (boatDocs.length) await client.asServiceRole.entities.BoatPrediction.bulkCreate(boatDocs);
 
   // 3連単確率 + 参考情報(オッズ・判定)を保存。確率は選手プロファイルから算出(オッズ不使用)
+  // 選定6〜8点には is_selected, ticket_rank, set_group, selection_reason を付与
+  const ticketInfoMap = new Map((result.ticket_selection?.selected || []).map((t) => [t.combination, t]));
+  const selectedSet = new Set(result.selected_trifectas || []);
   const trifectaDocs = result.trifectas.map((t) => {
+    const info = ticketInfoMap.get(t.combination);
+    const isSelected = selectedSet.has(t.combination);
     const { judgment, basis } = judgeTrifecta(t, { settings, dataConfidence: result.data_confidence, stage });
     const actualOdds = oddsMap?.[t.combination] || null;
     const estimatedOdds = Math.max(1.0, Math.round((100 / Math.max(t.probability, 0.1)) * 0.75 * 10) / 10);
@@ -247,7 +273,11 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     return {
       prediction_id: predictionId, race_id: race.id, race_key: race.race_key, stage,
       combination: t.combination, rank: t.rank, probability: t.probability,
-      estimated_odds: estimatedOdds, actual_odds: actualOdds, expected_value: ev,
+      estimated_odds: estimatedOdds, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev,
+      is_selected: isSelected,
+      ticket_rank: info?.ticket_rank || null,
+      set_group: info?.set_group || null,
+      selection_reason: info?.selection_reason || null,
       judgment, basis,
     };
   });
@@ -261,6 +291,7 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     prediction_grade: result.prediction_grade,
     honmei_boat: result.honmei_boat, taiko_boat: result.taiko_boat, ana_boat: result.ana_boat, keshi_boat: result.keshi_boat,
     top_trifecta: result.top_trifecta, top_probability: result.top_probability,
+    final_judgment: result.final_judgment,
   };
   if (stage === "PRE") { raceUpdate.has_pre = true; if (race.status !== "final" && race.status !== "finished") raceUpdate.status = "pre"; }
   if (stage === "FINAL") { raceUpdate.has_final = true; if (race.status !== "finished") raceUpdate.status = "final"; }
@@ -292,15 +323,17 @@ export async function upsertResultAndVerify(client, race, resultData) {
 
   const pre = await client.asServiceRole.entities.RacePrediction.filter({ race_id: race.id, stage: "PRE", prediction_version: VERSION }, "-computed_at", 1);
   const fin = await client.asServiceRole.entities.RacePrediction.filter({ race_id: race.id, stage: "FINAL", prediction_version: VERSION }, "-computed_at", 1);
-  const preHit = pre?.[0]?.top_trifecta === resultData.result_trifecta;
-  const finalHit = fin?.[0]?.top_trifecta === resultData.result_trifecta;
+  const preHit = (pre?.[0]?.selected_trifectas || []).includes(resultData.result_trifecta) || pre?.[0]?.top_trifecta === resultData.result_trifecta;
+  const finalHit = (fin?.[0]?.selected_trifectas || []).includes(resultData.result_trifecta) || fin?.[0]?.top_trifecta === resultData.result_trifecta;
 
+  // 推奨買い目 = 選定6〜8点(is_selected=true)。BUY判定時のみ投資計上。
   let recommendedHit = false, investment = 0;
   if (fin?.[0]) {
-    const tri = await client.asServiceRole.entities.TrifectaPrediction.filter({ prediction_id: fin[0].id }, "rank", 120);
-    const rec = tri.filter((t) => t.judgment === "STRONG_BUY" || t.judgment === "BUY");
-    investment = rec.length * 100;
-    recommendedHit = rec.some((t) => t.combination === resultData.result_trifecta);
+    const tri = await client.asServiceRole.entities.TrifectaPrediction.filter({ prediction_id: fin[0].id, is_selected: true }, "ticket_rank", 8);
+    investment = tri.length * 100;
+    recommendedHit = tri.some((t) => t.combination === resultData.result_trifecta);
+    // BUY判定でない場合は投資0(買わない)
+    if (fin[0].final_judgment !== "BUY") investment = 0;
   }
   const recovery = investment > 0 ? Math.round((recommendedHit ? (resultData.payout || 0) : 0) / investment * 100) : 0;
 
@@ -308,6 +341,9 @@ export async function upsertResultAndVerify(client, race, resultData) {
     race_id: race.id, race_key: race.race_key,
     pre_prediction: pre?.[0]?.top_trifecta || "", final_prediction: fin?.[0]?.top_trifecta || "",
     actual_result: resultData.result_trifecta, pre_hit: preHit, final_hit: finalHit, recommended_hit: recommendedHit,
+    final_judgment: fin?.[0]?.final_judgment || null,
+    ticket_count: fin?.[0]?.ticket_count || null,
+    selected_trifectas: fin?.[0]?.selected_trifectas || [],
     payout: resultData.payout || 0, investment, recovery_rate: recovery, verified_at: new Date().toISOString(),
   };
   const existV = await client.asServiceRole.entities.PredictionVerification.filter({ race_id: race.id }, "-verified_at", 1);

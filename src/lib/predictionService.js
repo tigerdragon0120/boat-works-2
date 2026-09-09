@@ -100,12 +100,27 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     computed_at: new Date().toISOString(),
     prediction_grade: result.prediction_grade,
     data_confidence: result.data_confidence,
+    final_judgment: result.final_judgment,
+    judgment_reason: result.judgment_reason,
+    ticket_count: result.ticket_count,
+    ticket_strategy: result.ticket_strategy,
+    expand_reason: result.expand_reason,
+    selected_trifectas: result.selected_trifectas,
+    set_probability: result.set_metrics?.set_probability,
+    set_expected_recovery: result.set_metrics?.set_expected_recovery,
+    synthetic_odds: result.set_metrics?.synthetic_odds,
+    min_payout: result.set_metrics?.min_payout,
+    avg_payout: result.set_metrics?.avg_payout,
+    max_payout: result.set_metrics?.max_payout,
+    best_ev_ticket: result.set_metrics?.best_ev_ticket,
+    worst_efficiency_ticket: result.set_metrics?.worst_efficiency_ticket,
     honmei_boat: result.honmei_boat,
     taiko_boat: result.taiko_boat,
     ana_boat: result.ana_boat,
     keshi_boat: result.keshi_boat,
     top_trifecta: result.top_trifecta,
     top_probability: result.top_probability,
+    top_judgment: result.final_judgment,
     race_scenario: result.race_scenario,
     first_ranking: result.first_ranking,
     second_ranking: result.second_ranking,
@@ -135,12 +150,21 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     second_power: s.second_power,
     third_power: s.third_power,
     total_power: s.total_power,
+    current_power: s.current_power,
     start_power: s.start_power,
     motor_power: s.motor_power,
     exhibition_power: s.exhibition_power,
+    exhibition_score: s.exhibition_score,
     local_fit: s.local_fit,
     section_form: s.section_form,
     ana_potential: s.ana_potential,
+    course_strength: s.course_strength,
+    start_skill: s.start_skill,
+    recent_form_score: s.recent_form_score,
+    st_trend_score: s.st_trend_score,
+    class_trend_score: s.class_trend_score,
+    performance_trend: s.performance_trend,
+    racer_power_score: s.racer_power_score,
     pre_score: s.pre_first,
     final_score: stage === "FINAL" ? s.first_power : null,
     delta: s.exhibition_delta,
@@ -149,9 +173,13 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
   }));
   if (boatDocs.length) await base44.entities.BoatPrediction.bulkCreate(boatDocs);
 
-  // TrifectaPrediction保存: 3連単120通りをすべて保持する
+  // TrifectaPrediction保存: 3連単120通りをすべて保持 + 選定6〜8点にマーク
   const maxBets = settings.max_bets || 10;
+  const ticketInfoMap = new Map((result.ticket_selection?.selected || []).map((t) => [t.combination, t]));
+  const selectedSet = new Set(result.selected_trifectas || []);
   const trifectaDocs = result.trifectas.map((t) => {
+    const info = ticketInfoMap.get(t.combination);
+    const isSelected = selectedSet.has(t.combination);
     const { judgment, basis } = judgeTrifecta(t, { settings, dataConfidence: result.data_confidence, stage });
     const actualOdds = oddsMap?.[t.combination] || null;
     const estimatedOdds = Math.max(1.0, Math.round((100 / Math.max(t.probability, 0.1)) * 0.75 * 10) / 10);
@@ -166,7 +194,12 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
       probability: t.probability,
       estimated_odds: estimatedOdds,
       actual_odds: actualOdds,
+      current_odds: actualOdds,
       expected_value: ev,
+      is_selected: isSelected,
+      ticket_rank: info?.ticket_rank || null,
+      set_group: info?.set_group || null,
+      selection_reason: info?.selection_reason || null,
       judgment,
       basis,
     };
@@ -203,6 +236,7 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     ana_boat: result.ana_boat,
     top_trifecta: result.top_trifecta,
     top_probability: result.top_probability,
+    final_judgment: result.final_judgment,
     status: race.status === "finished" ? "finished" : (stage === "FINAL" ? "final" : "pre"),
   };
   if (stage === "PRE") raceUpdate.has_pre = true;
@@ -237,17 +271,19 @@ export async function saveResultAndVerify(raceId, resultTrifecta, payout, finish
   // PRE/FINAL予想取得して照合
   const pre = await getPrediction(raceId, "PRE");
   const fin = await getPrediction(raceId, "FINAL");
-  const preHit = pre?.top_trifecta === resultTrifecta;
-  const finalHit = fin?.top_trifecta === resultTrifecta;
+  const preHit = (pre?.selected_trifectas || []).includes(resultTrifecta) || pre?.top_trifecta === resultTrifecta;
+  const finalHit = (fin?.selected_trifectas || []).includes(resultTrifecta) || fin?.top_trifecta === resultTrifecta;
 
-  // 推奨買い目(BUY以上)の的中・回収率
+  // 推奨買い目 = 選定6〜8点(is_selected=true)。BUY判定時のみ投資計上。
   let recommendedHit = false;
   let investment = 0;
   if (fin) {
     const trifectas = await getTrifectaPredictions(fin.id);
-    const recommended = trifectas.filter((t) => t.judgment === "STRONG_BUY" || t.judgment === "BUY");
+    const recommended = trifectas.filter((t) => t.is_selected);
     investment = recommended.length * 100;
     recommendedHit = recommended.some((t) => t.combination === resultTrifecta);
+    // BUY判定でない場合は投資0(買わない)
+    if (fin.final_judgment !== "BUY") investment = 0;
   }
   const recovery = investment > 0 ? Math.round((recommendedHit ? payout : 0) / investment * 100) : 0;
 
@@ -269,6 +305,9 @@ export async function saveResultAndVerify(raceId, resultTrifecta, payout, finish
     pre_hit: preHit,
     final_hit: finalHit,
     recommended_hit: recommendedHit,
+    final_judgment: fin?.final_judgment || null,
+    ticket_count: fin?.ticket_count || null,
+    selected_trifectas: fin?.selected_trifectas || [],
     payout,
     investment,
     recovery_rate: recovery,
@@ -329,7 +368,7 @@ export async function listTodayRaceStatus() {
   });
 }
 
-// 検証集計
+// 検証集計(BUY/WATCH/SKIP別・買い目数別)
 export async function getVerificationSummary() {
   const verifs = await base44.entities.PredictionVerification.list("-verified_at", 500);
   const total = verifs.length;
@@ -337,15 +376,51 @@ export async function getVerificationSummary() {
   const preHits = verifs.filter((v) => v.pre_hit).length;
   const finalHits = verifs.filter((v) => v.final_hit).length;
   const recHits = verifs.filter((v) => v.recommended_hit).length;
+
+  // 判定別集計
+  const byJudgment = (j) => {
+    const list = verifs.filter((v) => v.final_judgment === j);
+    if (!list.length) return { count: 0, hit_rate: 0, recovery_rate: 0 };
+    const hits = list.filter((v) => v.recommended_hit).length;
+    const invest = list.reduce((a, v) => a + (v.investment || 0), 0);
+    const ret = list.filter((v) => v.recommended_hit).reduce((a, v) => a + (v.payout || 0), 0);
+    return {
+      count: list.length,
+      hit_rate: Math.round((hits / list.length) * 1000) / 10,
+      recovery_rate: invest > 0 ? Math.round((ret / invest) * 100) : 0,
+    };
+  };
+
+  // 買い目数別集計
+  const byTicketCount = (n) => {
+    const list = verifs.filter((v) => v.ticket_count === n);
+    if (!list.length) return { count: 0, hit_rate: 0, recovery_rate: 0 };
+    const hits = list.filter((v) => v.recommended_hit).length;
+    const invest = list.reduce((a, v) => a + (v.investment || 0), 0);
+    const ret = list.filter((v) => v.recommended_hit).reduce((a, v) => a + (v.payout || 0), 0);
+    return {
+      count: list.length,
+      hit_rate: Math.round((hits / list.length) * 1000) / 10,
+      recovery_rate: invest > 0 ? Math.round((ret / invest) * 100) : 0,
+    };
+  };
+
   const totalInvest = verifs.reduce((a, v) => a + (v.investment || 0), 0);
   const totalReturn = verifs.filter((v) => v.recommended_hit).reduce((a, v) => a + (v.payout || 0), 0);
   const recovery = totalInvest > 0 ? Math.round((totalReturn / totalInvest) * 100) : 0;
+
   return {
     total,
     pre_hit_rate: Math.round((preHits / total) * 1000) / 10,
     final_hit_rate: Math.round((finalHits / total) * 1000) / 10,
     recommended_hit_rate: Math.round((recHits / total) * 1000) / 10,
     recovery_rate: recovery,
+    buy: byJudgment("BUY"),
+    watch: byJudgment("WATCH"),
+    skip: byJudgment("SKIP"),
+    tickets_6: byTicketCount(6),
+    tickets_7: byTicketCount(7),
+    tickets_8: byTicketCount(8),
     records: verifs,
   };
 }

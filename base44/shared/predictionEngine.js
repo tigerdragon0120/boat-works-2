@@ -1,7 +1,8 @@
-// BOAT WORKS 2 - 予想エンジン v4 (選手個別分析型)
-// RacerPerformanceProfileを最重要データとし、期間別(6m/1y/3y)成績を主軸に着順予想。
-// BUY/WATCH/SKIPは中心から外し、オッズは確率計算に使わない。
-// FINALはPRE予想に展示補正を加える方式。
+// BOAT WORKS 2 - 予想エンジン v5
+// 選手個別分析型 + 6-8点買い目選定 + セット期待値判定
+// 確率は選手能力・過去成績・展示から算出(オッズ不使用)
+// オッズは期待値・合成オッズ・BUY/WATCH/SKIP判定のみに使用
+// 最終買い目: 基本6点、最大8点、9点以上禁止
 
 const isValid = (v) => typeof v === "number" && !Number.isNaN(v) && Number.isFinite(v);
 const clamp = (x, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
@@ -31,13 +32,10 @@ function periodWeightedScore(profile, metric) {
     const totalW = pairs.reduce((s, [, w]) => s + w, 0);
     return clamp(pairs.reduce((s, [v, w]) => s + v * w, 0) / totalW, 0, 100);
   }
-  // 期間別データ不足時は全期間統計をフォールバック
   if (sAll?.sample_size >= 3 && sAll[metric] != null) return clamp(sAll[metric], 0, 100);
   return null;
 }
 
-// ローリング統計からの期間別スコア(RacerRollingStats由来)
-// race_countをサンプル数として使用。profile側と同じ重み付けロジック。
 function rollingWeightedScore(rolling, metric) {
   if (!rolling) return null;
   const s6m = rolling.stats_6m, s1y = rolling.stats_1y, s3y = rolling.stats_3y, sAll = rolling.stats_all;
@@ -56,8 +54,6 @@ function rollingWeightedScore(rolling, metric) {
   return null;
 }
 
-// プロファイル+ローリング統計のブレンドスコア
-// 両方あれば平均、片方だけあればそれを採用
 function blendedPeriodScore(profile, rolling, metric) {
   const ps = periodWeightedScore(profile, metric);
   const rs = rollingWeightedScore(rolling, metric);
@@ -65,7 +61,6 @@ function blendedPeriodScore(profile, rolling, metric) {
   return ps != null ? ps : rs;
 }
 
-// コース別スコア
 function getCourseScore(profile, entry, metric) {
   if (!profile || !entry.boat_number) return null;
   const cs = profile.course_stats?.[String(entry.boat_number)];
@@ -73,7 +68,6 @@ function getCourseScore(profile, entry, metric) {
   return cs[metric] != null ? clamp(cs[metric], 0, 100) : null;
 }
 
-// 決まり手スコア: 艇番に応じた決まり手勝率
 function getKimariteScore(profile, boatNumber) {
   if (!profile?.winning_methods) return null;
   const wm = profile.winning_methods;
@@ -86,7 +80,6 @@ function getKimariteScore(profile, boatNumber) {
   return null;
 }
 
-// 競艇場別スコア
 function getVenueScore(profile, entry, metric) {
   if (!profile?.venue_stats || !entry.venue_code) return null;
   const vs = profile.venue_stats[String(entry.venue_code)];
@@ -94,7 +87,6 @@ function getVenueScore(profile, entry, metric) {
   return vs[metric] != null ? clamp(vs[metric], 0, 100) : null;
 }
 
-// 展示スコア(FINAL用)
 function computeExhibitionScore(entry) {
   const parts = [];
   if (isValid(entry.exhibition_time)) parts.push(clamp(50 + (1.4 - entry.exhibition_time) * 100, 5, 100));
@@ -110,7 +102,6 @@ const weightedAverage = (pairs, fallback = 50) => {
   return denom > 0 ? valid.reduce((a, [s, w]) => a + s * w, 0) / denom : fallback;
 };
 
-// その他要素(10%)のスコア
 function computeOtherScore(profile, entry, metric) {
   const courseScore = getCourseScore(profile, entry, metric);
   const recentMetric = metric === 'win_rate' ? 'recent_win_rate' : 'recent_top3_rate';
@@ -134,24 +125,18 @@ export function computeBoatScores(entry, settings) {
   const stage = settings?.stage || "PRE";
   const isFinal = stage === "FINAL";
 
-  // === 期間別スコア(主軸): プロファイル+ローリング統計のブレンド ===
   const profileWin = blendedPeriodScore(profile, rolling, 'win_rate');
   const profileF2 = blendedPeriodScore(profile, rolling, 'top2_rate');
   const profileF3 = blendedPeriodScore(profile, rolling, 'top3_rate');
 
-  // === 公式成績(フォールバック) ===
   const officialWin = entry.national_win_rate != null ? clamp(entry.national_win_rate * 10, 0, 100) : null;
   const officialF2 = entry.national_f2_rate != null ? clamp(entry.national_f2_rate, 0, 100) : null;
   const officialF3 = entry.national_f3_rate != null ? clamp(entry.national_f3_rate, 0, 100) : null;
 
-  // === その他要素(10%) ===
   const otherFirst = computeOtherScore(profile, entry, 'win_rate');
   const otherSecond = computeOtherScore(profile, entry, 'top2_rate');
   const otherThird = computeOtherScore(profile, entry, 'top3_rate');
 
-  // === 着力計算 ===
-  // プロファイル/ローリングあり: 90%ブレンド + 10%その他
-  // プロファイルなし: 70%公式 + 30%その他
   const computePower = (profileScore, officialScore, otherScore) => {
     if (profileScore != null) return clamp(profileScore * 0.90 + (otherScore || 50) * 0.10, 5, 100);
     if (officialScore != null) return clamp(officialScore * 0.70 + (otherScore || 50) * 0.30, 5, 100);
@@ -162,25 +147,28 @@ export function computeBoatScores(entry, settings) {
   let second_power = computePower(profileF2, officialF2, otherSecond);
   let third_power = computePower(profileF3, officialF3, otherThird);
 
-  // === トレンド補正(RacerRollingStats.trend_scores) ===
-  // recent_form_score(0-100, 50=平均)から着力に±3pt補正
+  // トレンド補正(RacerRollingStats.trend_scores)
   const trend = rolling?.trend_scores;
   if (trend) {
-    const formAdj = ((trend.recent_form_score ?? 50) - 50) * 0.06; // ±3pt
+    const formAdj = ((trend.recent_form_score ?? 50) - 50) * 0.06;
     first_power = clamp(first_power + formAdj, 5, 100);
     second_power = clamp(second_power + formAdj * 0.7, 5, 100);
     third_power = clamp(third_power + formAdj * 0.5, 5, 100);
   }
 
-  // === 展示補正(FINALのみ) ===
+  // 展示補正(FINALのみ)
   let exhibition_delta = 0;
   let exhibition_score = 50;
   if (isFinal) {
     exhibition_score = computeExhibitionScore(entry);
-    exhibition_delta = (exhibition_score - 50) * 0.3; // -15〜+15
+    exhibition_delta = (exhibition_score - 50) * 0.3;
+    // 進入変更検出: 展示進入が枠番と異なる場合
+    if (isValid(entry.exhibition_course) && entry.exhibition_course !== entry.boat_number) {
+      exhibition_delta += (entry.exhibition_course < entry.boat_number ? 3 : -3);
+    }
   }
 
-  // === 補助スコア ===
+  // 補助スコア
   const start_power = (() => {
     const recentSt = profile?.recent_form?.recent_st || entry.avg_st;
     const stScore = stToScore(recentSt);
@@ -197,8 +185,12 @@ export function computeBoatScores(entry, settings) {
   const section_form = isValid(entry.section_points) ? round1(clamp(entry.section_points * 2, 0, 100)) : 50;
   const ana_potential = round1(clamp(exhibition_power * 0.4 + section_form * 0.3 + (100 - first_power) * 0.3, 0, 100));
   const total_power = round1((first_power + second_power + third_power) / 3);
+  const course_strength = (() => {
+    const cs = getCourseScore(profile, entry, 'win_rate');
+    return cs != null ? round1(cs) : null;
+  })();
 
-  // === 予想理由 ===
+  // 予想理由
   const reasons = [], notes = [];
   if (profileWin != null && profileWin >= 50) reasons.push(`直近勝率${round1(profileWin)}%`);
   if (profileF2 != null && profileF2 >= 55) reasons.push(`直近2連率${round1(profileF2)}%`);
@@ -218,12 +210,14 @@ export function computeBoatScores(entry, settings) {
   if (profile?.recent_form?.recent_win_rate >= 30) reasons.push(`最近勝率${round1(profile.recent_form.recent_win_rate)}%`);
   if (isFinal && exhibition_score >= 65) reasons.push(`展示良好(${round1(exhibition_score)})`);
   if (isFinal && exhibition_score < 40) notes.push("展示低調");
+  if (isFinal && isValid(entry.exhibition_course) && entry.exhibition_course !== entry.boat_number) {
+    notes.push(`進入変更(${entry.boat_number}→${entry.exhibition_course})`);
+  }
   if (profile?.winning_style?.st_stability >= 70) reasons.push("ST安定");
   if (profile?.winning_style?.st_stability < 40) notes.push("ST不安定");
   if (profile && profile.total_samples < 5) notes.push("プロファイルデータ少");
   if (profileWin == null && officialWin != null) notes.push("公式成績ベース予想");
 
-  // === トレンド理由(RacerRollingStats) ===
   if (trend) {
     if (trend.recent_form_score != null && trend.recent_form_score >= 65) reasons.push(`調子上向き(${Math.round(trend.recent_form_score)})`);
     if (trend.recent_form_score != null && trend.recent_form_score <= 35) notes.push("調子下降傾向");
@@ -239,11 +233,19 @@ export function computeBoatScores(entry, settings) {
     second_power: round1(second_power),
     third_power: round1(third_power),
     total_power,
+    current_power: total_power,
     start_power, motor_power, exhibition_power, local_fit, section_form, ana_potential,
+    exhibition_score: round1(exhibition_score),
+    course_strength,
+    start_skill: start_power,
+    recent_form_score: trend?.recent_form_score != null ? Math.round(trend.recent_form_score) : null,
+    st_trend_score: trend?.st_trend_score != null ? Math.round(trend.st_trend_score) : null,
+    class_trend_score: trend?.class_trend_score != null ? Math.round(trend.class_trend_score) : null,
+    performance_trend: trend?.performance_trend != null ? Math.round(trend.performance_trend) : null,
+    racer_power_score: trend?.racer_power_score != null ? Math.round(trend.racer_power_score) : null,
     exhibition_delta: round1(exhibition_delta),
     reasons, notes,
     dataCount: Math.max(profile?.total_samples || 0, rolling?.stats_all?.race_count || 0),
-    racer_power_score: trend?.racer_power_score != null ? Math.round(trend.racer_power_score) : null,
     _absent: !!entry.is_absent,
   };
 }
@@ -278,6 +280,7 @@ export function computeTrifectas(boatScores) {
         const prob = firstP[i] * secondP[j] * thirdP[k];
         results.push({
           combination: `${i}-${j}-${k}`,
+          first_boat: i, second_boat: j, third_boat: k,
           probability: Math.round(prob * 1000) / 10,
           rank: 0,
         });
@@ -363,11 +366,303 @@ export function computeConfidence(boatScores) {
   return clamp(Math.round((avgSamples / 50) * 100), 0, 100);
 }
 
-// 予想実行
+// =====================================================
+// 6-8点買い目選定ロジック
+// =====================================================
+export function selectTickets(trifectas, boatScores, scenario, settings, options = {}) {
+  const defaultCount = settings?.default_ticket_count || 6;
+  const maxCount = settings?.max_ticket_count || 8;
+  const oddsMap = options.oddsMap || {};
+
+  const activeBoats = boatScores.filter(b => !b._absent);
+  const firstRanking = [...activeBoats].sort((a, b) => b.first_power - a.first_power);
+
+  if (firstRanking.length < 3 || trifectas.length < defaultCount) {
+    // データ不足: 確率上位を返す
+    const fallback = trifectas.slice(0, Math.min(defaultCount, trifectas.length)).map((t, i) => ({
+      combination: t.combination,
+      probability: t.probability,
+      ticket_rank: i + 1,
+      set_group: i < 2 ? "A" : i < 4 ? "B" : "C",
+      selection_reason: "確率上位(データ不足)",
+    }));
+    return { selected: fallback, strategy: "データ不足", expandReason: "", ticketCount: fallback.length };
+  }
+
+  const triMap = new Map(trifectas.map(t => [t.combination, t]));
+  const top = firstRanking[0];
+  const second = firstRanking[1];
+  const third = firstRanking[2];
+  const fourth = firstRanking[3];
+  const fifth = firstRanking[4];
+  const gap = top.first_power - second.first_power;
+
+  let selected = [];
+  let strategy = "";
+  let expandReason = "";
+
+  // === 1着固定型: gap >= 8 and top is strong ===
+  if (gap >= 8 && top.first_power >= 65) {
+    strategy = "1着固定型";
+    const honmei = top.boat_number;
+    const candidates = firstRanking.slice(1, 4).map(b => b.boat_number);
+    // 3P2 = 6通りの2着・3着組み合わせ
+    for (let i = 0; i < candidates.length; i++) {
+      for (let j = 0; j < candidates.length; j++) {
+        if (i === j) continue;
+        selected.push(`${honmei}-${candidates[i]}-${candidates[j]}`);
+      }
+    }
+    // 6点完成
+
+    // 拡張判定: 2着候補が割れている or 4th候補が接している
+    if (fourth && selected.length < maxCount) {
+      const secondGap = Math.abs(second.first_power - third.first_power);
+      const fourthGap = third.first_power - fourth.first_power;
+      const shouldExpand =
+        secondGap < 2 ||                     // 2着候補が割れている
+        fourthGap < 2 ||                     // 3着候補と4thが接近
+        (fourth.racer_power_score != null && fourth.racer_power_score >= 60); // 強い穴候補
+      if (shouldExpand) {
+        selected.push(`${honmei}-${candidates[0]}-${fourth.boat_number}`);
+        if (selected.length < maxCount) {
+          selected.push(`${honmei}-${fourth.boat_number}-${candidates[0]}`);
+        }
+        expandReason = "2・3着候補が混戦、4th候補を追加";
+      }
+    }
+  }
+  // === 1着2頭型: gap < 4 ===
+  else if (gap < 4) {
+    strategy = "1着2頭型";
+    const a = top.boat_number;
+    const b = second.boat_number;
+    const others = firstRanking.slice(2, 4).map(b2 => b2.boat_number);
+    // 各1着から2P2=4通り → 合計8(others=2の場合)
+    for (const first of [a, b]) {
+      for (let i = 0; i < others.length; i++) {
+        for (let j = 0; j < others.length; j++) {
+          if (i === j) continue;
+          selected.push(`${first}-${others[i]}-${others[j]}`);
+        }
+      }
+    }
+    if (selected.length > maxCount) {
+      selected.sort((c1, c2) => (triMap.get(c2)?.probability || 0) - (triMap.get(c1)?.probability || 0));
+      selected = selected.slice(0, maxCount);
+    }
+    expandReason = "1着候補が2艇でほぼ互角、両方から展開";
+  }
+  // === 確率上位型 (default) ===
+  else {
+    strategy = "確率上位型";
+    selected = trifectas.slice(0, defaultCount).map(t => t.combination);
+
+    // 拡張判定: 3着候補が混戦 or 強い穴候補
+    if (fourth && selected.length < maxCount) {
+      const fourthGap = third.first_power - fourth.first_power;
+      const fifthGap = fourth.first_power - (fifth?.first_power || 0);
+      const shouldExpand =
+        fourthGap < 3 ||                      // 3着候補混戦
+        (fifth && fifthGap < 3) ||            // さらに混戦
+        (scenario?.confidence < 40);          // 展開不確実
+      if (shouldExpand) {
+        const extra = trifectas
+          .filter(t => !selected.includes(t.combination))
+          .slice(0, maxCount - defaultCount)
+          .map(t => t.combination);
+        selected.push(...extra);
+        if (selected.length > defaultCount) {
+          expandReason = "3着候補が混戦、押さえを追加";
+        }
+      }
+    }
+  }
+
+  // 安全策: 最低6点確保
+  if (selected.length < defaultCount) {
+    for (const t of trifectas) {
+      if (selected.length >= defaultCount) break;
+      if (!selected.includes(t.combination)) selected.push(t.combination);
+    }
+  }
+  // 安全策: 最大8点
+  if (selected.length > maxCount) {
+    selected.sort((c1, c2) => (triMap.get(c2)?.probability || 0) - (triMap.get(c1)?.probability || 0));
+    selected = selected.slice(0, maxCount);
+  }
+
+  // 確率順でランキング
+  const ranked = selected.map(c => ({
+    combination: c,
+    probability: triMap.get(c)?.probability || 0,
+    ticket_rank: 0,
+  })).sort((a, b) => b.probability - a.probability);
+  ranked.forEach((t, i) => { t.ticket_rank = i + 1; });
+
+  // セットグループ割当: A=本線 B=対抗 C=押さえ
+  const n = ranked.length;
+  const groups = assignSetGroups(n);
+
+  // 選定理由
+  const result = ranked.map((t, i) => ({
+    ...t,
+    set_group: groups[i],
+    selection_reason: buildSelectionReason(t, strategy, i, n, firstRanking, scenario),
+  }));
+
+  return { selected: result, strategy, expandReason, ticketCount: result.length };
+}
+
+function assignSetGroups(n) {
+  const groups = [];
+  if (n <= 6) {
+    for (let i = 0; i < n; i++) {
+      if (i < 2) groups.push("A");
+      else if (i < 4) groups.push("B");
+      else groups.push("C");
+    }
+  } else {
+    for (let i = 0; i < n; i++) {
+      if (i < 3) groups.push("A");
+      else if (i < 6) groups.push("B");
+      else groups.push("C");
+    }
+  }
+  return groups;
+}
+
+function buildSelectionReason(ticket, strategy, idx, total, firstRanking, scenario) {
+  const [a, b, c] = ticket.combination.split("-").map(Number);
+  const group = ticket.set_group;
+  if (group === "A") {
+    if (strategy === "1着固定型") return `${a}着固定・${b}-${c}の本線`;
+    if (strategy === "1着2頭型") return `${a}着軸・${b}-${c}本線`;
+    return `確率上位・${a}-${b}-${c}本線`;
+  }
+  if (group === "B") return `${a}着軸・${b}-${c}対抗`;
+  return `${a}-${b}-${c}押さえ`;
+}
+
+// =====================================================
+// 合成オッズ・セット期待値計算
+// =====================================================
+export function computeSetMetrics(selectedTickets, oddsMap, settings) {
+  if (!selectedTickets || !selectedTickets.length) return null;
+
+  let setProbability = 0;
+  let totalInverseOdds = 0;
+  let hasOdds = false;
+  let minPayout = Infinity;
+  let maxPayout = 0;
+  let totalPayout = 0;
+  let oddsCount = 0;
+  let bestEV = -Infinity;
+  let bestEVTicket = null;
+  let worstEfficiency = Infinity;
+  let worstEfficiencyTicket = null;
+
+  for (const ticket of selectedTickets) {
+    const prob = ticket.probability / 100;
+    setProbability += ticket.probability;
+
+    const odds = oddsMap?.[ticket.combination] || ticket.estimated_odds || null;
+    if (odds != null && odds > 1) {
+      hasOdds = true;
+      const payout = odds * 100;
+      const ev = prob * odds * 100;
+
+      totalInverseOdds += 1 / odds;
+      if (payout < minPayout) minPayout = payout;
+      if (payout > maxPayout) maxPayout = payout;
+      totalPayout += payout;
+      oddsCount++;
+
+      if (ev > bestEV) { bestEV = ev; bestEVTicket = ticket.combination; }
+      if (ev < worstEfficiency) { worstEfficiency = ev; worstEfficiencyTicket = ticket.combination; }
+    }
+  }
+
+  const investment = selectedTickets.length * 100;
+  const syntheticOdds = hasOdds && totalInverseOdds > 0 ? round1(1 / totalInverseOdds) : null;
+  const avgPayout = hasOdds && oddsCount > 0 ? round1(totalPayout / oddsCount) : null;
+  // セット期待回収率 = (セット的中確率 × 平均払戻) / 投資額 × 100
+  const setEV = hasOdds && avgPayout != null
+    ? round1((setProbability / 100) * avgPayout / investment * 100)
+    : null;
+
+  return {
+    ticket_count: selectedTickets.length,
+    set_probability: round1(setProbability),
+    synthetic_odds: syntheticOdds,
+    min_payout: hasOdds ? round1(minPayout) : null,
+    avg_payout: avgPayout,
+    max_payout: hasOdds ? round1(maxPayout) : null,
+    best_ev_ticket: bestEVTicket,
+    worst_efficiency_ticket: worstEfficiencyTicket,
+    set_expected_recovery: setEV,
+    investment,
+  };
+}
+
+// =====================================================
+// BUY / WATCH / SKIP 判定(セット期待値ベース)
+// =====================================================
+export function judgePrediction(setMetrics, dataConfidence, scenario, settings, stage) {
+  if (!setMetrics) return { judgment: "SKIP", reason: "予想データ不足" };
+
+  const buyThreshold = settings?.buy_set_ev_threshold ?? 120;
+  const watchThreshold = settings?.watch_set_ev_threshold ?? 90;
+  const minConfidence = settings?.min_confidence ?? 40;
+  const minSetProb = settings?.min_set_probability ?? 25;
+
+  const setProb = setMetrics.set_probability || 0;
+  const setEV = setMetrics.set_expected_recovery;
+  const conf = dataConfidence || 0;
+  const scenarioConf = scenario?.confidence || 0;
+
+  // SKIP条件
+  if (conf < minConfidence) {
+    return { judgment: "SKIP", reason: `データ信頼度不足(信頼度${conf}%が基準${minConfidence}%未満)` };
+  }
+  if (setProb < minSetProb) {
+    return { judgment: "SKIP", reason: `セット的中確率${setProb}%が基準${minSetProb}%不足` };
+  }
+  if (setEV != null && setEV < watchThreshold) {
+    return { judgment: "SKIP", reason: `セット期待回収率${setEV}%が低い(基準${watchThreshold}%)` };
+  }
+
+  // BUY条件: セット期待回収率・信頼度・セット確率すべて基準以上 + 展開安定
+  if (setEV != null && setEV >= buyThreshold && conf >= minConfidence && setProb >= minSetProb) {
+    if (stage === "FINAL") {
+      if (scenarioConf >= 45) {
+        return { judgment: "BUY", reason: `展示後も安定、セット確率${setProb}%・期待回収率${setEV}%・展開信頼度${scenarioConf}%` };
+      }
+      return { judgment: "WATCH", reason: `期待回収率${setEV}%だが展開信頼度${scenarioConf}%が不十分` };
+    }
+    // PRE
+    return { judgment: "BUY", reason: `予想信頼度高、セット確率${setProb}%・期待回収率${setEV}%` };
+  }
+
+  // WATCH条件: 予想は悪くないが期待値ギリギリ
+  if (setEV != null && setEV >= watchThreshold) {
+    return { judgment: "WATCH", reason: `期待回収率${setEV}%・オッズ妙味待ち(基準${buyThreshold}%でBUY)` };
+  }
+  if (setProb >= minSetProb && conf >= minConfidence) {
+    return { judgment: "WATCH", reason: `予想は安定(セット確率${setProb}%)だが期待値${setEV ?? "—"}%がギリギリ` };
+  }
+
+  return { judgment: "SKIP", reason: "期待値・信頼度ともに基準不足" };
+}
+
+// =====================================================
+// 予想実行(メイン)
+// =====================================================
 export function runPrediction(entries, settings, options = {}) {
   const stage = settings?.stage || "PRE";
   const isFinal = stage === "FINAL";
   const preBoatScores = options.preBoatScores || null;
+  const oddsMap = options.oddsMap || {};
 
   const boats = entries.map((e) => ({ ...e, _absent: !!e.is_absent }));
   let boatScores = boats.map((e) => computeBoatScores(e, settings));
@@ -381,6 +676,7 @@ export function runPrediction(entries, settings, options = {}) {
         s.second_power = clamp(pre.second_power + s.exhibition_delta * 0.7, 5, 100);
         s.third_power = clamp(pre.third_power + s.exhibition_delta * 0.5, 5, 100);
         s.total_power = round1((s.first_power + s.second_power + s.third_power) / 3);
+        s.current_power = s.total_power;
         s.pre_first = pre.first_power;
         s.pre_second = pre.second_power;
         s.pre_third = pre.third_power;
@@ -393,7 +689,7 @@ export function runPrediction(entries, settings, options = {}) {
   const raceScenario = computeRaceScenario(activeScores);
   const dataConfidence = computeConfidence(activeScores);
 
-  // ランキング(1着候補・2着候補・3着候補)
+  // ランキング
   const firstRanking = [...activeScores].sort((a, b) => b.first_power - a.first_power).map(b => b.boat_number);
   const secondRanking = [...activeScores].sort((a, b) => b.second_power - a.second_power).map(b => b.boat_number);
   const thirdRanking = [...activeScores].sort((a, b) => b.third_power - a.third_power).map(b => b.boat_number);
@@ -402,6 +698,16 @@ export function runPrediction(entries, settings, options = {}) {
   const taiko = secondRanking[0];
   const ana = [...activeScores].sort((a, b) => b.ana_potential - a.ana_potential)[0]?.boat_number;
   const keshi = firstRanking[firstRanking.length - 1];
+
+  // === 6-8点買い目選定 ===
+  const ticketSelection = selectTickets(trifectas, activeScores, raceScenario, settings, { oddsMap });
+  const selectedTickets = ticketSelection.selected;
+
+  // === 合成オッズ・セット期待値 ===
+  const setMetrics = computeSetMetrics(selectedTickets, oddsMap, settings);
+
+  // === BUY/WATCH/SKIP判定 ===
+  const judgment = judgePrediction(setMetrics, dataConfidence, raceScenario, settings, stage);
 
   const topTrifecta = trifectas[0];
   const grade = gradePrediction(activeScores);
@@ -415,17 +721,29 @@ export function runPrediction(entries, settings, options = {}) {
     top_trifecta: topTrifecta?.combination, top_probability: topTrifecta?.probability,
     first_ranking: firstRanking, second_ranking: secondRanking, third_ranking: thirdRanking,
     exhibition_ready: activeScores.some(s => s.exhibition_delta !== 0),
+    // 新: 買い目・判定
+    ticket_selection: ticketSelection,
+    set_metrics: setMetrics,
+    final_judgment: judgment.judgment,
+    judgment_reason: judgment.reason,
+    selected_trifectas: selectedTickets.map(t => t.combination),
+    ticket_count: ticketSelection.ticketCount,
+    ticket_strategy: ticketSelection.strategy,
+    expand_reason: ticketSelection.expandReason,
   };
 }
 
-// 互換用: 判定は参考情報として残す
+// 互換用: judgeTrifecta(旧API互換。新判定はjudgePredictionを使用)
 export function judgeTrifecta(trifecta, ctx = {}) {
-  const { settings = {}, dataConfidence = 50 } = ctx;
+  const { settings = {} } = ctx;
   const prob = trifecta.probability || 0;
+  const buyThreshold = settings?.buy_set_ev_threshold ?? 120;
+  const watchThreshold = settings?.watch_set_ev_threshold ?? 90;
+  const ev = trifecta.expected_value;
+  if (ev != null && ev >= buyThreshold) return { judgment: "BUY", basis: `期待値${ev}%` };
+  if (ev != null && ev >= watchThreshold) return { judgment: "WATCH", basis: `期待値${ev}%` };
+  if (ev != null) return { judgment: "SKIP", basis: `期待値${ev}%不足` };
+  // オッズ不明時は確率ベース(参考)
   if (prob < (settings.min_probability || 5)) return { judgment: "SKIP", basis: `確率${prob}%不足` };
-  if (dataConfidence < (settings.min_confidence || 40)) return { judgment: "SKIP", basis: "データ信頼度不足" };
-  if (prob >= 15 && dataConfidence >= 60) return { judgment: "STRONG_BUY", basis: `確率${prob}%・信頼度${dataConfidence}` };
-  if (prob >= 10) return { judgment: "BUY", basis: `確率${prob}%` };
-  if (prob >= 6) return { judgment: "WATCH", basis: `確率${prob}%` };
-  return { judgment: "SKIP", basis: `確率${prob}%低` };
+  return { judgment: "WATCH", basis: `確率${prob}%・オッズ待ち` };
 }
