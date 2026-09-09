@@ -246,6 +246,13 @@ function TxtImportCard() {
             <div><div className="font-bold text-slate-600 text-sm">{result.skipped}</div><div className="text-slate-500">スキップ</div></div>
             <div><div className="font-bold text-rose-600 text-sm">{result.errors}</div><div className="text-slate-500">エラー</div></div>
           </div>
+          {result.data_type === "K" && (
+            <div className="grid grid-cols-3 gap-1 text-center text-[10px] pt-2 border-t border-emerald-200">
+              <div><div className="font-bold text-slate-800 text-sm">{result.total ?? 0}</div><div className="text-slate-500">結果R</div></div>
+              <div><div className="font-bold text-slate-800 text-sm">{result.parsed_entries ?? 0}</div><div className="text-slate-500">解析艇数</div></div>
+              <div><div className="font-bold text-emerald-700 text-sm">{result.history_saved ?? 0}</div><div className="text-slate-500">選手履歴保存</div></div>
+            </div>
+          )}
           {result.errorDetails?.length > 0 && (
             <div className="mt-2 pt-2 border-t border-emerald-200">
               <div className="text-[10px] font-bold text-rose-600 mb-1">エラー詳細(最大20件)</div>
