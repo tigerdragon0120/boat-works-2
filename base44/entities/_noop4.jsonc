@@ -1,0 +1,10 @@
+{
+  "name": "_noop4",
+  "type": "object",
+  "properties": {
+    "note": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

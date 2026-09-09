@@ -53,6 +53,13 @@ export default async function(req: Request) {
     const completedKeys = new Set<string>();
     for (const p of predictions || []) {
       if (p.stage !== 'PRE' || p.status !== 'COMPLETED') continue;
+      // 旧予想にはstatus=COMPLETEDでも買い目・判定が空の不完全レコードがある。
+      // 6〜8点の買い目とBUY/WATCH/SKIPが揃って初めて「完成」とみなす。
+      const ticketCount = Number(p.ticket_count || 0);
+      const selected = Array.isArray(p.selected_trifectas) ? p.selected_trifectas : [];
+      const judgmentOk = ['BUY', 'WATCH', 'SKIP'].includes(String(p.final_judgment || ''));
+      const ticketsOk = ticketCount >= 6 && ticketCount <= 8 && selected.length === ticketCount;
+      if (!judgmentOk || !ticketsOk) continue;
       if (p.race_key) completedKeys.add(String(p.race_key));
     }
 
