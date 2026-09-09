@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
-import { upsertRace, upsertEntry, getSettings, runAndSavePrediction, upsertResultAndVerify } from '../../shared/predictionService.js';
+import { upsertRace, upsertEntry, getSettings, runAndSavePrediction, upsertResultAndVerify, upsertResultOnly } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 
 const num = (v: any) => {
@@ -133,85 +133,82 @@ async function saveBFileData(base44: any, data: any, suppressPrediction = false)
 // Kファイル データ保存(全会場対応)
 // data.venues = [{ venue_code, venue_name, results: [...] }]
 // =====================================================
-async function saveKFileData(base44: any, data: any) {
+async function saveKFileData(base44: any, data: any, fastHistorical = true) {
   const sr = base44.asServiceRole.entities;
   let created = 0, updated = 0, skipped = 0, errors = 0;
   const errorDetails: string[] = [];
   const raceDate = str(data.race_date);
   const venues = data.venues || [];
 
+  // K取込は1艇ごとのfilter→create/updateを廃止し、日付単位で既存データを先読みする。
+  const [existingRaces, existingEntries, existingHistories] = await Promise.all([
+    sr.Race.filter({ race_date: raceDate }, 'race_number', 500).catch(() => []),
+    sr.RaceEntry.filter({ race_date: raceDate }, 'boat_number', 5000).catch(() => []),
+    sr.RacerRaceHistory.filter({ race_date: raceDate }, 'race_number', 5000).catch(() => []),
+  ]);
+  const raceByKey = new Map((existingRaces || []).map((x: any) => [x.race_key, x]));
+  const entryByKey = new Map((existingEntries || []).map((x: any) => [`${x.race_key || x.race_id}_${Number(x.boat_number)}`, x]));
+  const histByKey = new Map((existingHistories || []).map((x: any) => [`${x.registration_number}_${x.venue_code}_${Number(x.race_number)}`, x]));
+  const histCreates: any[] = [];
+  const histUpdates: any[] = [];
+  const entryUpdates: any[] = [];
+
   for (const venue of venues) {
     const venueCode = str(venue.venue_code);
     const venueName = str(venue.venue_name) || venueCode;
-
     for (const r of venue.results || []) {
       try {
         const raceNumber = num(r.race_number);
-        if (!raceNumber) { skipped++; errorDetails.push(`${venueName}: race_number不正`); continue; }
+        if (!raceNumber) { skipped++; continue; }
         const raceKey = buildRaceKey(raceDate, venueCode, raceNumber);
-        // Race検索(なければ作成)
-        let race = null;
-        const existingRaces = await withRateLimitRetry(() => sr.Race.filter({ race_key: raceKey }, '-updated_date', 1)).catch(() => []);
-        if (existingRaces && existingRaces[0]) {
-          race = existingRaces[0];
-        } else {
+        let race: any = raceByKey.get(raceKey);
+        if (!race) {
           race = await withRateLimitRetry(() => sr.Race.create({
             race_key: raceKey, race_date: raceDate, venue_code: venueCode,
             venue: venueName || undefined, venue_name: venueName || undefined,
             race_number: raceNumber, race_name: str(r.race_name) || undefined,
             status: 'finished', sync_source: 'txt_k_file',
           }));
+          raceByKey.set(raceKey, race);
+          created++;
         }
-        // RaceResult upsert + 検証
+
         const resultTrifecta = str(r.result_trifecta);
-        const finishOrder = r.entries ? r.entries.sort((a: any, b: any) => a.finish_order - b.finish_order).map((e: any) => e.boat_number) : [];
+        const orderedEntries = [...(r.entries || [])].sort((a: any, b: any) => (num(a.finish_order) || 99) - (num(b.finish_order) || 99));
+        const finishOrder = orderedEntries.map((e: any) => e.boat_number);
         if (resultTrifecta) {
-          await withRateLimitRetry(() => upsertResultAndVerify(base44, race, {
-            result_trifecta: resultTrifecta,
-            finish_order: finishOrder,
-            payout: num(r.payout) || 0,
+          const saver = fastHistorical ? upsertResultOnly : upsertResultAndVerify;
+          await withRateLimitRetry(() => saver(base44, race, {
+            result_trifecta: resultTrifecta, finish_order: finishOrder, payout: num(r.payout) || 0,
           }));
           updated++;
-        } else {
-          skipped++;
-        }
-        // RaceEntry展示データ更新 + RacerRaceHistory蓄積
+        } else skipped++;
+
         for (const e of r.entries || []) {
           const bn = num(e.boat_number);
           if (!bn) continue;
-          const existingEntry = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id, boat_number: bn }, 'boat_number', 1)).catch(() => []);
-          if (existingEntry && existingEntry[0]) {
-            const update: any = {};
-            if (num(e.exhibition_time) != null) update.exhibition_time = num(e.exhibition_time);
-            // KファイルのST/コースは本番レースの値。展示ST/展示進入へ上書きしない。
-            if (e.is_absent) { update.is_absent = true; update.is_scratched = true; }
-            if (Object.keys(update).length) await withRateLimitRetry(() => sr.RaceEntry.update(existingEntry[0].id, update));
+          const existingEntry = entryByKey.get(`${raceKey}_${bn}`) || entryByKey.get(`${race.id}_${bn}`);
+          if (existingEntry) {
+            const patch: any = { id: existingEntry.id };
+            if (num(e.exhibition_time) != null) patch.exhibition_time = num(e.exhibition_time);
+            if (e.is_absent) { patch.is_absent = true; patch.is_scratched = true; }
+            if (Object.keys(patch).length > 1) entryUpdates.push(patch);
           }
-          // RacerRaceHistory
+
           const reg = str(e.registration_number);
-          if (reg) {
-            const histKey = { registration_number: reg, race_date: raceDate, venue_code: venueCode, race_number: raceNumber };
-            const existingHist = await withRateLimitRetry(() => sr.RacerRaceHistory.filter(histKey, '-created_date', 1)).catch(() => []);
-            const histDoc = {
-              registration_number: reg,
-              race_date: raceDate,
-              venue_code: venueCode,
-              race_number: raceNumber,
-              boat_number: bn,
-              course: num(e.course) || undefined,
-              finish_order: num(e.finish_order) || undefined,
-              st: num(e.st) || undefined,
-              motor_number: num(e.motor_number) || undefined,
-              is_absent: !!e.is_absent,
-              is_disqualified: !!e.is_disqualified,
-              finish_status: str(e.finish_status) || undefined,
-            };
-            if (existingHist && existingHist[0]) await withRateLimitRetry(() => sr.RacerRaceHistory.update(existingHist[0].id, histDoc));
-            else await withRateLimitRetry(() => sr.RacerRaceHistory.create(histDoc));
-            await sleep(180);
-          }
+          if (!reg) continue;
+          const histDoc: any = {
+            registration_number: reg, race_date: raceDate, venue_code: venueCode, race_number: raceNumber,
+            boat_number: bn, course: num(e.course) || undefined, finish_order: num(e.finish_order) || undefined,
+            st: num(e.st) ?? undefined, motor_number: num(e.motor_number) || undefined,
+            is_absent: !!e.is_absent, is_disqualified: !!e.is_disqualified,
+            finish_status: str(e.finish_status) || undefined,
+          };
+          const hk = `${reg}_${venueCode}_${raceNumber}`;
+          const old = histByKey.get(hk);
+          if (old) histUpdates.push({ id: old.id, ...histDoc });
+          else { histCreates.push(histDoc); histByKey.set(hk, histDoc); }
         }
-        await sleep(300);
       } catch (e: any) {
         errors++;
         errorDetails.push(`${venueName} R${r.race_number}: ${e.message}`);
@@ -219,8 +216,19 @@ async function saveKFileData(base44: any, data: any) {
     }
   }
 
+  // まとめ書き。Base44 API呼び出し数を大幅に削減する。
+  for (let i = 0; i < histCreates.length; i += 100) {
+    await withRateLimitRetry(() => sr.RacerRaceHistory.bulkCreate(histCreates.slice(i, i + 100)));
+  }
+  for (let i = 0; i < histUpdates.length; i += 100) {
+    await withRateLimitRetry(() => sr.RacerRaceHistory.bulkUpdate(histUpdates.slice(i, i + 100)));
+  }
+  for (let i = 0; i < entryUpdates.length; i += 100) {
+    await withRateLimitRetry(() => sr.RaceEntry.bulkUpdate(entryUpdates.slice(i, i + 100)));
+  }
+
   const total = venues.reduce((a: number, v: any) => a + (v.results || []).length, 0);
-  return { created, updated, skipped, errors, errorDetails, total };
+  return { created, updated, skipped, errors, errorDetails, total, history_created: histCreates.length, history_updated: histUpdates.length };
 }
 
 export default async function(req: Request) {
