@@ -371,20 +371,35 @@ export async function saveRacerTermStats(parsedData, fileName, termOverride = nu
   if (!records.length) return { ok: false, error: "レコードが空です" };
 
   let offset = 0;
-  const batchSize = 500;
+  const batchSize = 100;
   let logId = null;
   let totalCreated = 0, totalUpdated = 0, totalErrors = 0;
   const allErrorDetails = [];
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   while (offset < records.length) {
-    const resp = await base44.functions.invoke("importRacerTermStats", {
-      records,
-      file_name: fileName,
-      term_override: termOverride,
-      batch_offset: offset,
-      batch_size: batchSize,
-      log_id: logId,
-    });
+    let resp = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        resp = await base44.functions.invoke("importRacerTermStats", {
+          records,
+          file_name: fileName,
+          term_override: termOverride,
+          batch_offset: offset,
+          batch_size: batchSize,
+          log_id: logId,
+        });
+        lastError = null;
+        break;
+      } catch (e) {
+        lastError = e;
+        const msg = String(e?.message || e || "");
+        if (!/504|524|timeout|timed out|gateway/i.test(msg) || attempt === 4) throw e;
+        await sleep(1500 * (attempt + 1));
+      }
+    }
+    if (!resp) throw lastError || new Error("取込失敗");
     const d = resp.data;
     if (!d.ok) throw new Error(d.error || "取込失敗");
     totalCreated += d.created || 0;
@@ -394,6 +409,7 @@ export async function saveRacerTermStats(parsedData, fileName, termOverride = nu
     logId = d.log_id;
     if (d.completed || !d.next_offset) break;
     offset = d.next_offset;
+    await sleep(250);
   }
 
   return {
