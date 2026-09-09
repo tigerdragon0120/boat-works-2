@@ -8,6 +8,7 @@ const STATE_KEY = "boatworks2_k_server_batch_v1";
 const listeners = new Set();
 let runnerPromise = null;
 let pollTimer = null;
+let autoRepairChecked = false;
 
 const emptyState = () => ({
   running: false,
@@ -171,7 +172,34 @@ export function resumeKBatchImport() {
   if (pollTimer) clearTimeout(pollTimer);
   const resume = async () => {
     if (state.batchId) await refreshJob();
-    if (state.running) runServerSteps();
+    if (state.running) {
+      runServerSteps();
+      return;
+    }
+
+    // 過去の524/timeout等で failed になったKファイルを一度だけ自動補修キューへ戻す。
+    // 元データ破損は対象外。後続ログでsuccess済みのものもサーバー側で除外される。
+    if (!autoRepairChecked) {
+      autoRepairChecked = true;
+      try {
+        const resp = await base44.functions.invoke("requeueTransientKFailures", {});
+        const d = resp?.data || {};
+        if (d.ok && d.created && d.batch_id) {
+          state = {
+            ...emptyState(),
+            running: true,
+            batchId: d.batch_id,
+            current: 0,
+            total: Number(d.total_files || 0),
+            file: "",
+            results: [],
+            startedAt: new Date().toISOString(),
+          };
+          emit();
+          runServerSteps();
+        }
+      } catch {}
+    }
   };
   resume();
   return getKBatchImportState();
