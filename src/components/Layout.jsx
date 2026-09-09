@@ -1,9 +1,9 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useLocation, Outlet } from "react-router-dom";
 import { Waves, Home, BarChart3, Settings, Search, Ticket, CalendarDays, Newspaper, Video, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { resumeKBatchImport } from "@/lib/kBatchImportManager";
-import { resumeRacerTermImport } from "@/lib/racerTermImportManager";
+import { resumeKBatchImport, subscribeKBatchImport, getKBatchImportState } from "@/lib/kBatchImportManager";
+import { resumeRacerTermImport, subscribeRacerTermImport, getRacerTermImportState } from "@/lib/racerTermImportManager";
 
 const nav = [
   { to: "/", label: "レース一覧", icon: Home },
@@ -23,9 +23,18 @@ const subNav = [
 
 export default function Layout() {
   const loc = useLocation();
+  const [kImport, setKImport] = useState(getKBatchImportState());
+  const [termImport, setTermImport] = useState(getRacerTermImportState());
+
   useEffect(() => {
     resumeKBatchImport();
     resumeRacerTermImport();
+    const unsubK = subscribeKBatchImport(setKImport);
+    const unsubTerm = subscribeRacerTermImport(setTermImport);
+    return () => {
+      unsubK?.();
+      unsubTerm?.();
+    };
   }, []);
   return (
     <div className="min-h-screen bg-[#11161d] text-slate-100">
@@ -76,6 +85,24 @@ export default function Layout() {
           </div>
         </div>
       </header>
+      {(kImport?.running || termImport?.running) && (
+        <div className="sticky top-14 sm:top-16 z-20 border-b border-emerald-700/40 bg-emerald-950/95 backdrop-blur px-3 py-2 text-emerald-100 shadow-sm">
+          <div className="max-w-[1400px] mx-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-sm font-semibold">
+            {kImport?.running && (
+              <span className="inline-flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                K結果をバックグラウンド取込中 {kImport.current || 0}/{kImport.total || 0}{kImport.file ? ` — ${kImport.file}` : ""}
+              </span>
+            )}
+            {termImport?.running && (
+              <span className="inline-flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+                選手期別成績をバックグラウンド取込中 {termImport.current || 0}/{termImport.total || 0}{termImport.file ? ` — ${termImport.file}` : ""}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
       <main className="max-w-[1400px] mx-auto px-2.5 sm:px-4 py-3 sm:py-5 pb-24 sm:pb-12"><Outlet /></main>
       <footer className="fixed bottom-0 inset-x-0 z-40 sm:hidden bg-[#161a22]/98 backdrop-blur border-t border-[#2d3748] flex pb-[env(safe-area-inset-bottom)]">
         {nav.map((n) => {
