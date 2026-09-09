@@ -13,7 +13,7 @@ const str = (v: any) => (v != null ? String(v).trim() : '');
 // Bファイル データ保存(全会場対応)
 // data.venues = [{ venue_code, venue_name, races: [...] }]
 // =====================================================
-async function saveBFileData(base44: any, data: any) {
+async function saveBFileData(base44: any, data: any, suppressPrediction = false) {
   const sr = base44.asServiceRole.entities;
   const settings = await getSettings(base44);
   const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
@@ -83,8 +83,9 @@ async function saveBFileData(base44: any, data: any) {
           entryDocs.push(saved);
           updated++;
         }
-        // 6艇揃いならPRE予想生成
-        if (entryDocs.length >= 6) {
+        // 大量TXT取込中は予想生成を抑止して保存完走を優先する。
+        // 予想は取込完了後に別処理で生成できる。
+        if (!suppressPrediction && entryDocs.length >= 6) {
           try { await runAndSavePrediction(base44, race, entryDocs, settings, 'PRE', {}, profileByReg, rollingByReg); }
           catch (e: any) { errorDetails.push(`${venueName} R${raceNumber}: 予想生成失敗 ${e.message}`); }
         }
@@ -200,7 +201,7 @@ export default async function(req: Request) {
     if (user.role !== 'admin') return Response.json({ error: 'Forbidden: admin only' }, { status: 403 });
 
     const body = await req.json();
-    const { data_type, parsed_data, file_name } = body;
+    const { data_type, parsed_data, file_name, suppress_prediction_during_import = false } = body;
     if (!data_type || !parsed_data) {
       return Response.json({ error: 'data_type and parsed_data are required' }, { status: 400 });
     }
@@ -221,7 +222,7 @@ export default async function(req: Request) {
     try {
       let result;
       if (data_type === 'B') {
-        result = await saveBFileData(base44, parsed_data);
+        result = await saveBFileData(base44, parsed_data, !!suppress_prediction_during_import);
       } else if (data_type === 'K') {
         result = await saveKFileData(base44, parsed_data);
       } else {
