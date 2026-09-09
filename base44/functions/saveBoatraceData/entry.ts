@@ -70,6 +70,11 @@ async function saveBFileData(base44: any, data: any, suppressPrediction = false)
           sync_source: 'txt_b_file',
         };
         const race = await withRateLimitRetry(() => upsertRace(base44, raceData));
+        if (!race?.id) {
+          throw new Error('Race保存後にidを取得できませんでした');
+        }
+        // Race 1件 + Entry 6件を連打しない。Race保存直後にも待機する。
+        await sleep(450);
         const entryDocs = [];
         for (const e of r.entries || []) {
           const bn = num(e.boat_number);
@@ -99,8 +104,10 @@ async function saveBFileData(base44: any, data: any, suppressPrediction = false)
             is_scratched: false,
           };
           const saved = await withRateLimitRetry(() => upsertEntry(base44, entryData));
-          entryDocs.push(saved);
+          if (saved) entryDocs.push(saved);
           updated++;
+          // 艇ごとのupsertは内部でfilter+update/createを行うため間隔を空ける。
+          await sleep(300);
         }
         // 大量TXT取込中は予想生成を抑止して保存完走を優先する。
         // 予想は取込完了後に別処理で生成できる。
