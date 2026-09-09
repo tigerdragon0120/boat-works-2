@@ -344,6 +344,36 @@ function parseBFile(text, filename) {
   };
 }
 
+// === K結果1Rの厳格検査 ===
+// 元TXT自体が壊れているケースを予想学習へ混ぜないため、異常レースは保存対象から除外する。
+function validateKResult(r, venueName) {
+  const reasons = [];
+  const entries = Array.isArray(r.entries) ? r.entries : [];
+  if (entries.length !== 6) reasons.push(`選手行${entries.length}艇（6艇必要）`);
+
+  const boats = entries.map((e) => Number(e.boat_number));
+  const validBoats = boats.every((b) => Number.isInteger(b) && b >= 1 && b <= 6);
+  if (!validBoats) reasons.push("艇番不正");
+  if (new Set(boats).size !== entries.length) reasons.push("艇番重複");
+  if (entries.length === 6 && ![1,2,3,4,5,6].every((b) => boats.includes(b))) reasons.push("1〜6号艇が揃っていない");
+
+  const regs = entries.map((e) => String(e.registration_number || "").trim());
+  if (regs.some((x) => !/^\d{4}$/.test(x))) reasons.push("登録番号不正/欠損");
+  if (regs.filter(Boolean).length && new Set(regs).size !== regs.length) reasons.push("登録番号重複");
+
+  const tri = String(r.result_trifecta || "").trim();
+  if (!/^([1-6])-([1-6])-([1-6])$/.test(tri)) reasons.push("3連単結果不正/欠損");
+  else {
+    const nums = tri.split("-").map(Number);
+    if (new Set(nums).size !== 3) reasons.push("3連単結果の艇番重複");
+    const finishByPos = entries.filter((e) => [1,2,3].includes(Number(e.finish_order))).sort((a,b) => Number(a.finish_order)-Number(b.finish_order)).map((e) => Number(e.boat_number));
+    if (finishByPos.length === 3 && finishByPos.join("-") !== tri) reasons.push(`着順と3連単不一致(${finishByPos.join("-")}≠${tri})`);
+  }
+
+  if (r.payout != null && (!Number.isFinite(Number(r.payout)) || Number(r.payout) < 0)) reasons.push("払戻金不正");
+  return reasons;
+}
+
 // =====================================================
 // Kファイル解析(全会場対応)
 // =====================================================
@@ -402,38 +432,41 @@ function parseKFile(text, filename) {
       if (p) { r.result_trifecta = p.result_trifecta; r.payout = p.payout; }
     }
 
-    // 会場内バリデーション
-    const validResults = results.filter((r) => r.race_number >= 1 && r.race_number <= 12);
-    if (validResults.length === 0) warnings.push(`${venueName}: 結果が検出できません`);
+    // 会場内バリデーション。壊れた1Rが混ざっていても、正常Rまで捨てない。
+    const detectedResults = results.filter((r) => r.race_number >= 1 && r.race_number <= 12);
+    if (detectedResults.length === 0) warnings.push(`${venueName}: 結果が検出できません`);
 
-    for (const r of validResults) {
-      if (!r.result_trifecta) warnings.push(`${venueName} R${r.race_number}: 3連単結果なし`);
-      // 払戻がある完走レースは原則6艇の選手行が必要。
-      // ここが欠けたままDB保存するとRacerRaceHistoryが空になるので、取込前に明示的に失敗させる。
-      if (r.result_trifecta && r.entries.length !== 6) {
-        errors.push(`${venueName} R${r.race_number}: K選手行${r.entries.length}艇（6艇必要）`);
-      } else if (!r.result_trifecta && r.entries.length !== 6) {
-        warnings.push(`${venueName} R${r.race_number}: K選手行${r.entries.length}艇`);
+    const validResults = [];
+    const rejectedResults = [];
+    for (const r of detectedResults) {
+      const reasons = validateKResult(r, venueName);
+      if (reasons.length) {
+        rejectedResults.push({ race_number: r.race_number, reasons });
+        warnings.push(`${venueName} R${r.race_number}: 元データ破損疑いのため除外 — ${reasons.join(" / ")}`);
+        continue;
       }
-      const finishes = r.entries.map((e) => e.finish_order);
-      const dupes = finishes.filter((f, i) => finishes.indexOf(f) !== i);
-      if (dupes.length) warnings.push(`${venueName} R${r.race_number}: 着順重複 ${dupes.join(",")}`);
 
-      // 全国全体のRaceKey重複チェック
       const key = `${raceDate}_${venueCode}_${r.race_number}`;
-      if (globalKeys.has(key)) errors.push(`RaceKey重複: ${key}`);
+      if (globalKeys.has(key)) {
+        rejectedResults.push({ race_number: r.race_number, reasons: ["RaceKey重複"] });
+        warnings.push(`${venueName} R${r.race_number}: RaceKey重複のため除外`);
+        continue;
+      }
       globalKeys.add(key);
+      validResults.push(r);
     }
 
     venues.push({
       venue_code: venueCode,
       venue_name: venueName,
       results: validResults,
+      rejected_results: rejectedResults,
     });
   }
 
   const totalResults = venues.reduce((a, v) => a + v.results.length, 0);
   const totalEntries = venues.reduce((a, v) => a + v.results.reduce((s, r) => s + r.entries.length, 0), 0);
+  const rejectedCount = venues.reduce((a, v) => a + (v.rejected_results || []).length, 0);
 
   const data = {
     type: "K",
@@ -451,11 +484,13 @@ function parseKFile(text, filename) {
       venue_count: venues.length,
       race_count: totalResults,
       entry_count: totalEntries,
+      rejected_count: rejectedCount,
       venues: venues.map((v) => ({
         venue_code: v.venue_code,
         venue_name: v.venue_name,
         race_count: v.results.length,
         entry_count: v.results.reduce((s, r) => s + r.entries.length, 0),
+        rejected_count: (v.rejected_results || []).length,
       })),
     },
   };
