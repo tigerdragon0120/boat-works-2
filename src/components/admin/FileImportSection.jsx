@@ -51,9 +51,9 @@ export default function FileImportSection() {
 // === 競艇オフィシャルTXT取込カード ===
 function TxtImportCard() {
   const [file, setFile] = useState(null);
-  const [files, setFiles] = useState([]);
-  const [batchMode, setBatchMode] = useState(false);
   const initialBatch = getKBatchImportState();
+  const [files, setFiles] = useState([]);
+  const [batchMode, setBatchMode] = useState(!!initialBatch.running || (initialBatch.total || 0) > 0);
   const [batchProgress, setBatchProgress] = useState({ current: initialBatch.current, total: initialBatch.total, file: initialBatch.file });
   const [batchResults, setBatchResults] = useState(initialBatch.results || []);
   const [backgroundRunning, setBackgroundRunning] = useState(!!initialBatch.running);
@@ -67,6 +67,7 @@ function TxtImportCard() {
 
   useEffect(() => subscribeKBatchImport((s) => {
     setBackgroundRunning(!!s.running);
+    if (s.running || (s.total || 0) > 0) setBatchMode(true);
     setBatchProgress({ current: s.current || 0, total: s.total || 0, file: s.file || "" });
     setBatchResults(s.results || []);
   }), []);
@@ -159,15 +160,15 @@ function TxtImportCard() {
         )}
       </div>
 
-      {batchMode && files.length > 0 && (
+      {batchMode && (files.length > 0 || backgroundRunning || batchProgress.total > 0) && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
           <div className="flex items-center justify-between text-xs font-bold text-amber-800">
-            <span>過去Kファイル一括取込</span><span>{files.length}ファイル</span>
+            <span>過去Kファイル一括取込</span><span>{backgroundRunning || batchProgress.total > 0 ? batchProgress.total : files.length}ファイル</span>
           </div>
           {backgroundRunning && <div className="text-xs text-amber-700 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> バックグラウンド取込中 {batchProgress.current}/{batchProgress.total} — {batchProgress.file}</div>}
           {backgroundRunning && <div className="text-[10px] text-amber-700 bg-white/70 rounded p-2">この管理画面から別ページへ移動しても取込は続きます。戻ると進捗を再表示します。</div>}
-          <button onClick={handleBatchSave} disabled={backgroundRunning} className="w-full h-10 rounded-lg bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50">
-            {backgroundRunning ? `バックグラウンド取込中 ${batchProgress.current}/${batchProgress.total}` : `${files.length}件のKファイルを一括登録`}
+          <button onClick={handleBatchSave} disabled={backgroundRunning || files.length === 0} className="w-full h-10 rounded-lg bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50">
+            {backgroundRunning ? `バックグラウンド取込中 ${batchProgress.current}/${batchProgress.total}` : files.length > 0 ? `${files.length}件のKファイルを一括登録` : "新しいKファイルを選択してください"}
           </button>
           {batchResults.length > 0 && (
             <div className="max-h-48 overflow-y-auto bg-white rounded-lg p-2 space-y-1">

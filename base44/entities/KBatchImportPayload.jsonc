@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "batch_id": {
+      "type": "string"
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    }
+  },
+  "required": [],
+  "name": "KBatchImportPayload"
+}
