@@ -47,6 +47,8 @@ export default async function(req: Request) {
       history_verified: 0,
       history_target: 0,
       rejected_corrupt: 0,
+      attempt_count: 0,
+      last_attempt_at: '',
       message: '',
     })));
 
