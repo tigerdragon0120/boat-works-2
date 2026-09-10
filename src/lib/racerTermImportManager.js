@@ -106,14 +106,25 @@ async function runServerSteps() {
 export async function startRacerTermImport(previews) {
   const items = Array.from(previews || []).filter(p => p?.data?.records?.length && p?.file?.name);
   if (!items.length) throw new Error("取込対象の期別成績ファイルがありません");
-  if (state.running || state.uploading) return snapshot();
 
+  // localStorageに古いrunning状態が残っていて新規開始を邪魔しないよう、
+  // 既存batchがあれば先にサーバー状態を再確認する。
+  if (state.batchId) {
+    await refreshJob();
+  }
+  if (state.running || state.uploading) {
+    throw new Error(`すでに期別成績の取込が実行中です${state.file ? `: ${state.file}` : ""}`);
+  }
+
+  // 登録ボタンを押した瞬間から全画面バナーを表示する。
   state = {
     ...emptyState(),
+    running: true,
     uploading: true,
     uploadCurrent: 0,
     uploadTotal: items.length,
     total: items.length,
+    file: items[0]?.file?.name || "",
     startedAt: new Date().toISOString(),
   };
   emit();
