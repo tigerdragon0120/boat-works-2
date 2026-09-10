@@ -11,6 +11,24 @@ const num = (v: any) => {
 const str = (v: any) => (v != null ? String(v).trim() : '');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Base44 Entity APIのRate limit(429)を指数バックオフで吸収
+async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 8): Promise<T> {
+  let lastError: any;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastError = e;
+      const msg = String(e?.message || e?.response?.data?.error || e || '');
+      const isRateLimit = /rate\s*limit|too many requests|429/i.test(msg);
+      if (!isRateLimit || attempt === maxRetries) throw e;
+      const delay = Math.min(30000, 1000 * Math.pow(2, attempt));
+      await sleep(delay + Math.floor(Math.random() * 500));
+    }
+  }
+  throw lastError;
+}
+
 // Asia/Tokyo基準で本日日付取得
 function getTodayJST(): string {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
@@ -115,9 +133,10 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       };
 
       try {
-        const savedRace = await upsertRace(base44, raceData);
+        const savedRace = await withRateLimitRetry(() => upsertRace(base44, raceData));
         if (!savedRace?.id) { errors.push(`${venueName} R${rno}: Race保存失敗`); continue; }
         totalRaces++;
+        await sleep(400); // Race保存直後の待機
 
         let entryCount = 0;
         for (const e of race.entries) {
@@ -160,15 +179,16 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
             is_absent: false,
             is_scratched: false,
           };
-          await upsertEntry(base44, entryData);
+          await withRateLimitRetry(() => upsertEntry(base44, entryData));
           entryCount++;
           totalEntries++;
+          await sleep(350); // 艇ごとのupsert間隔
         }
         logs.push(`${venueName} R${rno}: ${entryCount}艇保存`);
       } catch (e: any) {
         errors.push(`${venueName} R${rno}: ${e.message}`);
       }
-      await sleep(300); // レート制限回避
+      await sleep(500); // 次レースへの待機
     }
   }
 

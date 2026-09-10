@@ -103,7 +103,8 @@ export function parseRaceIndex(html) {
   const venues = [];
   const seen = new Set();
   // raceindex?jcd=XX&hd=YYYYMMDD リンクから会場コード抽出
-  const pattern = /raceindex\?jcd=(\d{2})&hd=(\d{8})/g;
+  // HTML内の & は &amp; とエンコードされている場合があるため両方にマッチ
+  const pattern = /raceindex\?jcd=(\d{2})(?:&amp;|&)hd=(\d{8})/g;
   let match;
   while ((match = pattern.exec(html)) !== null) {
     const code = match[1];
