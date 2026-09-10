@@ -81,16 +81,16 @@ export default function Layout() {
     };
   }, []);
   return (
-    <div className="min-h-screen bg-[#f4f7fb] text-slate-900">
-      <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm">
+    <div className="min-h-screen bg-[#eef2f7] text-[#26364d]">
+      <header className="sticky top-0 z-30 bg-gradient-to-r from-[#153aa8] to-[#075ee8] border-b border-blue-700 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-3 sm:px-5 h-14 sm:h-16 flex items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-2.5 min-w-0 shrink-0">
-            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-blue-600/15 border border-blue-500/30 flex items-center justify-center shrink-0">
-              <Waves className="w-5 h-5 text-blue-400" strokeWidth={2.4} />
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-white/10 border border-white/60 flex items-center justify-center shrink-0">
+              <Waves className="w-5 h-5 text-white" strokeWidth={2.4} />
             </div>
             <div className="leading-none">
-              <div className="font-display font-black tracking-tight text-slate-900 text-[15px] sm:text-[17px] whitespace-nowrap">BOAT WORKS 2</div>
-              <div className="hidden sm:block text-[9px] text-blue-400/80 font-semibold tracking-widest mt-0.5 whitespace-nowrap">AI RACE PREDICTION</div>
+              <div className="font-display font-black tracking-tight text-white text-[15px] sm:text-[17px] whitespace-nowrap">BOAT WORKS 2</div>
+              <div className="hidden sm:block text-[9px] text-blue-100 font-semibold tracking-widest mt-0.5 whitespace-nowrap">データで勝つ、ボートレース</div>
             </div>
           </Link>
 
@@ -99,7 +99,7 @@ export default function Layout() {
             {subNav.map((n) => {
               const Icon = n.icon;
               return (
-                <span key={n.label} className="flex items-center gap-1.5 px-3 h-9 rounded-lg text-[13px] font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 cursor-default transition-colors">
+                <span key={n.label} className="flex items-center gap-1.5 px-3 h-9 rounded-lg text-[13px] font-medium text-blue-50 hover:text-white hover:bg-white/10 cursor-default transition-colors">
                   <Icon className="w-3.5 h-3.5" />
                   {n.label}
                 </span>
@@ -108,7 +108,7 @@ export default function Layout() {
           </nav>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <button className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 flex items-center justify-center transition-colors">
+            <button className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-white hover:bg-white/10 flex items-center justify-center transition-colors">
               <Search className="w-4.5 h-4.5" />
             </button>
             <nav className="flex items-center gap-1">
@@ -118,7 +118,7 @@ export default function Layout() {
                 return (
                   <Link key={n.to} to={n.to} className={cn(
                     "flex items-center gap-1.5 px-2.5 sm:px-3 h-9 sm:h-10 rounded-lg text-sm font-semibold transition-colors",
-                    active ? "bg-[#f9c836] text-slate-950" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    active ? "bg-white text-[#075ee8]" : "text-white hover:bg-white/10"
                   )}>
                     <Icon className="w-4 h-4" />
                     <span className="hidden md:inline">{n.label}</span>
@@ -150,11 +150,11 @@ export default function Layout() {
         </div>
       )}
       <main className="max-w-[1400px] mx-auto px-2.5 sm:px-4 py-3 sm:py-5 pb-24 sm:pb-12"><Outlet /></main>
-      <footer className="fixed bottom-0 inset-x-0 z-40 sm:hidden bg-white/98 backdrop-blur border-t border-slate-200 shadow-[0_-4px_14px_rgba(15,23,42,0.06)] flex pb-[env(safe-area-inset-bottom)]">
+      <footer className="fixed bottom-0 inset-x-0 z-40 sm:hidden bg-white/95 backdrop-blur border-t border-[#d9e1ec] shadow-[0_-4px_14px_rgba(15,23,42,0.06)] flex pb-[env(safe-area-inset-bottom)]">
         {nav.map((n) => {
           const active = loc.pathname === n.to || (n.to === "/" && loc.pathname.startsWith("/venue"));
           const Icon = n.icon;
-          return <Link key={n.to} to={n.to} className={cn("flex-1 min-h-14 flex flex-col items-center justify-center py-2.5 text-[11px] font-medium", active ? "text-[#f9c836]" : "text-slate-500")}><Icon className="w-5 h-5 mb-0.5" />{n.label}</Link>;
+          return <Link key={n.to} to={n.to} className={cn("flex-1 min-h-14 flex flex-col items-center justify-center py-2.5 text-[11px] font-medium", active ? "text-[#075ee8]" : "text-slate-500")}><Icon className="w-5 h-5 mb-0.5" />{n.label}</Link>;
         })}
       </footer>
     </div>
