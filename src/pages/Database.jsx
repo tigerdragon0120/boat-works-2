@@ -9,55 +9,65 @@ const tabs = [
   ['terms', '期別成績', History],
 ];
 
+const PAGE_SIZE = 200;
+
+async function loadPaged(entity, sort, maxPages = 40) {
+  const all = [];
+  for (let page = 0; page < maxPages; page++) {
+    const rows = await entity.filter({}, sort, 500, page * 500);
+    if (!rows?.length) break;
+    all.push(...rows);
+    if (rows.length < 500) break;
+  }
+  return all;
+}
+
 export default function Database() {
   const [tab, setTab] = useState('profiles');
   const [q, setQ] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [data, setData] = useState({ profiles: [], terms: [] });
-  const [meta, setMeta] = useState({ profileRaw: 0, profileUnique: 0, profileDuplicate: 0, termsShown: 0, termsHasMore: false });
-
-  const loadAllProfiles = async () => {
-    const all = [];
-    const limit = 500;
-    for (let skip = 0; skip <= 10000; skip += limit) {
-      const rows = await base44.entities.RacerProfile.filter({}, 'registration_number', limit, skip);
-      if (!rows?.length) break;
-      all.push(...rows);
-      if (rows.length < limit) break;
-    }
-
-    // 同一登録番号が複数ある場合は updated_at / updated_date が最も新しい1件だけを表示する。
-    const byReg = new Map();
-    for (const row of all) {
-      const reg = String(row.registration_number || '').trim();
-      if (!reg) continue;
-      const prev = byReg.get(reg);
-      const rowTime = String(row.updated_at || row.updated_date || row.created_date || '');
-      const prevTime = String(prev?.updated_at || prev?.updated_date || prev?.created_date || '');
-      if (!prev || rowTime >= prevTime) byReg.set(reg, row);
-    }
-    const unique = [...byReg.values()].sort((a, b) => Number(a.registration_number || 0) - Number(b.registration_number || 0));
-    return { raw: all, unique };
-  };
+  const [profiles, setProfiles] = useState([]);
+  const [terms, setTerms] = useState([]);
+  const [termKeys, setTermKeys] = useState([]);
+  const [selectedTerm, setSelectedTerm] = useState('');
+  const [page, setPage] = useState(1);
+  const [meta, setMeta] = useState({ profileRaw: 0, profileUnique: 0, profileDuplicate: 0, termTotal: 0 });
 
   const load = async () => {
     setBusy(true);
     setError('');
     try {
-      const [profileResult, termRows] = await Promise.all([
-        loadAllProfiles(),
-        base44.entities.RacerTermStats.filter({}, '-term_year', 501, 0),
+      const [profileRows, termRows] = await Promise.all([
+        loadPaged(base44.entities.RacerProfile, 'registration_number', 30),
+        loadPaged(base44.entities.RacerTermStats, '-term_year', 120),
       ]);
-      const terms = (termRows || []).slice(0, 500);
-      setData({ profiles: profileResult.unique, terms });
+
+      const byReg = new Map();
+      for (const row of profileRows) {
+        const reg = String(row.registration_number || '').trim();
+        if (!reg) continue;
+        const prev = byReg.get(reg);
+        const rowTime = String(row.updated_at || row.updated_date || row.created_date || '');
+        const prevTime = String(prev?.updated_at || prev?.updated_date || prev?.created_date || '');
+        if (!prev || rowTime >= prevTime) byReg.set(reg, row);
+      }
+      const uniqueProfiles = [...byReg.values()].sort((a, b) => Number(a.registration_number || 0) - Number(b.registration_number || 0));
+
+      const keys = [...new Set(termRows.map(r => r.term_key).filter(Boolean))].sort().reverse();
+      const nextSelected = selectedTerm && keys.includes(selectedTerm) ? selectedTerm : (keys[0] || '');
+
+      setProfiles(uniqueProfiles);
+      setTerms(termRows);
+      setTermKeys(keys);
+      setSelectedTerm(nextSelected);
       setMeta({
-        profileRaw: profileResult.raw.length,
-        profileUnique: profileResult.unique.length,
-        profileDuplicate: Math.max(0, profileResult.raw.length - profileResult.unique.length),
-        termsShown: terms.length,
-        termsHasMore: (termRows || []).length > 500,
+        profileRaw: profileRows.length,
+        profileUnique: uniqueProfiles.length,
+        profileDuplicate: Math.max(0, profileRows.length - uniqueProfiles.length),
+        termTotal: termRows.length,
       });
+      setPage(1);
     } catch (e) {
       setError(e?.message || 'DBの読込に失敗しました');
     } finally {
@@ -66,13 +76,25 @@ export default function Database() {
   };
 
   useEffect(() => { load(); }, []);
+  useEffect(() => { setPage(1); }, [tab, q, selectedTerm]);
 
   const rows = useMemo(() => {
-    const list = data[tab] || [];
     const s = q.trim().toLowerCase();
-    if (!s) return list;
-    return list.filter(x => JSON.stringify(x).toLowerCase().includes(s));
-  }, [data, tab, q]);
+    let list = tab === 'profiles' ? profiles : terms.filter(r => !selectedTerm || r.term_key === selectedTerm);
+    if (s) {
+      list = list.filter(x => {
+        const hay = [
+          x.racer_name, x.player_name, x.registration_number, x.branch_name, x.branch,
+          x.player_class, x.grade_class, x.term_key, x.source_file
+        ].filter(v => v != null).join(' ').toLowerCase();
+        return hay.includes(s);
+      });
+    }
+    return list;
+  }, [profiles, terms, tab, q, selectedTerm]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const visibleRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
     <div className="space-y-3">
@@ -81,7 +103,7 @@ export default function Database() {
           <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
             <DbIcon className="w-5 h-5 text-[#f9c836]" />BOAT WORKS DATABASE
           </h1>
-          <p className="text-xs text-slate-500 mt-1">登録済みの実データを直接表示</p>
+          <p className="text-xs text-slate-500 mt-1">登録済みの実データを全件検索</p>
         </div>
         <button onClick={load} disabled={busy} className="h-10 px-4 rounded-lg bg-[#f9c836] text-slate-950 font-black text-sm flex items-center gap-2 disabled:opacity-50">
           <RefreshCw className={cn('w-4 h-4', busy && 'animate-spin')} />{busy ? '読込中' : '再読込'}
@@ -90,7 +112,7 @@ export default function Database() {
 
       <div className="grid grid-cols-2 gap-2">
         <Summary label="選手プロフィール" value={meta.profileUnique} suffix="人" sub={meta.profileDuplicate > 0 ? `重複 ${meta.profileDuplicate}件は表示上除外` : '重複なし'} />
-        <Summary label="期別成績" value={meta.termsShown} suffix={meta.termsHasMore ? '件（最新500件）' : '件'} sub={meta.termsHasMore ? '期別成績は大量のため最新500件を表示' : '全件表示'} />
+        <Summary label="期別成績" value={selectedTerm ? terms.filter(r => r.term_key === selectedTerm).length : meta.termTotal} suffix="人" sub={selectedTerm ? `${selectedTerm} の全選手` : `全期 ${meta.termTotal}件`} />
       </div>
 
       {error && <div className="rounded-xl border border-rose-500/30 bg-rose-950/40 px-3 py-2 text-sm text-rose-300">{error}</div>}
@@ -103,12 +125,27 @@ export default function Database() {
         ))}
       </div>
 
+      {tab === 'terms' && (
+        <select value={selectedTerm} onChange={e => setSelectedTerm(e.target.value)} className="w-full h-11 px-3 rounded-xl bg-[#161a22] border border-[#2d3748] text-sm text-slate-200 outline-none focus:border-blue-500">
+          {termKeys.map(k => <option key={k} value={k}>{k}</option>)}
+        </select>
+      )}
+
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="選手名・登録番号・支部・期で検索" className="w-full h-11 pl-10 pr-3 rounded-xl bg-[#161a22] border border-[#2d3748] text-sm outline-none focus:border-blue-500" />
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="選手名・登録番号・支部・級別・期・元ファイル名で検索" className="w-full h-11 pl-10 pr-3 rounded-xl bg-[#161a22] border border-[#2d3748] text-sm outline-none focus:border-blue-500" />
       </div>
 
-      {tab === 'profiles' ? <Profiles rows={rows} /> : <Terms rows={rows} />}
+      <div className="flex items-center justify-between text-[11px] text-slate-500 px-1">
+        <span>{rows.length}件中 {rows.length ? (page - 1) * PAGE_SIZE + 1 : 0}〜{Math.min(page * PAGE_SIZE, rows.length)}件を表示</span>
+        <div className="flex items-center gap-2">
+          <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="px-3 h-8 rounded-lg border border-[#3a404c] disabled:opacity-30">前へ</button>
+          <span>{page}/{totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="px-3 h-8 rounded-lg border border-[#3a404c] disabled:opacity-30">次へ</button>
+        </div>
+      </div>
+
+      {tab === 'profiles' ? <Profiles rows={visibleRows} /> : <Terms rows={visibleRows} />}
     </div>
   );
 }
