@@ -25,7 +25,7 @@ export default async function(req: Request) {
     const jobs = await sr.RacerTermImportJob.filter({ batch_id: batchId }, '-created_date', 5);
     const job = jobs?.[0];
     if (!job) return Response.json({ error: 'job not found' }, { status: 404 });
-    if (job.status === 'completed') return Response.json({ ok: true, done: true, job });
+    if (['completed','cancelled'].includes(job.status)) return Response.json({ ok: true, done: true, job });
 
     const items = await sr.RacerTermImportItem.filter({ batch_id: batchId }, 'order_index', 500);
     const ordered = [...(items || [])].sort((a:any,b:any) => Number(a.order_index||0)-Number(b.order_index||0));
