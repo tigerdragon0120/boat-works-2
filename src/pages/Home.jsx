@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { RefreshCw, Clock, Sun, Moon, Star, Leaf, Heart } from "lucide-react";
+import { RefreshCw, Clock } from "lucide-react";
 import { listTodayRaces } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +13,7 @@ const VENUES = [
 export default function Home() {
   const [races, setRaces] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [now, setNow] = useState(Date.now());
 
   const load = async () => {
     setLoading(true);
@@ -21,6 +22,7 @@ export default function Home() {
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(id); }, []);
 
   const venueData = useMemo(() => {
     const map = new Map();
@@ -29,68 +31,66 @@ export default function Home() {
       if (!map.has(code)) map.set(code, []);
       map.get(code).push(r);
     }
+    for (const list of map.values()) list.sort((a,b) => Number(a.race_number||0)-Number(b.race_number||0));
     return map;
   }, [races]);
 
+  const chronological = useMemo(() => races
+    .filter(r => r.deadline)
+    .slice()
+    .sort((a,b) => new Date(a.deadline)-new Date(b.deadline)), [races]);
+  const currentIndex = useMemo(() => {
+    if (!chronological.length) return -1;
+    const i = chronological.findIndex(r => r.status !== 'finished' && r.status !== 'cancelled' && new Date(r.deadline).getTime() >= now - 10*60*1000);
+    return i >= 0 ? i : chronological.length - 1;
+  }, [chronological, now]);
+  const currentRace = currentIndex >= 0 ? chronological[currentIndex] : null;
+
   return (
-    <div className="text-slate-100 space-y-3 sm:space-y-5">
-      <div className="text-center mb-1">
-        <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">レースLIVE</h1>
-      </div>
-      <div className="flex items-center justify-end mb-2">
-        <button onClick={load} className="h-10 sm:h-9 min-w-10 px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 flex items-center justify-center gap-2 text-xs font-semibold shrink-0"><RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} /><span className="hidden sm:inline">更新</span></button>
+    <div className="text-slate-100 space-y-2 pb-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-black text-white">本日の開催</h1>
+          <div className="text-[10px] text-slate-500">24場を1画面で確認</div>
+        </div>
+        <button onClick={load} className="h-9 px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 flex items-center gap-2 text-xs font-semibold"><RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />更新</button>
       </div>
 
-      <section className="rounded-xl sm:rounded-2xl border border-slate-800 bg-[#0b1118] p-2.5 sm:p-5">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-2 sm:gap-2.5">
-          {VENUES.map(([code, name]) => {
-            const list = (venueData.get(code) || []).sort((a,b) => a.race_number - b.race_number);
+      {currentRace && <div className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-3 py-2 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0"><Clock className="w-4 h-4 text-amber-300 shrink-0"/><div className="min-w-0"><div className="text-[10px] text-amber-200/70">時系列・現在位置</div><div className="font-black text-sm truncate">{venueName(currentRace.venue_code)} {currentRace.race_number}R <span className="text-amber-300">{fmtTime(currentRace.deadline)}</span></div></div></div>
+        <div className="text-right shrink-0"><div className="text-[10px] text-slate-400">本日全{chronological.length}R</div><div className="text-sm font-black text-white">{currentIndex+1} / {chronological.length}</div></div>
+      </div>}
+
+      <section className="rounded-xl border border-slate-800 bg-[#0b1118] p-1.5 sm:p-2">
+        <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+          {VENUES.map(([code,name]) => {
+            const list = venueData.get(code) || [];
             const active = list.length > 0;
-            const nextRace = list.find((r) => r.status !== "finished" && r.status !== "cancelled") || list[list.length - 1];
-            const activeCount = list.filter((r) => r.status !== "finished" && r.status !== "cancelled").length;
-            const eventRace = list[0] || nextRace;
-            const dayText = eventRace?.series_day ? (eventRace.is_final_day ? "最終日" : `${eventRace.series_day}日目`) : "";
-            const gradeText = displayGrade(eventRace?.grade);
-            const womens = !!eventRace?.is_womens;
-            const content = <><div className="flex items-center justify-between"><span className="text-[10px] font-bold text-slate-500">{code}</span>{active && <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.8)]" />}</div><div className={cn("mt-2 text-lg font-black", active ? "text-white" : "text-slate-600")}>{name}</div><div className="mt-1.5 min-h-[58px] text-xs leading-5">{active ? <><div className="flex items-center gap-1.5 flex-wrap"><span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30 text-blue-300 font-bold">{gradeText}</span>{dayText && <span className="font-bold text-amber-300">{dayText}</span>}{womens && <span title="女子戦" className="text-pink-400 text-sm">♥</span>}</div><div className="text-slate-400 truncate">{eventRace?.event_name || "本日開催"}</div><div className="font-bold text-blue-300">{nextRace ? `${nextRace.race_number}R / ${fmtTime(nextRace.deadline)}` : `${activeCount}R`}</div></> : <div className="text-slate-700">本日開催なし</div>}</div></>;
-            return active ? <Link key={code} to={`/venue/${code}`} className="min-h-[104px] sm:min-h-[118px] rounded-xl border border-blue-500/30 bg-gradient-to-b from-blue-600/15 to-slate-900 p-2.5 sm:p-3 hover:border-blue-400 hover:bg-blue-500/15 active:scale-[.99] transition shadow-sm">{content}</Link> : <div key={code} className="min-h-[104px] sm:min-h-[118px] rounded-xl border border-slate-800 bg-slate-900/50 p-2.5 sm:p-3 opacity-70">{content}</div>;
+            const unfinished = list.filter(r => r.status !== 'finished' && r.status !== 'cancelled');
+            const nextRace = unfinished.find(r => !r.deadline || new Date(r.deadline).getTime() >= now - 10*60*1000) || unfinished[0] || list[list.length-1];
+            const done = list.filter(r => r.status === 'finished').length;
+            const day = list[0]?.series_day ? (list[0]?.is_final_day ? '最終日' : `${list[0].series_day}日目`) : '';
+            const grade = displayGrade(list[0]?.grade);
+            const isCurrent = currentRace && String(currentRace.venue_code).padStart(2,'0')===code;
+            const body = <>
+              <div className="flex items-center justify-between gap-1"><span className={cn("font-bold text-[11px] sm:text-xs truncate",active?'text-white':'text-slate-600')}>{name}</span><span className="text-[8px] text-slate-600">{code}</span></div>
+              {active ? <>
+                <div className="mt-1 flex items-center gap-1 text-[9px]"><span className="px-1 rounded bg-blue-500/15 text-blue-300">{grade}</span>{day&&<span className="text-amber-300 font-bold">{day}</span>}</div>
+                <div className={cn("mt-1 text-base sm:text-lg font-black leading-none",isCurrent?'text-amber-300':'text-sky-300')}>{nextRace ? `${nextRace.race_number}R` : `${done}R終了`}</div>
+                <div className="mt-1 flex justify-between text-[9px] text-slate-500"><span>{nextRace?fmtTime(nextRace.deadline):'終了'}</span><span>{done}/12</span></div>
+                <div className="mt-1 h-1 rounded-full bg-slate-800 overflow-hidden"><div className="h-full bg-slate-400" style={{width:`${Math.min(100,(done/12)*100)}%`}}/></div>
+              </> : <div className="mt-2 text-center text-[10px] text-slate-700">開催なし</div>}
+            </>;
+            return active ? <Link key={code} to={`/venue/${code}`} className={cn("min-h-[86px] rounded-lg border p-2 transition",isCurrent?'border-amber-400 bg-amber-400/10 ring-1 ring-amber-400/30':'border-slate-700 bg-slate-900/70 hover:border-blue-400')}>{body}</Link> : <div key={code} className="min-h-[86px] rounded-lg border border-slate-900 bg-slate-950/40 p-2 opacity-60">{body}</div>;
           })}
         </div>
       </section>
 
-      {/* 凡例 */}
-      <section className="rounded-xl sm:rounded-2xl border border-slate-800 bg-[#0b1118] p-3 sm:p-4">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-slate-400">
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded bg-[#282d38] border border-slate-700" />
-            <span>本日開催</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded bg-[#1c212a] border border-slate-800" />
-            <span>本日開催なし</span>
-          </div>
-          <div className="w-px h-4 bg-slate-700 hidden sm:block" />
-          <LegendIcon icon={Clock} label="モーニング" />
-          <LegendIcon icon={Sun} label="サマータイム" />
-          <LegendIcon icon={Moon} label="ナイター" />
-          <LegendIcon icon={Star} label="ミッドナイト" />
-          <LegendIcon icon={Leaf} label="ルーキーシリーズ" />
-          <LegendIcon icon={Heart} label="女子戦" />
-        </div>
-        <div className="mt-2.5 text-[10px] text-slate-600">※当日の開催情報は朝の7:30頃に更新予定です。開催データはBOAT WORKS同期内容を表示。</div>
-      </section>
+      <div className="text-[9px] text-slate-600 text-center">各場の「現在のR・締切時刻・終了数」を時系列で自動更新します。</div>
     </div>
   );
 }
 
-function LegendIcon({ icon: Icon, label }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <Icon className="w-3.5 h-3.5 text-slate-500" />
-      <span>{label}</span>
-    </div>
-  );
-}
-
-function displayGrade(v) { const g = String(v || "").toUpperCase(); return !g || g === "GENERAL" ? "一般" : g; }
-function fmtTime(v) { return v ? new Date(v).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "--:--"; }
+function venueName(code){ const c=String(code||'').padStart(2,'0'); return VENUES.find(v=>v[0]===c)?.[1] || c; }
+function displayGrade(v){ const g=String(v||'').toUpperCase(); return !g||g==='GENERAL'?'一般':g; }
+function fmtTime(v){ return v ? new Date(v).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}) : '--:--'; }
