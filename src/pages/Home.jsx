@@ -66,9 +66,11 @@ export default function Home() {
           {VENUES.map(([code,name]) => {
             const list = venueData.get(code) || [];
             const active = list.length > 0;
-            const unfinished = list.filter(r => r.status !== 'finished' && r.status !== 'cancelled');
-            const nextRace = unfinished.find(r => !r.deadline || new Date(r.deadline).getTime() >= now - 10*60*1000) || unfinished[0] || list[list.length-1];
-            const done = list.filter(r => r.status === 'finished').length;
+            const finishedByNow = (r) => r.status === 'finished' || r.status === 'cancelled' || (r.deadline && new Date(r.deadline).getTime() <= now);
+            const done = list.filter(finishedByNow).length;
+            const upcoming = list.filter(r => !finishedByNow(r));
+            const nextRace = upcoming.find(r => !r.deadline || new Date(r.deadline).getTime() > now) || upcoming[0] || null;
+            const venueFinished = active && done >= list.length;
             const day = list[0]?.series_day ? (list[0]?.is_final_day ? '最終日' : `${list[0].series_day}日目`) : '';
             const grade = displayGrade(list[0]?.grade);
             const isCurrent = currentRace && String(currentRace.venue_code).padStart(2,'0')===code;
@@ -76,8 +78,8 @@ export default function Home() {
               <div className="flex items-center justify-between gap-1"><span className={cn("font-bold text-[11px] sm:text-xs truncate",active?'text-white':'text-slate-600')}>{name}</span><span className="text-[8px] text-slate-600">{code}</span></div>
               {active ? <>
                 <div className="mt-1 flex items-center gap-1 text-[9px]"><span className="px-1 rounded bg-blue-500/15 text-blue-300">{grade}</span>{day&&<span className="text-amber-300 font-bold">{day}</span>}</div>
-                <div className={cn("mt-1 text-base sm:text-lg font-black leading-none",isCurrent?'text-amber-300':'text-sky-300')}>{nextRace ? `${nextRace.race_number}R` : `${done}R終了`}</div>
-                <div className="mt-1 flex justify-between text-[9px] text-slate-500"><span>{nextRace?fmtTime(nextRace.deadline):'終了'}</span><span>{done}/12</span></div>
+                <div className={cn("mt-1 text-base sm:text-lg font-black leading-none",venueFinished?'text-slate-300':isCurrent?'text-amber-300':'text-sky-300')}>{venueFinished ? '終了' : nextRace ? `現在 ${nextRace.race_number}R` : '終了'}</div>
+                <div className="mt-1 flex justify-between text-[9px] text-slate-500"><span>{venueFinished?'全レース終了':nextRace?`締切 ${fmtTime(nextRace.deadline)}`:'終了'}</span><span>{done}/{list.length || 12}</span></div>
                 <div className="mt-1 h-1 rounded-full bg-slate-800 overflow-hidden"><div className="h-full bg-slate-400" style={{width:`${Math.min(100,(done/12)*100)}%`}}/></div>
               </> : <div className="mt-2 text-center text-[10px] text-slate-700">開催なし</div>}
             </>;
