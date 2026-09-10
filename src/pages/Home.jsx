@@ -53,7 +53,7 @@ export default function Home() {
           <h1 className="text-lg sm:text-xl font-black text-[#123d9c]">本日の開催</h1>
           <div className="text-[10px] text-slate-500">24場を1画面で確認</div>
         </div>
-        <button onClick={load} className="h-9 px-3 rounded-lg border border-[#bfd0f4] bg-[#e9f0ff] text-[#164fbf] shadow-sm flex items-center gap-2 text-xs font-semibold"><RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />更新</button>
+        <button onClick={load} className="h-9 px-3 rounded-lg border border-[#e8c900] bg-[#ffe600] text-[#16254a] shadow-sm flex items-center gap-2 text-xs font-black hover:bg-[#ffeb33] active:scale-[0.98] transition"><RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />更新</button>
       </div>
 
       {currentRace && <div className="rounded-xl border border-[#f4b5cf] bg-gradient-to-r from-[#fff0f6] to-[#edf3ff] px-3 py-2 flex items-center justify-between gap-3">
