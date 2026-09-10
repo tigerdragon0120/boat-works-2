@@ -69,9 +69,11 @@ async function refreshJob() {
       error: x.status === "failed" ? (x.message || "取込失敗") : undefined,
       message: x.message || "",
     }));
+    const active = ["queued", "preparing", "running"].includes(job.status);
     state = {
       ...state,
-      running: job.status !== "completed",
+      running: active,
+      uploading: job.status === "preparing",
       current: Number(job.current_index || 0),
       total: Number(job.total_files || ordered.length || state.total || 0),
       file: job.current_file || "",
@@ -183,29 +185,63 @@ export async function startRacerTermImport(previews) {
     };
     emit();
 
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const uploadErrors = [];
+
     for (let i = 0; i < items.length; i++) {
       const p = items[i];
       state = { ...state, uploadCurrent: i + 1, file: p.file.name };
       emit();
+
       const detected = detectTermFromFilename(p.file.name);
       const termOverride = detected ? { term_year: detected.term_year, term_half: detected.term_half } : null;
-      const payload = {
-        records: p.data.records,
-        term_override: termOverride,
-      };
+      const payload = { records: p.data.records, term_override: termOverride };
       const payloadFile = new File([JSON.stringify(payload)], `${p.file.name}.parsed.json`, { type: "application/json" });
-      const up = await base44.integrations.Core.UploadFile({ file: payloadFile });
-      if (!up?.file_url) throw new Error(`${p.file.name}: サーバーへの一時保存に失敗しました`);
 
-      const attachResp = await base44.functions.invoke("attachRacerTermBatchPayload", {
-        batch_id: shell.batch_id,
-        file_name: p.file.name,
-        payload_url: up.file_url,
-      });
-      if (attachResp?.data?.ok === false) throw new Error(attachResp?.data?.error || `${p.file.name}: ジョブ登録に失敗しました`);
+      let attached = false;
+      let lastError = null;
+      for (let attempt = 1; attempt <= 5 && !attached; attempt++) {
+        try {
+          const up = await base44.integrations.Core.UploadFile({ file: payloadFile });
+          if (!up?.file_url) throw new Error("サーバーへの一時保存に失敗しました");
 
-      // 1件目がアップロードできた時点で取込処理を開始。残りのアップロードと並行して進める。
+          const attachResp = await base44.functions.invoke("attachRacerTermBatchPayload", {
+            batch_id: shell.batch_id,
+            file_name: p.file.name,
+            payload_url: up.file_url,
+          });
+          if (attachResp?.data?.ok === false) throw new Error(attachResp?.data?.error || "ジョブ登録に失敗しました");
+          attached = true;
+        } catch (e) {
+          lastError = e;
+          if (attempt < 5) await sleep(Math.min(8000, 800 * (2 ** (attempt - 1))));
+        }
+      }
+
+      if (!attached) {
+        const msg = lastError?.message || String(lastError || "アップロード失敗");
+        uploadErrors.push(`${p.file.name}: ${msg}`);
+        try {
+          await base44.functions.invoke("failRacerTermBatchUpload", {
+            batch_id: shell.batch_id,
+            file_name: p.file.name,
+            message: msg,
+          });
+        } catch {}
+      }
+
+      // アップロード成功済みのファイルは順次処理。1ファイル失敗しても残りは止めない。
       runServerSteps();
+    }
+
+    if (uploadErrors.length) {
+      state = {
+        ...state,
+        results: [
+          ...(state.results || []),
+          ...uploadErrors.map(error => ({ file: "アップロード", ok: false, error })),
+        ],
+      };
     }
 
     state = { ...state, uploading: false };
@@ -213,7 +249,9 @@ export async function startRacerTermImport(previews) {
     runServerSteps();
     return snapshot();
   } catch (e) {
-    state = { ...state, uploading: false, running: false, file: "" };
+    // ジョブ作成前の致命的エラーだけ停止扱いにする。
+    // ジョブ作成後の個別ファイル障害は上でfailed化して残りを継続する。
+    state = { ...state, uploading: false, running: !!state.batchId, file: state.file || "" };
     emit();
     throw e;
   }
