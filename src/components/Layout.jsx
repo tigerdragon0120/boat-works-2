@@ -85,7 +85,7 @@ export default function Layout() {
           </div>
         </div>
       </header>
-      {(kImport?.running || termImport?.running) && (
+      {(kImport?.running || kImport?.uploading || termImport?.running || termImport?.uploading) && (
         <div className="sticky top-14 sm:top-16 z-20 border-b border-emerald-700/40 bg-emerald-950/95 backdrop-blur px-3 py-2 text-emerald-100 shadow-sm">
           <div className="max-w-[1400px] mx-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-sm font-semibold">
             {kImport?.running && (
