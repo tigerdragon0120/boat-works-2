@@ -16,7 +16,7 @@ export default async function(req: Request) {
       payload_url: str(x.payload_url),
       order_index: i,
       total_records: Number(x.total_records || 0),
-    })).filter((x:any) => x.file_name && x.payload_url && x.total_records > 0);
+    })).filter((x:any) => x.file_name && x.total_records > 0);
     if (!clean.length) return Response.json({ error: 'valid items required' }, { status: 400 });
 
     const sr = base44.asServiceRole.entities;
@@ -25,7 +25,7 @@ export default async function(req: Request) {
 
     await sr.RacerTermImportJob.create({
       batch_id: batchId,
-      status: 'queued',
+      status: clean.some((x:any) => !!x.payload_url) ? 'running' : 'preparing',
       total_files: clean.length,
       current_index: 0,
       current_file: '',
@@ -40,7 +40,7 @@ export default async function(req: Request) {
       file_name: x.file_name,
       payload_url: x.payload_url,
       order_index: x.order_index,
-      status: 'queued',
+      status: x.payload_url ? 'queued' : 'awaiting_upload',
       offset: 0,
       total_records: x.total_records,
       created_count: 0,
