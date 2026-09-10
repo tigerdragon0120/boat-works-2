@@ -15,16 +15,49 @@ export default function Database() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState({ profiles: [], terms: [] });
+  const [meta, setMeta] = useState({ profileRaw: 0, profileUnique: 0, profileDuplicate: 0, termsShown: 0, termsHasMore: false });
+
+  const loadAllProfiles = async () => {
+    const all = [];
+    const limit = 500;
+    for (let skip = 0; skip <= 10000; skip += limit) {
+      const rows = await base44.entities.RacerProfile.filter({}, 'registration_number', limit, skip);
+      if (!rows?.length) break;
+      all.push(...rows);
+      if (rows.length < limit) break;
+    }
+
+    // 同一登録番号が複数ある場合は updated_at / updated_date が最も新しい1件だけを表示する。
+    const byReg = new Map();
+    for (const row of all) {
+      const reg = String(row.registration_number || '').trim();
+      if (!reg) continue;
+      const prev = byReg.get(reg);
+      const rowTime = String(row.updated_at || row.updated_date || row.created_date || '');
+      const prevTime = String(prev?.updated_at || prev?.updated_date || prev?.created_date || '');
+      if (!prev || rowTime >= prevTime) byReg.set(reg, row);
+    }
+    const unique = [...byReg.values()].sort((a, b) => Number(a.registration_number || 0) - Number(b.registration_number || 0));
+    return { raw: all, unique };
+  };
 
   const load = async () => {
     setBusy(true);
     setError('');
     try {
-      const [profiles, terms] = await Promise.all([
-        base44.entities.RacerProfile.list('registration_number', 500),
-        base44.entities.RacerTermStats.list('-term_year', 500),
+      const [profileResult, termRows] = await Promise.all([
+        loadAllProfiles(),
+        base44.entities.RacerTermStats.filter({}, '-term_year', 501, 0),
       ]);
-      setData({ profiles: profiles || [], terms: terms || [] });
+      const terms = (termRows || []).slice(0, 500);
+      setData({ profiles: profileResult.unique, terms });
+      setMeta({
+        profileRaw: profileResult.raw.length,
+        profileUnique: profileResult.unique.length,
+        profileDuplicate: Math.max(0, profileResult.raw.length - profileResult.unique.length),
+        termsShown: terms.length,
+        termsHasMore: (termRows || []).length > 500,
+      });
     } catch (e) {
       setError(e?.message || 'DBの読込に失敗しました');
     } finally {
