@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
-import { fetchHtml, parseRaceIndex, parseRaceCard, parseResult, parseBeforeInfo, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
+import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 import { upsertRace, upsertEntry, upsertResultAndVerify, runAndSavePrediction, getSettings } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 
@@ -87,8 +87,33 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       entryCountByRace[rn] = (entryCountByRace[rn] || 0) + 1;
     }
 
-    // 全12R揃っている場合はスキップ
+    // 公式racelist上部には1R〜12Rの締切時刻が1行で載っている。
+    // 艇が全て揃っている会場でも1ページだけ取得してRaceの締切を補正する。
+    // これにより、過去バグで全12Rが1Rと同じ締切になったデータも自動修復する。
     const completeRaces = Object.keys(entryCountByRace).filter((rn) => entryCountByRace[rn] >= 6).length;
+    if (existingRaces.length > 0) {
+      try {
+        const scheduleRes = await fetchHtml(buildUrl('racelist', raceDate, venueCode, 1));
+        if (scheduleRes.ok) {
+          const deadlineTimes = parseDeadlineTimes(scheduleRes.html);
+          if (deadlineTimes.length >= 12) {
+            for (const er of existingRaces) {
+              const rn = Number(er.race_number);
+              const t = deadlineTimes[rn - 1];
+              if (!rn || !t) continue;
+              const correctDeadline = `${raceDate}T${t}:00+09:00`;
+              if (er.deadline !== correctDeadline) {
+                await withRateLimitRetry(() => sr.Race.update(er.id, { deadline: correctDeadline }));
+                await sleep(120);
+              }
+            }
+          }
+        }
+      } catch (e: any) {
+        errors.push(`${venueName}: 締切時刻補正失敗 ${e.message}`);
+      }
+    }
+
     if (completeRaces >= 12) {
       skippedVenues++;
       continue;
@@ -106,7 +131,7 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
         continue;
       }
 
-      const parsed = parseRaceCard(res.html, raceDate, venueCode, venueName);
+      const parsed = parseRaceCard(res.html, raceDate, venueCode, venueName, rno);
       if (!parsed.ok || !parsed.data?.venues?.[0]?.races?.[0]) {
         errors.push(`${venueName} R${rno} 番組解析失敗: ${(parsed.errors || []).join('; ')}`);
         continue;
@@ -369,7 +394,16 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
   for (const race of races) {
     if (Date.now() - startTime > timeBudgetMs) break;
     if (race.exhibition_ready) continue; // 既に展示取得済み
-    if (race.status === 'finished') continue;
+    if (race.status === 'finished' || race.status === 'cancelled') continue;
+
+    // 直前情報は締切の60分前〜締切5分後だけ取得する。
+    // 公式beforeinfoページには開催前でも選手情報が存在するため、時間制限なしで解析すると
+    // 通常の数値を展示値と誤認し、朝からFINALになることがあった。
+    if (!race.deadline) continue;
+    const deadlineMs = new Date(race.deadline).getTime();
+    if (!Number.isFinite(deadlineMs)) continue;
+    const nowMs = Date.now();
+    if (nowMs < deadlineMs - 60 * 60 * 1000 || nowMs > deadlineMs + 5 * 60 * 1000) continue;
 
     const venueCode = race.venue_code;
     const raceNumber = race.race_number;
@@ -412,8 +446,13 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       await sr.Race.update(race.id, { exhibition_ready: true }).catch(() => {});
       fetched++;
 
-      // FINAL予想生成(展示取得済みの場合)
-      if (updated >= 6) {
+      // FINAL予想生成は6艇分の実展示値が確認できた場合だけ。
+      // 単に6選手がページに存在するだけではFINALにしない。
+      const realExhibitionCount = parsed.data.entries.filter((e: any) =>
+        e.exhibition_time != null && e.exhibition_time >= 5 && e.exhibition_time <= 9 &&
+        e.exhibition_st != null
+      ).length;
+      if (updated >= 6 && realExhibitionCount >= 6) {
         try {
           const updatedEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6);
           await runAndSavePrediction(base44, race, updatedEntries, settings, 'FINAL', {}, profileByReg, rollingByReg);
@@ -547,8 +586,8 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   // 優先順位:
   // 1. 翌日番組表が未取得 → 取得(夜間優先)
   // 2. 翌日PRE予想が未生成 → 生成
-  // 3. 当日結果が未取得 → 取得(レース後)
-  // 4. 当日番組表が未取得 → 取得(朝)
+  // 3. 当日番組表の不足を毎回補完（部分取得で止まっても次回継続）
+  // 4. 当日結果が未取得 → 取得(レース後)
   // 5. 当日展示データ → 取得(レース中)
 
   if (tomorrowRaceCount === 0 && jstHour >= 16) {
@@ -565,18 +604,22 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     remaining -= (Date.now() - startTime);
   }
 
-  if (remaining > 10000 && todayRaceCount > 0 && todayResultCount < todayRaceCount && jstHour >= 10) {
-    logs.push(`AUTO: 当日結果取得開始`);
-    const r = await fetchAndSaveResults(base44, today, remaining, logs, errors);
-    steps.push(`today_results: ${r.fetched}R`);
-    remaining -= (Date.now() - startTime);
+  // 当日Raceが0件かどうかではなく、毎回完全性を見ながら不足だけ補完する。
+  // fetchAndSaveRaceCards側が6艇揃ったRaceをスキップするため冪等で安全。
+  if (remaining > 10000) {
+    logs.push(`AUTO: 当日番組表の完全性確認・不足補完開始`);
+    const before = Date.now();
+    const r = await fetchAndSaveRaceCards(base44, today, remaining, logs, errors);
+    steps.push(`today_card: +${r.races}R/+${r.entries}艇`);
+    remaining -= (Date.now() - before);
   }
 
-  if (remaining > 10000 && todayRaceCount === 0) {
-    logs.push(`AUTO: 当日番組表取得開始`);
-    const r = await fetchAndSaveRaceCards(base44, today, remaining, logs, errors);
-    steps.push(`today_card: ${r.races}R/${r.entries}艇`);
-    remaining -= (Date.now() - startTime);
+  if (remaining > 10000 && todayRaceCount > 0 && todayResultCount < todayRaceCount && jstHour >= 10) {
+    logs.push(`AUTO: 当日結果取得開始`);
+    const before = Date.now();
+    const r = await fetchAndSaveResults(base44, today, remaining, logs, errors);
+    steps.push(`today_results: ${r.fetched}R`);
+    remaining -= (Date.now() - before);
   }
 
   if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
