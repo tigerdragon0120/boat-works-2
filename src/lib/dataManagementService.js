@@ -4,6 +4,15 @@ import { base44 } from "@/api/base44Client";
 import { todayStr } from "@/lib/predictionService";
 import { parseRacerTermFile, detectTermFromFilename } from "@/lib/racerTermParser";
 
+// === 自動更新システム ===
+export async function getAutoUpdateStatus() {
+  return await base44.functions.invoke("getAutoUpdateStatus", {});
+}
+
+export async function runAutoUpdateStep(step) {
+  return await base44.functions.invoke("runDailyAutoUpdate", { step });
+}
+
 // === ファイル取込 ===
 export async function importOfficialFile(importType, file) {
   const { file_url } = await base44.integrations.Core.UploadFile({ file });

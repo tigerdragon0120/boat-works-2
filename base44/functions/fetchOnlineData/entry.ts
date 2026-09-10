@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { upsertResultAndVerify, getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
+import { fetchHtml, parseBeforeInfo, parseResult, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -8,94 +9,6 @@ const num = (v: any) => {
   return Number.isFinite(n) ? n : null;
 };
 const str = (v: any) => (v != null ? String(v).trim() : '');
-
-// === boatrace.jp URLビルダー ===
-function buildUrl(fetchType: string, raceDate: string, venueCode: string, raceNumber: number): string {
-  const hd = raceDate.replace(/-/g, '');
-  const rjcd = venueCode.padStart(2, '0');
-  const rno = raceNumber;
-  switch (fetchType) {
-    case 'exhibition':
-      return `https://boatrace.jp/owpc/pc/race/exhibition?rjcd=${rjcd}&hd=${hd}&rno=${rno}`;
-    case 'odds':
-      return `https://boatrace.jp/owpc/pc/odds/3t?rjcd=${rjcd}&hd=${hd}&rno=${rno}`;
-    case 'result':
-      return `https://boatrace.jp/owpc/pc/race/result?rjcd=${rjcd}&hd=${hd}&rno=${rno}`;
-    default:
-      return '';
-  }
-}
-
-// === InvokeLLM用スキーマ ===
-function getLlmSchema(fetchType: string): object {
-  switch (fetchType) {
-    case 'exhibition':
-      return {
-        type: 'object',
-        properties: {
-          entries: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                boat_number: { type: 'number' },
-                exhibition_time: { type: 'number' },
-                exhibition_st: { type: 'number' },
-                exhibition_course: { type: 'number' },
-                tilt: { type: 'number' },
-                is_absent: { type: 'boolean' },
-                is_flying: { type: 'boolean' },
-              },
-            },
-          },
-        },
-      };
-    case 'odds':
-      return {
-        type: 'object',
-        properties: {
-          odds_list: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                combination: { type: 'string', description: '3連単組み合わせ 例 1-2-3' },
-                odds: { type: 'number' },
-              },
-            },
-          },
-        },
-      };
-    case 'result':
-      return {
-        type: 'object',
-        properties: {
-          result_trifecta: { type: 'string', description: '3連単結果 例 1-3-5' },
-          finish_order: { type: 'array', items: { type: 'number' } },
-          payout: { type: 'number' },
-          entries: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                boat_number: { type: 'number' },
-                course: { type: 'number' },
-                st: { type: 'number' },
-                winning_method: { type: 'string' },
-              },
-            },
-          },
-        },
-      };
-    default:
-      return { type: 'object', properties: {} };
-  }
-}
-
-function getLlmPrompt(fetchType: string): string {
-  const typeLabel = { exhibition: '展示', odds: '3連単オッズ', result: 'レース結果' }[fetchType] || '';
-  return `以下のHTMLは競艇の${typeLabel}ページです。このHTMLから${typeLabel}データを抽出し、指定されたJSONスキーマに従って構造化データを返してください。数値は適切に数値型に変換してください。不明な値はnullにしてください。`;
-}
 
 // === エラー繰り返し防止: 直近5分以内の同レース同fetch_typeの失敗をスキップ ===
 async function shouldSkipRecentFailure(base44: any, fetchType: string, raceDate: string, venueCode: string, raceNumber: number): Promise<boolean> {
@@ -116,58 +29,72 @@ async function shouldSkipRecentFailure(base44: any, fetchType: string, raceDate:
   } catch { return false; }
 }
 
-// === 展示データ処理 ===
-async function processExhibition(base44: any, race: any, entries: any[], parsed: any) {
+// === 展示データ処理(決定論的パーサー出力 → RaceEntry更新) ===
+async function processExhibition(base44: any, race: any, parsed: any) {
   const sr = base44.asServiceRole.entities;
   const parsedEntries = parsed.entries || [];
+  const existingEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+  const entryByBoat = new Map(existingEntries.map((e: any) => [e.boat_number, e]));
+
   for (const pe of parsedEntries) {
     const bn = num(pe.boat_number);
     if (!bn) continue;
-    const existing = await sr.RaceEntry.filter({ race_id: race.id, boat_number: bn }, 'boat_number', 1);
-    if (!existing || !existing[0]) continue;
-    const update: any = {
-      exhibition_time: num(pe.exhibition_time),
-      exhibition_st: num(pe.exhibition_st),
-      exhibition_course: num(pe.exhibition_course) || bn,
-      tilt: num(pe.tilt),
-      is_absent: !!pe.is_absent,
-      is_scratched: !!pe.is_absent,
-    };
-    if (pe.is_flying && num(pe.exhibition_st) != null) {
-      update.exhibition_st_raw = -Math.abs(num(pe.exhibition_st));
-    } else {
-      update.exhibition_st_raw = num(pe.exhibition_st);
+    const existing = entryByBoat.get(bn);
+    if (!existing) continue;
+
+    // 保護付き更新: nullで既存値を上書きしない
+    const update: any = {};
+    if (pe.exhibition_time != null) update.exhibition_time = pe.exhibition_time;
+    if (pe.exhibition_st != null) {
+      update.exhibition_st = pe.exhibition_st;
+      update.exhibition_st_raw = pe.exhibition_st_raw ?? pe.exhibition_st;
     }
-    await sr.RaceEntry.update(existing[0].id, update);
+    if (pe.exhibition_course != null) update.exhibition_course = pe.exhibition_course;
+    if (pe.tilt != null) update.tilt = pe.tilt;
+    if (pe.is_absent) { update.is_absent = true; update.is_scratched = true; }
+
+    if (Object.keys(update).length) {
+      await sr.RaceEntry.update(existing.id, update);
+    }
   }
-  // Race展示取得済フラグ
-  await sr.Race.update(race.id, { exhibition_ready: true });
+
+  // Race展示取得済フラグ + 天候情報更新
+  const raceUpdate: any = { exhibition_ready: true };
+  if (parsed.weather) raceUpdate.weather = parsed.weather;
+  if (parsed.wind_speed != null) raceUpdate.wind_speed = parsed.wind_speed;
+  if (parsed.water_temp != null) raceUpdate.water_temp = parsed.water_temp;
+  if (parsed.air_temp != null) raceUpdate.air_temp = parsed.air_temp;
+  if (parsed.wave_height != null) raceUpdate.wave_height = parsed.wave_height;
+  await sr.Race.update(race.id, raceUpdate);
+
   // FINAL予想生成
-  if (entries.length >= 6) {
+  const updatedEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+  if (updatedEntries.length >= 6) {
     try {
       const settings = await getSettings(base44);
       const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
       const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
-      const updatedEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6);
-      await runAndSavePrediction(base44, race, updatedEntries, settings, 'FINAL', {}, profileByReg);
+      const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
+      const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
+      await runAndSavePrediction(base44, race, updatedEntries, settings, 'FINAL', {}, profileByReg, rollingByReg);
     } catch {}
   }
+  return { entries_updated: parsedEntries.length };
 }
 
-// === オッズデータ処理 ===
+// === オッズデータ処理(決定論的パーサー出力 → OddsSnapshot保存) ===
 async function processOdds(base44: any, race: any, parsed: any) {
   const sr = base44.asServiceRole.entities;
-  const oddsList = parsed.odds_list || [];
-  const oddsMap: any = {};
-  for (const o of oddsList) {
-    const comb = str(o.combination);
-    if (comb) oddsMap[comb] = num(o.odds);
-  }
-  // OddsSnapshot保存(時系列履歴)
+  const oddsMap = parsed || {};
+  const oddsCount = Object.keys(oddsMap).length;
+  if (oddsCount === 0) return { odds_count: 0 };
+
+  // OddsSnapshot保存
   await sr.OddsSnapshot.create({
     race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
     captured_at: new Date().toISOString(),
   });
+
   // TrifectaPredictionのactual_odds更新
   const preds = await sr.RacePrediction.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1);
   if (preds && preds[0]) {
@@ -175,52 +102,78 @@ async function processOdds(base44: any, race: any, parsed: any) {
     for (const t of trifectas) {
       const actualOdds = oddsMap[t.combination] || null;
       const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
-      await sr.TrifectaPrediction.update(t.id, { actual_odds: actualOdds, expected_value: ev });
+      await sr.TrifectaPrediction.update(t.id, { actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev });
     }
   }
-  return { odds_count: Object.keys(oddsMap).length };
+  return { odds_count: oddsCount };
 }
 
-// === レース結果処理 ===
+// === レース結果処理(決定論的パーサー出力 → RaceResult + RacerRaceHistory) ===
 async function processResult(base44: any, race: any, parsed: any) {
-  const resultTrifecta = str(parsed.result_trifecta);
-  const finishOrder = parsed.finish_order || (resultTrifecta ? resultTrifecta.split('-').map(Number) : []);
-  const payout = num(parsed.payout) || 0;
-  if (!resultTrifecta) throw new Error('結果データが見つかりません');
+  const sr = base44.asServiceRole.entities;
+  const result = parsed.data?.venues?.[0]?.results?.[0];
+  if (!result) throw new Error('結果データが見つかりません');
+
+  const resultTrifecta = str(result.result_trifecta);
+  const finishOrder = result.finish_order || [];
+  const payout = num(result.payout) || 0;
+  if (!resultTrifecta) throw new Error('3連単結果が見つかりません');
+
   await upsertResultAndVerify(base44, race, {
     result_trifecta: resultTrifecta,
     finish_order: finishOrder,
     payout,
   });
+
   // RacerRaceHistory蓄積
-  const sr = base44.asServiceRole.entities;
-  const entries = parsed.entries || [];
   const raceEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
-  for (const pe of entries) {
+  const entryByBoat = new Map(raceEntries.map((e: any) => [e.boat_number, e]));
+  const existingHists = await sr.RacerRaceHistory.filter(
+    { race_date: race.race_date, venue_code: race.venue_code, race_number: race.race_number },
+    'race_number', 10
+  ).catch(() => []);
+  const histByReg = new Map(existingHists.map((h: any) => [h.registration_number, h]));
+
+  const histCreates: any[] = [];
+  const histUpdates: any[] = [];
+
+  for (const pe of result.entries || []) {
     const bn = num(pe.boat_number);
     if (!bn) continue;
-    const re = raceEntries.find((e: any) => e.boat_number === bn);
-    const reg = re ? str(re.registration_number || re.register_number) : '';
-    if (!reg) continue;
-    const histKey = { registration_number: reg, race_date: race.race_date, venue_code: race.venue_code, race_number: race.race_number };
-    const existingHist = await sr.RacerRaceHistory.filter(histKey, '-created_date', 1).catch(() => []);
-    const histDoc = {
+    const re = entryByBoat.get(bn);
+    const reg = str(re?.registration_number || re?.register_number || pe.registration_number);
+    if (!reg || !/^\d{4}$/.test(reg)) continue;
+
+    const histDoc: any = {
       registration_number: reg,
       race_date: race.race_date,
       venue_code: race.venue_code,
       race_number: race.race_number,
       boat_number: bn,
-      course: num(pe.course) || undefined,
-      finish_order: finishOrder.indexOf(bn) + 1 || undefined,
-      st: num(pe.st) || undefined,
+      finish_order: num(pe.finish_order) || undefined,
+      st: num(pe.st) ?? undefined,
       winning_method: str(pe.winning_method) || undefined,
+      race_time: str(pe.race_time) || undefined,
     };
-    if (existingHist && existingHist[0]) {
-      await sr.RacerRaceHistory.update(existingHist[0].id, histDoc);
-    } else {
-      await sr.RacerRaceHistory.create(histDoc);
-    }
+    const old = histByReg.get(reg);
+    if (old) histUpdates.push({ id: old.id, ...histDoc });
+    else histCreates.push(histDoc);
   }
+
+  if (histCreates.length) await sr.RacerRaceHistory.bulkCreate(histCreates).catch(() => {});
+  if (histUpdates.length) await sr.RacerRaceHistory.bulkUpdate(histUpdates).catch(() => {});
+
+  // 天候情報でRace更新
+  if (result.weather || result.wind_speed != null) {
+    const raceUpdate: any = {};
+    if (result.weather) raceUpdate.weather = result.weather;
+    if (result.wind_speed != null) raceUpdate.wind_speed = result.wind_speed;
+    if (result.water_temp != null) raceUpdate.water_temp = result.water_temp;
+    if (result.air_temp != null) raceUpdate.air_temp = result.air_temp;
+    if (result.wave_height != null) raceUpdate.wave_height = result.wave_height;
+    await sr.Race.update(race.id, raceUpdate).catch(() => {});
+  }
+
   return { result_trifecta: resultTrifecta, payout };
 }
 
@@ -239,19 +192,21 @@ export default async function(req: Request) {
 
     const sr = base44.asServiceRole.entities;
     const now = new Date().toISOString();
+    const vc = str(venue_code);
+    const rn = num(race_number);
 
     // エラー繰り返し防止
-    const skip = await shouldSkipRecentFailure(base44, fetch_type, race_date, str(venue_code), num(race_number));
+    const skip = await shouldSkipRecentFailure(base44, fetch_type, race_date, vc, rn);
     if (skip) {
       await sr.OnlineFetchLog.create({
-        fetch_type, race_date, venue_code: str(venue_code), race_number: num(race_number),
+        fetch_type, race_date, venue_code: vc, race_number: rn,
         status: 'skipped', fetched_at: now, error_message: '直近5分以内に失敗のためスキップ',
       });
       return Response.json({ ok: false, status: 'skipped', message: '直近5分以内に失敗のためスキップしました' });
     }
 
     // Race検索
-    const raceKey = buildRaceKey(race_date, str(venue_code), num(race_number));
+    const raceKey = buildRaceKey(race_date, vc, rn);
     let race = null;
     if (race_id) {
       race = await sr.Race.get(race_id).catch(() => null);
@@ -262,69 +217,57 @@ export default async function(req: Request) {
     }
     if (!race) {
       await sr.OnlineFetchLog.create({
-        fetch_type, race_date, venue_code: str(venue_code), race_number: num(race_number),
+        fetch_type, race_date, venue_code: vc, race_number: rn,
         status: 'failed', fetched_at: now, error_message: '対象Raceが見つかりません',
       });
       return Response.json({ ok: false, status: 'failed', message: '対象Raceが見つかりません' });
     }
 
-    // HTML取得
-    const url = buildUrl(fetch_type, race_date, str(venue_code), num(race_number));
-    let httpStatus = 0;
-    let html = '';
+    // URL構築(正しいURL形式: jcd パラメータ使用)
+    const url = buildUrl(fetch_type === 'exhibition' ? 'beforeinfo' : fetch_type === 'odds' ? 'odds3t' : 'raceresult', race_date, vc, rn);
+
+    // HTML取得(決定論的パーサー使用、InvokeLLM不使用)
+    const fetchRes = await fetchHtml(url);
+    if (!fetchRes.ok) {
+      await sr.OnlineFetchLog.create({
+        fetch_type, race_id: race.id, race_date, venue_code: vc, race_number: rn,
+        status: fetchRes.status === 0 ? 'failed' : 'no_data', fetched_at: now,
+        http_status: fetchRes.status, error_message: fetchRes.error || `HTTP ${fetchRes.status}`,
+      });
+      return Response.json({ ok: false, status: fetchRes.status === 0 ? 'failed' : 'no_data', message: fetchRes.error || `HTTP ${fetchRes.status}` });
+    }
+
+    // 決定論的HTML解析(InvokeLLM不使用)
+    let parsed: any;
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30000);
-      let res: Response;
-      try {
-        res = await fetch(url, { signal: controller.signal });
-      } finally { clearTimeout(timer); }
-      httpStatus = res.status;
-      html = await res.text();
-      if (res.status !== 200 || !html) {
-        await sr.OnlineFetchLog.create({
-          fetch_type, race_id: race.id, race_date, venue_code: str(venue_code), race_number: num(race_number),
-          status: 'no_data', fetched_at: now, http_status: httpStatus, error_message: `HTTP ${res.status}`,
-        });
-        return Response.json({ ok: false, status: 'no_data', message: `HTTP ${res.status} - データが未公開の可能性` });
+      if (fetch_type === 'exhibition') {
+        const p = parseBeforeInfo(fetchRes.html);
+        if (!p.ok) throw new Error(p.errors.join('; ') || '展示データ解析失敗');
+        parsed = p.data;
+      } else if (fetch_type === 'odds') {
+        parsed = parseOdds3t(fetchRes.html);
+      } else if (fetch_type === 'result') {
+        const venueName = race.venue_name || race.venue || VENUE_MAP[vc] || vc;
+        const p = parseResult(fetchRes.html, race_date, vc, venueName);
+        if (!p.ok) throw new Error((p.errors || []).join('; ') || '結果解析失敗');
+        parsed = p;
+      } else {
+        throw new Error(`不明なfetch_type: ${fetch_type}`);
       }
     } catch (e: any) {
       await sr.OnlineFetchLog.create({
-        fetch_type, race_id: race.id, race_date, venue_code: str(venue_code), race_number: num(race_number),
-        status: 'failed', fetched_at: now, error_message: e.message,
+        fetch_type, race_id: race.id, race_date, venue_code: vc, race_number: rn,
+        status: 'failed', fetched_at: now, http_status: 200, error_message: 'HTML解析失敗: ' + e.message,
       });
-      return Response.json({ ok: false, status: 'failed', message: e.message });
-    }
-
-    // HTMLを切り詰め(コスト削減)
-    const truncatedHtml = html.slice(0, 80000);
-    const prompt = `${getLlmPrompt(fetch_type)}\n\nHTML:\n${truncatedHtml}`;
-
-    // InvokeLLMでHTML解析
-    let parsed: any;
-    try {
-      const llmResult = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt,
-        response_json_schema: getLlmSchema(fetch_type),
-        model: 'gpt_5_mini',
-      });
-      parsed = typeof llmResult === 'string' ? JSON.parse(llmResult) : llmResult;
-    } catch (e: any) {
-      await sr.OnlineFetchLog.create({
-        fetch_type, race_id: race.id, race_date, venue_code: str(venue_code), race_number: num(race_number),
-        status: 'failed', fetched_at: now, http_status: httpStatus, error_message: 'LLM解析失敗: ' + e.message,
-      });
-      return Response.json({ ok: false, status: 'failed', message: 'LLM解析失敗: ' + e.message });
+      return Response.json({ ok: false, status: 'failed', message: 'HTML解析失敗: ' + e.message });
     }
 
     // データ処理
     try {
-      const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
       let resultData: any = {};
       switch (fetch_type) {
         case 'exhibition':
-          await processExhibition(base44, race, entries, parsed);
-          resultData = { entries_updated: (parsed.entries || []).length };
+          resultData = await processExhibition(base44, race, parsed);
           break;
         case 'odds':
           resultData = await processOdds(base44, race, parsed);
@@ -335,19 +278,19 @@ export default async function(req: Request) {
       }
 
       await sr.OnlineFetchLog.create({
-        fetch_type, race_id: race.id, race_date, venue_code: str(venue_code), race_number: num(race_number),
-        status: 'success', fetched_at: now, http_status: httpStatus,
+        fetch_type, race_id: race.id, race_date, venue_code: vc, race_number: rn,
+        status: 'success', fetched_at: now, http_status: 200,
       });
 
       return Response.json({
         ok: true, status: 'success', fetch_type, race_id: race.id,
         ...resultData,
-        message: `${fetch_type}データ取得完了`,
+        message: `${fetch_type}データ取得完了(決定論的解析)`,
       });
     } catch (e: any) {
       await sr.OnlineFetchLog.create({
-        fetch_type, race_id: race.id, race_date, venue_code: str(venue_code), race_number: num(race_number),
-        status: 'failed', fetched_at: now, http_status: httpStatus, error_message: 'データ処理失敗: ' + e.message,
+        fetch_type, race_id: race.id, race_date, venue_code: vc, race_number: rn,
+        status: 'failed', fetched_at: now, http_status: 200, error_message: 'データ処理失敗: ' + e.message,
       });
       return Response.json({ ok: false, status: 'failed', message: 'データ処理失敗: ' + e.message });
     }

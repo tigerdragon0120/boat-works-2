@@ -1,13 +1,15 @@
 import React, { useState } from "react";
-import { Database, FileSpreadsheet, CloudDownload, BarChart3, Code, Users } from "lucide-react";
+import { Database, FileSpreadsheet, CloudDownload, BarChart3, Code, Users, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import DataDashboard from "@/components/admin/DataDashboard";
 import FileImportSection from "@/components/admin/FileImportSection";
 import OnlineFetchSection from "@/components/admin/OnlineFetchSection";
 import DeveloperTools from "@/components/admin/DeveloperTools";
 import RacerDataSection from "@/components/admin/RacerDataSection";
+import AutoUpdateSection from "@/components/admin/AutoUpdateSection";
 
 const tabs = [
+  { k: "auto", l: "自動更新", icon: RefreshCw },
   { k: "file", l: "公式ファイル取込", icon: FileSpreadsheet },
   { k: "racer", l: "選手データ", icon: Users },
   { k: "online", l: "オンライン取得", icon: CloudDownload },
@@ -16,7 +18,7 @@ const tabs = [
 ];
 
 export default function Admin() {
-  const [tab, setTab] = useState("file");
+  const [tab, setTab] = useState("auto");
 
   return (
     <div>
@@ -47,6 +49,7 @@ export default function Admin() {
       </div>
 
       {/* タブ内容 */}
+      {tab === "auto" && <AutoUpdateSection />}
       {tab === "file" && <FileImportSection />}
       {tab === "racer" && <RacerDataSection />}
       {tab === "online" && <OnlineFetchSection />}
