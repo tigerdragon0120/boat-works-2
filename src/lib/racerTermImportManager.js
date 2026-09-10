@@ -118,8 +118,30 @@ export async function startRacerTermImport(previews) {
   };
   emit();
 
-  const uploaded = [];
   try {
+    // 先にサーバージョブを作る。これによりアップロード中でも全画面に進捗を出せる。
+    const shellResp = await base44.functions.invoke("startRacerTermBatchJob", {
+      items: items.map((p) => ({
+        file_name: p.file.name,
+        payload_url: "",
+        total_records: p.data.records.length,
+      })),
+    });
+    const shell = shellResp?.data || {};
+    if (!shell.ok || !shell.batch_id) throw new Error(shell.error || "期別成績ジョブを開始できませんでした");
+
+    state = {
+      ...state,
+      batchId: shell.batch_id,
+      running: true,
+      uploading: true,
+      current: 0,
+      total: shell.total_files || items.length,
+      file: items[0]?.file?.name || "",
+      results: [],
+    };
+    emit();
+
     for (let i = 0; i < items.length; i++) {
       const p = items[i];
       state = { ...state, uploadCurrent: i + 1, file: p.file.name };
@@ -133,23 +155,19 @@ export async function startRacerTermImport(previews) {
       const payloadFile = new File([JSON.stringify(payload)], `${p.file.name}.parsed.json`, { type: "application/json" });
       const up = await base44.integrations.Core.UploadFile({ file: payloadFile });
       if (!up?.file_url) throw new Error(`${p.file.name}: サーバーへの一時保存に失敗しました`);
-      uploaded.push({ file_name: p.file.name, payload_url: up.file_url, total_records: p.data.records.length });
+
+      const attachResp = await base44.functions.invoke("attachRacerTermBatchPayload", {
+        batch_id: shell.batch_id,
+        file_name: p.file.name,
+        payload_url: up.file_url,
+      });
+      if (attachResp?.data?.ok === false) throw new Error(attachResp?.data?.error || `${p.file.name}: ジョブ登録に失敗しました`);
+
+      // 1件目がアップロードできた時点で取込処理を開始。残りのアップロードと並行して進める。
+      runServerSteps();
     }
 
-    const resp = await base44.functions.invoke("startRacerTermBatchJob", { items: uploaded });
-    const d = resp?.data || {};
-    if (!d.ok || !d.batch_id) throw new Error(d.error || "期別成績ジョブを開始できませんでした");
-
-    state = {
-      ...state,
-      uploading: false,
-      running: true,
-      batchId: d.batch_id,
-      current: 0,
-      total: d.total_files || items.length,
-      file: "",
-      results: [],
-    };
+    state = { ...state, uploading: false };
     emit();
     runServerSteps();
     return snapshot();
