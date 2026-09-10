@@ -162,7 +162,9 @@ export default async function(req: Request) {
     const batchRegs = [...new Set(batch.map((r:any) => String(r.registration_number || '').trim()).filter(Boolean))];
     const profileByReg = new Map();
     for (const reg of batchRegs) {
-      const existing = await sr.RacerProfile.filter({ registration_number: reg }, '-updated_at', 1).catch(() => []);
+      // 同一登録番号のProfileが重複していても、今後は必ず最新1件を更新対象にする。
+      // 新規作成判定を安定させ、再取込で重複を増やさない。
+      const existing = await sr.RacerProfile.filter({ registration_number: reg }, '-updated_at', 50).catch(() => []);
       if (existing && existing[0]) profileByReg.set(reg, existing[0]);
     }
     const latestInBatch = new Map();
