@@ -4,6 +4,7 @@ import { Waves, Home, BarChart3, Settings, Search, Ticket, CalendarDays, Newspap
 import { cn } from "@/lib/utils";
 import { resumeKBatchImport, subscribeKBatchImport, getKBatchImportState } from "@/lib/kBatchImportManager";
 import { resumeRacerTermImport, subscribeRacerTermImport, getRacerTermImportState } from "@/lib/racerTermImportManager";
+import { base44 } from "@/api/base44Client";
 
 const nav = [
   { to: "/", label: "レース一覧", icon: Home },
@@ -31,7 +32,50 @@ export default function Layout() {
     resumeRacerTermImport();
     const unsubK = subscribeKBatchImport(setKImport);
     const unsubTerm = subscribeRacerTermImport(setTermImport);
+
+    // 期別成績の表示はlocalStorage任せにせず、サーバーの最新ジョブを定期確認する。
+    // ページ遷移や再読込があっても、実際に処理中なら必ず全画面バナーを復元する。
+    let cancelled = false;
+    const refreshTermBannerFromServer = async () => {
+      try {
+        const jobs = await base44.entities.RacerTermImportJob.filter({}, "-created_date", 1);
+        if (cancelled) return;
+        const job = jobs?.[0];
+        const active = job && ["queued", "preparing", "running"].includes(job.status);
+        if (!active) {
+          setTermImport((prev) => ({ ...prev, running: false, uploading: false }));
+          return;
+        }
+
+        let item = null;
+        if (job.batch_id) {
+          const items = await base44.entities.RacerTermImportItem.filter({ batch_id: job.batch_id }, "order_index", 500);
+          if (cancelled) return;
+          item = (items || []).find((x) => ["processing", "queued", "awaiting_upload"].includes(x.status)) || items?.[0] || null;
+        }
+
+        setTermImport((prev) => ({
+          ...prev,
+          running: true,
+          uploading: job.status === "preparing" || item?.status === "awaiting_upload",
+          batchId: job.batch_id || "",
+          current: Number(job.current_index || 0),
+          total: Number(job.total_files || 0),
+          file: job.current_file || item?.file_name || "",
+          recordCurrent: Number(item?.offset || 0),
+          recordTotal: Number(item?.total_records || 0),
+        }));
+      } catch {
+        // 一時的に取得できなくても既存表示は消さない。
+      }
+    };
+
+    refreshTermBannerFromServer();
+    const timer = setInterval(refreshTermBannerFromServer, 2500);
+
     return () => {
+      cancelled = true;
+      clearInterval(timer);
       unsubK?.();
       unsubTerm?.();
     };
@@ -99,7 +143,7 @@ export default function Layout() {
                 <span className="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
                 {termImport.uploading
                   ? `選手期別成績を準備・取込中 ${termImport.uploadCurrent || 0}/${termImport.uploadTotal || termImport.total || 0}${termImport.file ? ` — ${termImport.file}` : ""}`
-                  : `選手期別成績をバックグラウンド取込中 ${termImport.current || 0}/${termImport.total || 0}${termImport.file ? ` — ${termImport.file}` : ""}`}
+                  : `選手期別成績をバックグラウンド取込中 ${termImport.current || 0}/${termImport.total || 0}${termImport.file ? ` — ${termImport.file}` : ""}${termImport.recordTotal ? ` — ${termImport.recordCurrent || 0}/${termImport.recordTotal}件` : ""}`}
               </span>
             )}
           </div>
