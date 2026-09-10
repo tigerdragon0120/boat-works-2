@@ -107,13 +107,43 @@ export async function startRacerTermImport(previews) {
   const items = Array.from(previews || []).filter(p => p?.data?.records?.length && p?.file?.name);
   if (!items.length) throw new Error("取込対象の期別成績ファイルがありません");
 
-  // localStorageに古いrunning状態が残っていて新規開始を邪魔しないよう、
-  // 既存batchがあれば先にサーバー状態を再確認する。
-  if (state.batchId) {
-    await refreshJob();
-  }
-  if (state.running || state.uploading) {
-    throw new Error(`すでに期別成績の取込が実行中です${state.file ? `: ${state.file}` : ""}`);
+  // 新規開始判定はブラウザの古いstateではなく、必ずサーバー側の最新ジョブを基準にする。
+  try {
+    const latestJobs = await base44.entities.RacerTermImportJob.filter({}, "-created_date", 1);
+    const latest = latestJobs?.[0];
+    const active = latest && ["queued", "preparing", "running"].includes(latest.status);
+    if (active) {
+      state = {
+        ...state,
+        running: true,
+        uploading: latest.status === "preparing",
+        batchId: latest.batch_id || "",
+        current: Number(latest.current_index || 0),
+        total: Number(latest.total_files || 0),
+        file: latest.current_file || state.file || "",
+      };
+      emit();
+      throw new Error(`すでに期別成績の取込が実行中です${state.file ? `: ${state.file}` : ""}`);
+    }
+
+    // 最新ジョブがcompletedなら、localStorageに残った古いrunning/uploadingを強制クリアする。
+    state = {
+      ...state,
+      running: false,
+      uploading: false,
+      batchId: "",
+      current: 0,
+      total: 0,
+      file: "",
+    };
+    emit();
+  } catch (e) {
+    // 「実行中」エラーはそのまま返す。通信失敗だけは既存batchを再確認して安全側に倒す。
+    if (String(e?.message || e).includes("すでに期別成績の取込が実行中です")) throw e;
+    if (state.batchId) await refreshJob();
+    if (state.running || state.uploading) {
+      throw new Error(`すでに期別成績の取込が実行中です${state.file ? `: ${state.file}` : ""}`);
+    }
   }
 
   // 登録ボタンを押した瞬間から全画面バナーを表示する。
