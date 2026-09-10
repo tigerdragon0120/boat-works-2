@@ -37,6 +37,9 @@ function stripTags(html) {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&yen;/g, "¥")
+    .replace(/&#165;/g, "¥")
+    .replace(/&#65509;/g, "￥")
     .replace(/[\s\u3000]+/g, " ")
     .trim();
 }
@@ -278,13 +281,15 @@ export function parseRaceCard(html, raceDate, venueCode, venueName) {
 export function parseResult(html, raceDate, venueCode, venueName) {
   const errors = [];
   const warnings = [];
+  const text = normalizeWidth(stripTags(html));
 
-  // 着順表抽出: 着順(全角1-6) + 枠 + 登録番号+氏名 + タイム
-  const finishPattern = /([１-６])\s*(\d)\s*(\d{4})([^\d]*?)(\d['″"]?\d+["″']?\d*)/g;
+  // 着順表抽出: 着順(1-6) + 枠 + 登録番号+氏名 + タイム
+  // normalizeWidth後のため半角数字でマッチ。テキスト: "1 4 4992廣瀬　　篤哉 1'50"1"
+  const finishPattern = /([1-6])\s+(\d)\s+(\d{4})\s*(\S+)\s+(\d['"]?\d+["']?\d*)/g;
   const entries = [];
   let fm;
-  while ((fm = finishPattern.exec(html)) !== null) {
-    const finishOrder = "１２３４５６".indexOf(fm[1]) + 1;
+  while ((fm = finishPattern.exec(text)) !== null) {
+    const finishOrder = parseInt(fm[1], 10);
     const boatNumber = num(fm[2]);
     const regNum = fm[3];
     const playerName = fm[4].trim().replace(/\s+/g, "");
@@ -304,52 +309,51 @@ export function parseResult(html, raceDate, venueCode, venueName) {
     }
   }
 
-  // 3連単結果・払戻抽出
+  // 3連単結果・払戻抽出(テキストから)
   let resultTrifecta = null;
   let payout = null;
-  const triMatch = html.match(/3連単[\s\S]*?(\d-\d-\d)[\s\S]*?¥([\d,]+)/);
+  // 3連単結果・払戻抽出(テキストから)
+  // 組番に空白が入る場合に対応: "3連単 1 - 2 - 4 ¥1,830"
+  const triMatch = text.match(/3連単\s+(\d\s*-\s*\d\s*-\s*\d)\s+[¥￥]?([\d,]+)/);
   if (triMatch) {
-    resultTrifecta = triMatch[1];
+    resultTrifecta = triMatch[1].replace(/\s/g, "");
     payout = num(triMatch[2].replace(/,/g, ""));
   }
 
-  // ST情報抽出: img_boat2_X.png の後にST値
-  const stPattern = /img_boat2_(\d)\.png[\s\S]*?(-?\d+\.\d+|F\.\d+)/g;
+  // ST情報抽出: img_boat2_X.png の後にST値(.19やF.05形式に対応)
+  const stPattern = /img_boat2_(\d)\.png[\s\S]*?(-?\d*\.\d+|F\.\d+)/g;
   const stMap = {};
   let sm;
   while ((sm = stPattern.exec(html)) !== null) {
     const bn = num(sm[1]);
     let stVal = sm[2];
-    if (stVal.startsWith("F")) stVal = -num(stVal.slice(1));
+    if (stVal.startsWith("F")) stVal = -Math.abs(num(stVal.slice(1)) || 0);
     else stVal = num(stVal);
-    stMap[bn] = stVal;
+    if (bn >= 1 && bn <= 6) stMap[bn] = stVal;
   }
 
   // 決まり手抽出
   let winningMethod = null;
-  const methodMatch = html.match(/決まり手[\s\S]*?(逃げ|まくり|差し|まくり差し|抜き|恵まれ|その他)/);
+  const methodMatch = text.match(/決まり手\s*(逃げ|まくり|差し|まくり差し|抜き|恵まれ|その他)/);
   if (methodMatch) winningMethod = methodMatch[1];
 
-  // 天候情報抽出
-  let weather = null, windSpeed = null, windDir = null, waterTemp = null, airTemp = null, waveHeight = null;
-  const weatherMatch = html.match(/気温([\d.]+)℃/);
-  if (weatherMatch) airTemp = num(weatherMatch[1]);
-  const windMatch = html.match(/風速(\d+)m/);
+  // 天候情報抽出(テキストから)
+  let weather = null, windSpeed = null, waterTemp = null, airTemp = null, waveHeight = null;
+  const airTempMatch = text.match(/気温([\d.]+)℃/);
+  if (airTempMatch) airTemp = num(airTempMatch[1]);
+  const windMatch = text.match(/風速(\d+)m/);
   if (windMatch) windSpeed = num(windMatch[1]);
-  const waterMatch = html.match(/水温([\d.]+)℃/);
+  const waterMatch = text.match(/水温([\d.]+)℃/);
   if (waterMatch) waterTemp = num(waterMatch[1]);
-  const waveMatch = html.match(/波高(\d+)cm/);
+  const waveMatch = text.match(/波高(\d+)cm/);
   if (waveMatch) waveHeight = num(waveMatch[1]);
-  const weatherTypeMatch = html.match(/(晴れ|曇り|雨|雪|霧)/);
+  const weatherTypeMatch = text.match(/(晴れ|曇り|雨|雪|霧)/);
   if (weatherTypeMatch) weather = weatherTypeMatch[1];
 
-  // 進入(展示コース)は結果ページからは取得困難な場合あり。ST情報から推定。
-  // 結果のentriesにSTとコース情報を付与
+  // 結果のentriesにSTと決まり手を付与
   for (const e of uniqueEntries) {
-    e.st = stMap[e.boat_number] || null;
+    e.st = stMap[e.boat_number] ?? null;
     e.winning_method = e.finish_order === 1 ? winningMethod : null;
-    // 実際の進入コースは結果ページに無い場合がある。展示データを保持するため
-    // ここではcourseを設定しない(RaceEntryの展示進入を上書きしない)。
   }
 
   if (!resultTrifecta) {
@@ -366,7 +370,7 @@ export function parseResult(html, raceDate, venueCode, venueName) {
       venue_code: venueCode,
       venue_name: venueName || VENUE_MAP[venueCode] || venueCode,
       results: [{
-        race_number: null, // 外部から設定
+        race_number: null,
         result_trifecta: resultTrifecta,
         payout: payout || 0,
         entries: uniqueEntries,
