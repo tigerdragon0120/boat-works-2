@@ -7,7 +7,7 @@
       "trigger_type": "scheduled",
       "events": [],
       "schedule_mode": "recurring",
-      "cron_expression": "*/30 * * * *",
+      "cron_expression": "*/5 * * * *",
       "one_time_date": null,
       "timezone": "Asia/Tokyo",
       "interval_value": null,
@@ -38,7 +38,7 @@
           "then": "end",
           "x-base44": {
             "title": "\u6bce\u65e5\u81ea\u52d5\u66f4\u65b0",
-            "description": "\u516c\u5f0f\u30c7\u30fc\u30bf\u81ea\u52d5\u53d6\u5f97\u30fb\u4e88\u60f3\u751f\u6210(30\u5206\u6bce)"
+            "description": "\u516c\u5f0f\u30c7\u30fc\u30bf\u81ea\u52d5\u53d6\u5f97\u30fb\u4e88\u60f3\u751f\u6210(5\u5206\u6bce)"
           }
         }
       }
