@@ -417,6 +417,7 @@ export function parseResult(html, raceDate, venueCode, venueName) {
 // =====================================================
 export function parseBeforeInfo(html) {
   const errors = [];
+  const warnings = [];
 
   // 各艇の展示タイム・チルト抽出
   // toban=XXXX をアンカーに各艇のデータを特定
@@ -505,7 +506,7 @@ export function parseBeforeInfo(html) {
   return {
     ok: exhibitionData.length >= 6,
     errors,
-    warnings: [],
+    warnings,
     data: {
       entries: exhibitionData,
       weather,
