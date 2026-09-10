@@ -97,7 +97,9 @@ export default function Layout() {
             {termImport?.running && (
               <span className="inline-flex items-center gap-2">
                 <span className="inline-block w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
-                選手期別成績をバックグラウンド取込中 {termImport.current || 0}/{termImport.total || 0}{termImport.file ? ` — ${termImport.file}` : ""}
+                {termImport.uploading
+                  ? `選手期別成績を準備・取込中 ${termImport.uploadCurrent || 0}/${termImport.uploadTotal || termImport.total || 0}${termImport.file ? ` — ${termImport.file}` : ""}`
+                  : `選手期別成績をバックグラウンド取込中 ${termImport.current || 0}/${termImport.total || 0}${termImport.file ? ` — ${termImport.file}` : ""}`}
               </span>
             )}
           </div>
