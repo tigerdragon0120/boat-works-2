@@ -120,9 +120,28 @@ export function parseRaceIndex(html) {
 }
 
 // =====================================================
+// racelist上部の締切予定時刻(1R〜12R)を抽出
+// =====================================================
+export function parseDeadlineTimes(html) {
+  const marker = String(html || '').indexOf('締切予定時刻');
+  if (marker < 0) return [];
+  // 締切行は短いtable行なので次の </tr> までに限定し、他の時刻を混ぜない。
+  const tail = String(html || '').slice(marker);
+  const rowEnd = tail.indexOf('</tr>');
+  const row = rowEnd >= 0 ? tail.slice(0, rowEnd) : tail.slice(0, 5000);
+  const times = [];
+  const re = /(\d{1,2}:\d{2})/g;
+  let m;
+  while ((m = re.exec(normalizeWidth(stripTags(row)))) !== null) {
+    if (!times.includes(m[1])) times.push(m[1]);
+  }
+  return times.slice(0, 12);
+}
+
+// =====================================================
 // 出走表(racelist)解析 → Bファイル形式データ
 // =====================================================
-export function parseRaceCard(html, raceDate, venueCode, venueName) {
+export function parseRaceCard(html, raceDate, venueCode, venueName, raceNumber = null) {
   const errors = [];
   const warnings = [];
 
@@ -140,10 +159,15 @@ export function parseRaceCard(html, raceDate, venueCode, venueName) {
     if (raceName.includes(t)) { raceType = t; break; }
   }
 
-  // 締切時刻抽出 (race tableの締切予定時刻行)
+  // 締切時刻抽出。公式racelistには「締切予定時刻」の1行に1R〜12Rが並ぶ。
+  // 以前は先頭時刻だけを拾っていたため全レースが1Rの締切になっていた。
+  const deadlineTimes = parseDeadlineTimes(html);
   let deadlineTime = null;
-  const deadlineMatch = html.match(/締切予定時刻[\s\S]*?(\d{1,2}:\d{2})/);
-  if (deadlineMatch) deadlineTime = deadlineMatch[1];
+  if (raceNumber && deadlineTimes.length >= raceNumber) {
+    deadlineTime = deadlineTimes[raceNumber - 1];
+  } else if (deadlineTimes.length === 1) {
+    deadlineTime = deadlineTimes[0];
+  }
 
   // 選手データ抽出: racerphoto/XXXX.jpg をアンカーに6艇を特定
   const photoPattern = /racerphoto\/(\d{4})\.jpg/g;
@@ -267,6 +291,7 @@ export function parseRaceCard(html, raceDate, venueCode, venueName) {
         race_name: raceName,
         race_type: raceType,
         deadline_time: deadlineTime,
+        deadline_times: deadlineTimes,
         entries,
       }],
     }],
