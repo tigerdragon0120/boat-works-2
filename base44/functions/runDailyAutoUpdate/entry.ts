@@ -49,13 +49,7 @@ function nowJSTTime(): string {
 async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
   const sr = base44.asServiceRole.entities;
   const startTime = Date.now();
-  const settings = await getSettings(base44);
-  const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
-  const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
-  const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
-  const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
-  // レース指数ページ取得 → 開催場リスト
   const indexUrl = buildUrl('index', raceDate, '', 0);
   const indexRes = await fetchHtml(indexUrl);
   if (!indexRes.ok) {
@@ -68,153 +62,140 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
   let totalRaces = 0, totalEntries = 0, skippedVenues = 0;
 
   for (const venue of venues) {
-    if (Date.now() - startTime > timeBudgetMs) {
-      logs.push(`時間予算到達 — 残り${venues.length - venues.indexOf(venue)}場`);
+    if (Date.now() - startTime > timeBudgetMs - 5000) {
+      logs.push(`時間予算到達 — 残り${venues.length - venues.indexOf(venue)}場は次回継続`);
       break;
     }
+
     const venueCode = venue.venue_code;
     const venueName = venue.venue_name;
-
-    // DB既存確認: この日付+会場のRace数
-    const existingRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 20).catch(() => []);
-    const existingRaceNumbers = new Set(existingRaces.map((r: any) => r.race_number));
-
-    // 各レースのRaceEntry数を確認
+    const existingRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 30).catch(() => []);
     const existingEntries = await sr.RaceEntry.filter({ race_date: raceDate, venue_code: venueCode }, 'boat_number', 200).catch(() => []);
-    const entryCountByRace = {};
+    const entryCountByRace: Record<string, number> = {};
     for (const e of existingEntries) {
-      const rn = e.race_number;
+      const rn = String(e.race_number);
       entryCountByRace[rn] = (entryCountByRace[rn] || 0) + 1;
     }
 
-    // 公式racelist上部には1R〜12Rの締切時刻が1行で載っている。
-    // 艇が全て揃っている会場でも1ページだけ取得してRaceの締切を補正する。
-    // これにより、過去バグで全12Rが1Rと同じ締切になったデータも自動修復する。
-    const completeRaces = Object.keys(entryCountByRace).filter((rn) => entryCountByRace[rn] >= 6).length;
-    if (existingRaces.length > 0) {
-      try {
-        const scheduleRes = await fetchHtml(buildUrl('racelist', raceDate, venueCode, 1));
-        if (scheduleRes.ok) {
-          const deadlineTimes = parseDeadlineTimes(scheduleRes.html);
-          if (deadlineTimes.length >= 12) {
-            for (const er of existingRaces) {
-              const rn = Number(er.race_number);
-              const t = deadlineTimes[rn - 1];
-              if (!rn || !t) continue;
-              const correctDeadline = `${raceDate}T${t}:00+09:00`;
-              if (er.deadline !== correctDeadline) {
-                await withRateLimitRetry(() => sr.Race.update(er.id, { deadline: correctDeadline }));
-                await sleep(120);
-              }
-            }
-          }
-        }
-      } catch (e: any) {
-        errors.push(`${venueName}: 締切時刻補正失敗 ${e.message}`);
-      }
-    }
+    let deadlineTimes: string[] = [];
+    try {
+      const sched = await fetchHtml(buildUrl('racelist', raceDate, venueCode, 1));
+      if (sched.ok) deadlineTimes = parseDeadlineTimes(sched.html);
+    } catch {}
 
-    if (completeRaces >= 12) {
+    const deadlineFixes: any[] = [];
+    for (const er of existingRaces) {
+      const rn = Number(er.race_number);
+      const t = deadlineTimes[rn - 1];
+      if (!rn || !t) continue;
+      const correctDeadline = `${raceDate}T${t}:00+09:00`;
+      if (er.deadline !== correctDeadline) deadlineFixes.push({ id: er.id, deadline: correctDeadline });
+    }
+    if (deadlineFixes.length) await sr.Race.bulkUpdate(deadlineFixes).catch((e: any) => errors.push(`${venueName}: 締切補正 ${e.message}`));
+
+    const missingRaceNos = Array.from({ length: 12 }, (_, i) => i + 1).filter(rno => (entryCountByRace[String(rno)] || 0) < 6);
+    if (!missingRaceNos.length) {
       skippedVenues++;
       continue;
     }
 
-    // 不足レースを取得
-    for (let rno = 1; rno <= 12; rno++) {
-      if (Date.now() - startTime > timeBudgetMs) break;
-      if (entryCountByRace[rno] >= 6) continue; // 既に6艇揃っている
-
-      const url = buildUrl('racelist', raceDate, venueCode, rno);
-      const res = await fetchHtml(url);
-      if (!res.ok) {
-        errors.push(`${venueName} R${rno} 番組取得失敗: HTTP ${res.status}`);
-        continue;
+    const parsedCards: any[] = [];
+    for (let i = 0; i < missingRaceNos.length; i += 4) {
+      if (Date.now() - startTime > timeBudgetMs - 5000) break;
+      const batch = missingRaceNos.slice(i, i + 4);
+      const got = await Promise.all(batch.map(async (rno) => {
+        try {
+          const res = await fetchHtml(buildUrl('racelist', raceDate, venueCode, rno));
+          if (!res.ok) return { rno, error: `HTTP ${res.status}` };
+          const parsed = parseRaceCard(res.html, raceDate, venueCode, venueName, rno);
+          const race = parsed.data?.venues?.[0]?.races?.[0];
+          if (!parsed.ok || !race || !Array.isArray(race.entries) || race.entries.length !== 6) {
+            return { rno, error: `解析失敗 ${(parsed.errors || []).join('; ')}` };
+          }
+          return { rno, race };
+        } catch (e: any) {
+          return { rno, error: e.message };
+        }
+      }));
+      for (const g of got) {
+        if (g.error) errors.push(`${venueName} R${g.rno} 番組取得失敗: ${g.error}`);
+        else parsedCards.push(g);
       }
+    }
 
-      const parsed = parseRaceCard(res.html, raceDate, venueCode, venueName, rno);
-      if (!parsed.ok || !parsed.data?.venues?.[0]?.races?.[0]) {
-        errors.push(`${venueName} R${rno} 番組解析失敗: ${(parsed.errors || []).join('; ')}`);
-        continue;
-      }
+    if (!parsedCards.length) continue;
 
-      const race = parsed.data.venues[0].races[0];
-      race.race_number = rno;
+    const existingRaceByNo = new Map(existingRaces.map((r: any) => [Number(r.race_number), r]));
+    const raceCreates: any[] = [];
+    const raceUpdates: any[] = [];
+
+    for (const { rno, race } of parsedCards) {
       const raceKey = buildRaceKey(raceDate, venueCode, rno);
-      const deadlineTime = race.deadline_time;
-      const deadline = deadlineTime ? `${raceDate}T${deadlineTime}:00+09:00` : undefined;
-
-      const raceData: any = {
+      const t = deadlineTimes[rno - 1] || race.deadline_time;
+      const doc: any = {
         race_key: raceKey,
         race_date: raceDate,
         venue_code: venueCode,
         venue: venueName,
         venue_name: venueName,
         race_number: rno,
-        race_name: race.race_name || undefined,
-        race_type: race.race_type || undefined,
-        deadline,
-        status: 'scheduled',
         sync_source: 'online_auto',
       };
-
-      try {
-        const savedRace = await withRateLimitRetry(() => upsertRace(base44, raceData));
-        if (!savedRace?.id) { errors.push(`${venueName} R${rno}: Race保存失敗`); continue; }
-        totalRaces++;
-        await sleep(400); // Race保存直後の待機
-
-        let entryCount = 0;
-        for (const e of race.entries) {
-          const entryData: any = {
-            race_id: savedRace.id,
-            race_key: raceKey,
-            race_date: raceDate,
-            venue_code: venueCode,
-            race_number: rno,
-            boat_number: e.boat_number,
-            player_name: e.player_name,
-            racer_name: e.player_name,
-            register_number: e.registration_number,
-            registration_number: e.registration_number,
-            player_class: e.player_class || undefined,
-            grade_class: e.player_class || undefined,
-            national_win_rate: e.national_win_rate,
-            local_win_rate: e.local_win_rate,
-            national_f2_rate: e.national_2rate,
-            national_2rate: e.national_2rate,
-            national_f3_rate: e.national_3rate,
-            national_3rate: e.national_3rate,
-            local_f2_rate: e.local_2rate,
-            local_2rate: e.local_2rate,
-            local_f3_rate: e.local_3rate,
-            local_3rate: e.local_3rate,
-            motor_number: e.motor_number || undefined,
-            motor_f2_rate: e.motor_2rate,
-            motor_2rate: e.motor_2rate,
-            motor_f3_rate: e.motor_3rate,
-            motor_3rate: e.motor_3rate,
-            boat_number_id: e.boat_number_id || undefined,
-            boat_f2_rate: e.boat_2rate,
-            boat_2rate: e.boat_2rate,
-            boat_f3_rate: e.boat_3rate,
-            boat_3rate: e.boat_3rate,
-            f_count: e.f_count,
-            l_count: e.l_count,
-            avg_st: e.avg_st,
-            is_absent: false,
-            is_scratched: false,
-          };
-          await withRateLimitRetry(() => upsertEntry(base44, entryData));
-          entryCount++;
-          totalEntries++;
-          await sleep(350); // 艇ごとのupsert間隔
-        }
-        logs.push(`${venueName} R${rno}: ${entryCount}艇保存`);
-      } catch (e: any) {
-        errors.push(`${venueName} R${rno}: ${e.message}`);
-      }
-      await sleep(500); // 次レースへの待機
+      if (race.race_name) doc.race_name = race.race_name;
+      if (race.race_type) doc.race_type = race.race_type;
+      if (t) doc.deadline = `${raceDate}T${t}:00+09:00`;
+      const old = existingRaceByNo.get(rno);
+      if (old) raceUpdates.push({ id: old.id, ...doc });
+      else raceCreates.push({ ...doc, status: 'scheduled' });
     }
+
+    if (raceCreates.length) await withRateLimitRetry(() => sr.Race.bulkCreate(raceCreates));
+    if (raceUpdates.length) await withRateLimitRetry(() => sr.Race.bulkUpdate(raceUpdates));
+
+    const savedRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 30).catch(() => []);
+    const raceByNo = new Map(savedRaces.map((r: any) => [Number(r.race_number), r]));
+    const existingEntryByKey = new Map(existingEntries.map((e: any) => [`${Number(e.race_number)}_${Number(e.boat_number)}`, e]));
+    const entryCreates: any[] = [];
+    const entryUpdates: any[] = [];
+
+    for (const { rno, race } of parsedCards) {
+      const savedRace: any = raceByNo.get(rno);
+      if (!savedRace?.id) { errors.push(`${venueName} R${rno}: Race保存確認失敗`); continue; }
+      const raceKey = buildRaceKey(raceDate, venueCode, rno);
+      for (const e of race.entries) {
+        const entryData: any = {
+          race_id: savedRace.id, race_key: raceKey, race_date: raceDate, venue_code: venueCode, race_number: rno,
+          boat_number: e.boat_number,
+          player_name: e.player_name, racer_name: e.player_name,
+          register_number: e.registration_number, registration_number: e.registration_number,
+          is_absent: false, is_scratched: false,
+        };
+        const optional: any = {
+          player_class: e.player_class, grade_class: e.player_class,
+          national_win_rate: e.national_win_rate, local_win_rate: e.local_win_rate,
+          national_f2_rate: e.national_2rate, national_2rate: e.national_2rate,
+          national_f3_rate: e.national_3rate, national_3rate: e.national_3rate,
+          local_f2_rate: e.local_2rate, local_2rate: e.local_2rate,
+          local_f3_rate: e.local_3rate, local_3rate: e.local_3rate,
+          motor_number: e.motor_number, motor_f2_rate: e.motor_2rate, motor_2rate: e.motor_2rate,
+          motor_f3_rate: e.motor_3rate, motor_3rate: e.motor_3rate,
+          boat_number_id: e.boat_number_id, boat_f2_rate: e.boat_2rate, boat_2rate: e.boat_2rate,
+          boat_f3_rate: e.boat_3rate, boat_3rate: e.boat_3rate,
+          f_count: e.f_count, l_count: e.l_count, avg_st: e.avg_st,
+        };
+        for (const [k, v] of Object.entries(optional)) if (v !== null && v !== undefined && v !== '') entryData[k] = v;
+        const old = existingEntryByKey.get(`${rno}_${Number(e.boat_number)}`);
+        if (old) entryUpdates.push({ id: old.id, ...entryData });
+        else entryCreates.push(entryData);
+      }
+    }
+
+    if (entryCreates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkCreate(entryCreates));
+    if (entryUpdates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkUpdate(entryUpdates));
+
+    totalRaces += parsedCards.length;
+    totalEntries += parsedCards.length * 6;
+    logs.push(`${venueName}: ${parsedCards.length}R/${parsedCards.length * 6}艇 一括保存`);
   }
 
   return { venues: venues.length, races: totalRaces, entries: totalEntries, skipped_venues: skippedVenues, errors };
