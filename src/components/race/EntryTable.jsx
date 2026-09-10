@@ -6,11 +6,11 @@ import StartTimingPanel from "@/components/race/StartTimingPanel";
 
 const boatColors = {
   1: "bg-white text-black",
-  2: "bg-slate-500 text-white",
-  3: "bg-rose-600 text-white",
-  4: "bg-blue-600 text-white",
+  2: "bg-slate-500 text-slate-900",
+  3: "bg-rose-600 text-slate-900",
+  4: "bg-blue-600 text-slate-900",
   5: "bg-amber-400 text-black",
-  6: "bg-emerald-600 text-white",
+  6: "bg-emerald-600 text-slate-900",
 };
 
 const rowTint = {
@@ -26,7 +26,7 @@ const judgmentStyle = {
   STRONG_BUY: "bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-400/40",
   BUY: "bg-rose-500/20 text-rose-300 border-rose-400/40",
   WATCH: "bg-amber-500/20 text-amber-300 border-amber-400/40",
-  SKIP: "bg-slate-700/40 text-slate-400 border-slate-600",
+  SKIP: "bg-slate-700/40 text-slate-600 border-slate-600",
 };
 
 const subTabs = ["買い目", "出走表", "直前情報", "オッズ", "3連単", "6艇評価"];
@@ -37,23 +37,23 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
   const [filter, setFilter] = useState("選手成績");
 
   return (
-    <div className="bg-[#1e232d] rounded-xl border border-[#3a404c] overflow-hidden flex flex-col h-full">
+    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col h-full">
       {/* レースタイトル */}
-      <div className="px-3 sm:px-4 py-3 border-b border-[#3a404c]">
+      <div className="px-3 sm:px-4 py-3 border-b border-slate-200">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="px-1.5 py-0.5 rounded bg-blue-500/15 border border-blue-400/30 text-blue-300 text-[11px] font-bold">{displayGrade(race.grade)}</span>
           {race.series_day && <span className="text-xs font-bold text-amber-300">{race.is_final_day ? "最終日" : `${race.series_day}日目`}</span>}
           {race.is_womens && <span className="text-pink-400 text-sm" title="女子戦">♥</span>}
-          <div className="font-bold text-white text-sm sm:text-base truncate">{race.event_name || race.race_name || race.race_type || "一般"}</div>
+          <div className="font-bold text-slate-900 text-sm sm:text-base truncate">{race.event_name || race.race_name || race.race_type || "一般"}</div>
         </div>
         <div className="text-[11px] text-slate-500 mt-1">{race.venue} · {race.race_number}R · 締切 {fmtTime(race.deadline)}</div>
       </div>
 
       {/* サブタブ */}
-      <div className="px-2 sm:px-3 py-2 border-b border-[#3a404c] flex gap-1 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+      <div className="px-2 sm:px-3 py-2 border-b border-slate-200 flex gap-1 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
         {subTabs.map((t) => (
           <button key={t} onClick={() => setSubTab(t)}
-            className={cn("px-2.5 h-8 rounded-md text-xs font-bold whitespace-nowrap transition-colors", subTab === t ? "bg-[#f9c836] text-slate-950" : "text-slate-400 hover:text-white hover:bg-[#2c3546]")}>
+            className={cn("px-2.5 h-8 rounded-md text-xs font-bold whitespace-nowrap transition-colors", subTab === t ? "bg-[#f9c836] text-slate-950" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100")}>
             {t}
           </button>
         ))}
@@ -61,10 +61,10 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
 
       {/* フィルタタブ (出走表時) */}
       {subTab === "出走表" && (
-        <div className="px-2 sm:px-3 py-1.5 border-b border-[#3a404c] flex gap-1 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+        <div className="px-2 sm:px-3 py-1.5 border-b border-slate-200 flex gap-1 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
           {filterTabs.map((t) => (
             <button key={t} onClick={() => setFilter(t)}
-              className={cn("px-2 h-7 rounded text-[11px] font-semibold whitespace-nowrap transition-colors", filter === t ? "bg-[#2c3546] text-white" : "text-slate-500 hover:text-slate-300")}>
+              className={cn("px-2 h-7 rounded text-[11px] font-semibold whitespace-nowrap transition-colors", filter === t ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:text-slate-700")}>
               {t}
             </button>
           ))}
@@ -124,7 +124,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
   return (
     <div className="text-[11px]">
       {/* ヘッダ行 */}
-      <div className={cn("grid gap-1 px-2 py-1.5 bg-[#161a22] border-b border-[#3a404c] text-slate-500 font-bold text-[10px] sticky top-0 items-center", cfg.gridCls)}>
+      <div className={cn("grid gap-1 px-2 py-1.5 bg-white border-b border-slate-200 text-slate-500 font-bold text-[10px] sticky top-0 items-center", cfg.gridCls)}>
         <div className="text-center">枠</div>
         <div>選手名</div>
         {cfg.headers.map((h) => <div key={h} className="text-center">{h}</div>)}
@@ -134,7 +134,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
         const bp = bpOf(e.boat_number);
         const role = roleOf(e.boat_number);
         return (
-          <div key={e.boat_number} className={cn("grid gap-1 px-2 py-2 border-b border-[#2c3546] items-center", cfg.gridCls, rowTint[e.boat_number])}>
+          <div key={e.boat_number} className={cn("grid gap-1 px-2 py-2 border-b border-slate-200 items-center", cfg.gridCls, rowTint[e.boat_number])}>
             <div className="flex justify-center">
               <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
             </div>
@@ -142,9 +142,9 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
               <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-white text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</span>
-                  {e.player_class && <span className="text-[9px] px-1 rounded bg-slate-700 text-slate-300 font-bold shrink-0">{e.player_class}</span>}
-                  {role && <span className={cn("text-[9px] px-1 rounded font-bold shrink-0", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-white" : role === "穴" ? "bg-rose-500 text-white" : "bg-slate-600 text-slate-300")}>{role}</span>}
+                  <span className="font-bold text-slate-900 text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</span>
+                  {e.player_class && <span className="text-[9px] px-1 rounded bg-slate-700 text-slate-700 font-bold shrink-0">{e.player_class}</span>}
+                  {role && <span className={cn("text-[9px] px-1 rounded font-bold shrink-0", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-slate-900" : role === "穴" ? "bg-rose-500 text-slate-900" : "bg-slate-600 text-slate-700")}>{role}</span>}
                 </div>
                 <div className="text-[10px] text-slate-500 truncate">{e.register_number || e.registration_number ? `登録${e.register_number || e.registration_number}` : ""}</div>
               </div>
@@ -169,38 +169,38 @@ function renderDataCols(filter, e) {
     case "節間成績":
       return [
         <div key="pts" className="text-center font-bold text-slate-200">{e.section_points != null ? e.section_points : "—"}</div>,
-        <div key="sst" className="text-center font-mono text-slate-300">{num(e.section_st)}</div>,
-        <div key="fin" className="text-center text-slate-300 truncate" title={e.section_finishes || ""}>{e.section_finishes || "—"}</div>,
-        <div key="mom" className={cn("text-center font-bold", (e.section_momentum || 0) >= 60 ? "text-emerald-400" : (e.section_momentum || 0) >= 40 ? "text-amber-400" : "text-slate-400")}>{num(e.section_momentum, 0)}</div>,
+        <div key="sst" className="text-center font-mono text-slate-700">{num(e.section_st)}</div>,
+        <div key="fin" className="text-center text-slate-700 truncate" title={e.section_finishes || ""}>{e.section_finishes || "—"}</div>,
+        <div key="mom" className={cn("text-center font-bold", (e.section_momentum || 0) >= 60 ? "text-emerald-400" : (e.section_momentum || 0) >= 40 ? "text-amber-400" : "text-slate-600")}>{num(e.section_momentum, 0)}</div>,
       ];
     case "モーター履歴":
       return [
         <div key="mno" className="text-center font-bold text-slate-200">{e.motor_number || "—"}</div>,
         <div key="m2" className="text-center"><div className="font-bold text-slate-200">{pct(e.motor_f2_rate ?? e.motor_2rate)}</div></div>,
-        <div key="m3" className="text-center text-slate-400">{pct(e.motor_f3_rate ?? e.motor_3rate)}</div>,
+        <div key="m3" className="text-center text-slate-600">{pct(e.motor_f3_rate ?? e.motor_3rate)}</div>,
         <div key="bno" className="text-center font-bold text-slate-200">{e.boat_number_id || "—"}</div>,
         <div key="b2" className="text-center"><div className="font-bold text-slate-200">{pct(e.boat_f2_rate ?? e.boat_2rate)}</div></div>,
       ];
     case "全国成績":
       return [
         <div key="wr" className="text-center font-bold text-slate-200">{num(e.national_win_rate)}</div>,
-        <div key="f2" className="text-center text-slate-300">{pct(e.national_f2_rate ?? e.national_2rate)}</div>,
-        <div key="f3" className="text-center text-slate-400">{pct(e.national_f3_rate ?? e.national_3rate)}</div>,
+        <div key="f2" className="text-center text-slate-700">{pct(e.national_f2_rate ?? e.national_2rate)}</div>,
+        <div key="f3" className="text-center text-slate-600">{pct(e.national_f3_rate ?? e.national_3rate)}</div>,
         <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
-        <div key="st" className="text-center font-mono text-slate-300">{num(e.avg_st)}</div>,
+        <div key="st" className="text-center font-mono text-slate-700">{num(e.avg_st)}</div>,
       ];
     case "当地成績":
       return [
         <div key="wr" className="text-center font-bold text-slate-200">{num(e.local_win_rate)}</div>,
-        <div key="f2" className="text-center text-slate-300">{pct(e.local_f2_rate ?? e.local_2rate)}</div>,
-        <div key="f3" className="text-center text-slate-400">{pct(e.local_f3_rate ?? e.local_3rate)}</div>,
+        <div key="f2" className="text-center text-slate-700">{pct(e.local_f2_rate ?? e.local_2rate)}</div>,
+        <div key="f3" className="text-center text-slate-600">{pct(e.local_f3_rate ?? e.local_3rate)}</div>,
         <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
-        <div key="st" className="text-center font-mono text-slate-300">{num(e.avg_st)}</div>,
+        <div key="st" className="text-center font-mono text-slate-700">{num(e.avg_st)}</div>,
       ];
     default: // 選手成績
       return [
         <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
-        <div key="st" className="text-center font-mono text-slate-300">{num(e.avg_st)}</div>,
+        <div key="st" className="text-center font-mono text-slate-700">{num(e.avg_st)}</div>,
         <div key="nw" className="text-center"><div className="font-bold text-slate-200">{num(e.national_win_rate)}</div><div className="text-[9px] text-slate-500">2連{pct(e.national_f2_rate ?? e.national_2rate)}</div></div>,
         <div key="lw" className="text-center"><div className="font-bold text-slate-200">{num(e.local_win_rate)}</div><div className="text-[9px] text-slate-500">2連{pct(e.local_f2_rate ?? e.local_2rate)}</div></div>,
       ];
@@ -215,7 +215,7 @@ function ExhibitionInfo({ entries }) {
       <StartTimingPanel entries={entries} />
       {/* 各艇展示データ詳細 */}
       {entries.map((e) => (
-        <div key={e.boat_number} className="flex items-center gap-2 rounded-lg border border-[#3a404c] bg-[#161a22] p-2">
+        <div key={e.boat_number} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
           <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
           <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} size="sm" />
           <span className="text-xs font-bold text-slate-200 w-20 truncate">{e.player_name || ""}</span>
@@ -238,8 +238,8 @@ function OddsView({ allTri }) {
     <div className="p-2">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
         {sorted.map((t) => (
-          <div key={t.combination} className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2">
-            <div className="font-mono font-bold text-white text-sm">{t.combination}</div>
+          <div key={t.combination} className="rounded-lg border border-slate-200 bg-white p-2">
+            <div className="font-mono font-bold text-slate-900 text-sm">{t.combination}</div>
             <div className="text-[10px] text-slate-500 mt-0.5">オッズ <span className="font-bold text-slate-200">{t.actual_odds || t.estimated_odds || "—"}</span></div>
             <div className="text-[10px] text-slate-500">確率 <span className="font-bold text-slate-200">{t.probability}%</span></div>
           </div>
@@ -254,18 +254,18 @@ function TrifectaView({ probRank, evRank, rankMode, setRankMode }) {
   if (!activeTri?.length) return <Empty msg="3連単予想がありません" />;
   return (
     <div>
-      <div className="flex gap-1 px-2 py-2 border-b border-[#2c3546]">
-        <button onClick={() => setRankMode("prob")} className={cn("px-2.5 h-7 rounded-md text-[11px] font-bold", rankMode === "prob" ? "bg-[#f9c836] text-slate-950" : "bg-[#2c3546] text-slate-400")}>確率順</button>
-        <button onClick={() => setRankMode("ev")} className={cn("px-2.5 h-7 rounded-md text-[11px] font-bold", rankMode === "ev" ? "bg-emerald-500 text-white" : "bg-[#2c3546] text-slate-400")}>期待値順</button>
+      <div className="flex gap-1 px-2 py-2 border-b border-slate-200">
+        <button onClick={() => setRankMode("prob")} className={cn("px-2.5 h-7 rounded-md text-[11px] font-bold", rankMode === "prob" ? "bg-[#f9c836] text-slate-950" : "bg-slate-100 text-slate-600")}>確率順</button>
+        <button onClick={() => setRankMode("ev")} className={cn("px-2.5 h-7 rounded-md text-[11px] font-bold", rankMode === "ev" ? "bg-emerald-500 text-slate-900" : "bg-slate-100 text-slate-600")}>期待値順</button>
       </div>
       {activeTri.map((t) => (
-        <div key={t.combination} className="flex items-center px-3 py-2 border-b border-[#2c3546]">
-          <span className={cn("inline-flex w-6 h-6 rounded-md items-center justify-center text-[11px] font-bold mr-2", t.rank <= 3 ? "bg-[#f9c836] text-slate-950" : "bg-[#2c3546] text-slate-400")}>{t.rank}</span>
-          <span className="font-mono font-bold text-white text-base w-16">{t.combination}</span>
+        <div key={t.combination} className="flex items-center px-3 py-2 border-b border-slate-200">
+          <span className={cn("inline-flex w-6 h-6 rounded-md items-center justify-center text-[11px] font-bold mr-2", t.rank <= 3 ? "bg-[#f9c836] text-slate-950" : "bg-slate-100 text-slate-600")}>{t.rank}</span>
+          <span className="font-mono font-bold text-slate-900 text-base w-16">{t.combination}</span>
           <div className="flex-1 grid grid-cols-3 gap-1 text-center text-[10px]">
             <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-200">{t.probability}%</div></div>
             <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-200">{t.actual_odds ?? t.estimated_odds ?? "—"}</div></div>
-            <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", t.expected_value >= 150 ? "text-emerald-400" : t.expected_value >= 110 ? "text-amber-400" : "text-slate-400")}>{t.expected_value}%</div></div>
+            <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", t.expected_value >= 150 ? "text-emerald-400" : t.expected_value >= 110 ? "text-amber-400" : "text-slate-600")}>{t.expected_value}%</div></div>
           </div>
           <span className={cn("ml-2 px-1.5 h-5 rounded text-[9px] font-bold border flex items-center", judgmentStyle[t.judgment] || judgmentStyle.SKIP)}>{t.judgment}</span>
         </div>
@@ -281,12 +281,12 @@ function BetTicketView({ activePred, allTri }) {
   return (
     <div className="p-2 space-y-2">
       {/* 判定ヘッダー */}
-      <div className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
+      <div className="rounded-lg border border-slate-200 bg-white p-2.5">
         <div className="flex items-center justify-between mb-1">
           <span className={cn("px-2 py-0.5 rounded text-xs font-black border", judgmentStyle[judgment] || judgmentStyle.SKIP)}>{judgment}</span>
-          <span className="text-xs text-slate-400">{selected.length}点 · {activePred?.ticket_strategy || ""}</span>
+          <span className="text-xs text-slate-600">{selected.length}点 · {activePred?.ticket_strategy || ""}</span>
         </div>
-        <div className="text-[11px] text-slate-400 leading-relaxed">{activePred?.judgment_reason || ""}</div>
+        <div className="text-[11px] text-slate-600 leading-relaxed">{activePred?.judgment_reason || ""}</div>
         {activePred?.expand_reason && <div className="text-[10px] text-amber-400/80 mt-1">拡張: {activePred.expand_reason}</div>}
       </div>
       {/* 買い目リスト */}
@@ -294,31 +294,31 @@ function BetTicketView({ activePred, allTri }) {
         const odds = t.actual_odds ?? t.current_odds ?? t.estimated_odds;
         const ev = t.expected_value;
         return (
-          <div key={t.combination} className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
+          <div key={t.combination} className="rounded-lg border border-slate-200 bg-white p-2.5">
             <div className="flex items-center gap-2 mb-1.5">
-              <span className={cn("w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold", t.ticket_rank <= 3 ? "bg-[#f9c836] text-slate-950" : "bg-[#2c3546] text-slate-400")}>{t.ticket_rank}</span>
-              <span className="font-mono font-black text-white text-lg tracking-wider flex-1">{t.combination}</span>
-              {t.set_group && <span className={cn("px-1.5 h-5 rounded text-[10px] font-bold border flex items-center", t.set_group === "A" ? "text-rose-300 bg-rose-500/10 border-rose-400/30" : t.set_group === "B" ? "text-amber-300 bg-amber-500/10 border-amber-400/30" : "text-slate-400 bg-slate-700/30 border-slate-600")}>{t.set_group}</span>}
+              <span className={cn("w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold", t.ticket_rank <= 3 ? "bg-[#f9c836] text-slate-950" : "bg-slate-100 text-slate-600")}>{t.ticket_rank}</span>
+              <span className="font-mono font-black text-slate-900 text-lg tracking-wider flex-1">{t.combination}</span>
+              {t.set_group && <span className={cn("px-1.5 h-5 rounded text-[10px] font-bold border flex items-center", t.set_group === "A" ? "text-rose-300 bg-rose-500/10 border-rose-400/30" : t.set_group === "B" ? "text-amber-300 bg-amber-500/10 border-amber-400/30" : "text-slate-600 bg-slate-700/30 border-slate-600")}>{t.set_group}</span>}
             </div>
             <div className="grid grid-cols-4 gap-1 text-center text-[10px]">
               <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-200">{t.probability}%</div></div>
               <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-200">{odds ?? "—"}</div></div>
-              <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", ev != null && ev >= 120 ? "text-emerald-400" : ev != null && ev >= 90 ? "text-amber-400" : "text-slate-400")}>{ev != null ? `${ev}%` : "—"}</div></div>
+              <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", ev != null && ev >= 120 ? "text-emerald-400" : ev != null && ev >= 90 ? "text-amber-400" : "text-slate-600")}>{ev != null ? `${ev}%` : "—"}</div></div>
               <div><div className="text-slate-500">順位</div><div className="font-bold text-slate-200">{t.rank}/120</div></div>
             </div>
-            {t.selection_reason && <div className="text-[10px] text-slate-500 mt-1.5 pt-1.5 border-t border-[#2c3546]">{t.selection_reason}</div>}
+            {t.selection_reason && <div className="text-[10px] text-slate-500 mt-1.5 pt-1.5 border-t border-slate-200">{t.selection_reason}</div>}
           </div>
         );
       })}
       {/* セット分析サマリー */}
       {activePred?.set_probability != null && (
-        <div className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
+        <div className="rounded-lg border border-slate-200 bg-white p-2.5">
           <div className="text-[10px] font-bold text-blue-400 mb-1.5">セット分析</div>
           <div className="grid grid-cols-2 gap-1.5 text-center text-[10px]">
-            <div className="rounded bg-[#1e232d] py-1"><div className="font-bold text-slate-200">{activePred.set_probability}%</div><div className="text-slate-500">セット的中率</div></div>
-            <div className="rounded bg-[#1e232d] py-1"><div className="font-bold text-slate-200">{activePred.synthetic_odds != null ? `${activePred.synthetic_odds}倍` : "—"}</div><div className="text-slate-500">合成オッズ</div></div>
-            <div className="rounded bg-[#1e232d] py-1"><div className={cn("font-bold", activePred.set_expected_recovery >= 120 ? "text-emerald-400" : "text-slate-200")}>{activePred.set_expected_recovery != null ? `${activePred.set_expected_recovery}%` : "—"}</div><div className="text-slate-500">期待回収率</div></div>
-            <div className="rounded bg-[#1e232d] py-1"><div className="font-bold text-slate-200">{activePred.avg_payout != null ? `${activePred.avg_payout}円` : "—"}</div><div className="text-slate-500">平均払戻</div></div>
+            <div className="rounded bg-white py-1"><div className="font-bold text-slate-200">{activePred.set_probability}%</div><div className="text-slate-500">セット的中率</div></div>
+            <div className="rounded bg-white py-1"><div className="font-bold text-slate-200">{activePred.synthetic_odds != null ? `${activePred.synthetic_odds}倍` : "—"}</div><div className="text-slate-500">合成オッズ</div></div>
+            <div className="rounded bg-white py-1"><div className={cn("font-bold", activePred.set_expected_recovery >= 120 ? "text-emerald-400" : "text-slate-200")}>{activePred.set_expected_recovery != null ? `${activePred.set_expected_recovery}%` : "—"}</div><div className="text-slate-500">期待回収率</div></div>
+            <div className="rounded bg-white py-1"><div className="font-bold text-slate-200">{activePred.avg_payout != null ? `${activePred.avg_payout}円` : "—"}</div><div className="text-slate-500">平均払戻</div></div>
           </div>
         </div>
       )}
@@ -340,12 +340,12 @@ function BoatEvalView({ entries, activeBoats, activePred }) {
         const entry = entries.find((e) => e.boat_number === bp.boat_number);
         const role = roleOf(bp.boat_number);
         return (
-          <div key={bp.boat_number} className="rounded-lg border border-[#3a404c] bg-[#161a22] p-2.5">
+          <div key={bp.boat_number} className="rounded-lg border border-slate-200 bg-white p-2.5">
             <div className="flex items-center gap-2 mb-2">
               <span className={cn("w-7 h-7 rounded flex items-center justify-center font-black text-sm", boatColors[bp.boat_number])}>{bp.boat_number}</span>
               <PlayerPhoto src={entry?.player_photo} registrationNumber={entry?.register_number || entry?.registration_number} alt={entry?.player_name} />
-              <span className="font-bold text-white text-sm flex-1 truncate">{entry?.player_name || ""}</span>
-              {role && <span className={cn("text-[10px] px-1.5 rounded font-bold", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-white" : "bg-rose-500 text-white")}>{role}</span>}
+              <span className="font-bold text-slate-900 text-sm flex-1 truncate">{entry?.player_name || ""}</span>
+              {role && <span className={cn("text-[10px] px-1.5 rounded font-bold", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-slate-900" : "bg-rose-500 text-slate-900")}>{role}</span>}
               <span className="font-black text-[#f9c836] text-lg">{bp.total_power?.toFixed(0) ?? "—"}</span>
             </div>
             <div className="grid grid-cols-3 gap-1 text-center text-[10px]">
@@ -366,9 +366,9 @@ function BoatEvalView({ entries, activeBoats, activePred }) {
               </div>
             )}
             {bp.reasons?.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-[#2c3546]">
+              <div className="mt-2 pt-2 border-t border-slate-200">
                 <div className="text-[9px] font-bold text-blue-400 mb-1">理由</div>
-                {bp.reasons.slice(0, 3).map((r, i) => <div key={i} className="text-[10px] text-slate-400">・{r}</div>)}
+                {bp.reasons.slice(0, 3).map((r, i) => <div key={i} className="text-[10px] text-slate-600">・{r}</div>)}
               </div>
             )}
           </div>
@@ -380,7 +380,7 @@ function BoatEvalView({ entries, activeBoats, activePred }) {
 
 function Mini({ label, v }) {
   return (
-    <div className="rounded bg-[#1e232d] py-1">
+    <div className="rounded bg-white py-1">
       <div className="text-slate-500">{label}</div>
       <div className="font-bold text-slate-200 text-xs">{v != null ? (typeof v === "number" ? v.toFixed(0) : v) : "—"}</div>
     </div>

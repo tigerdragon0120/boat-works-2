@@ -99,10 +99,10 @@ export default function Venue() {
     : [];
 
   return (
-    <div className="text-slate-100 space-y-3">
+    <div className="text-slate-900 space-y-3">
       {/* ヘッダー */}
       <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-        <Link to="/" className="h-9 px-2.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 flex items-center gap-2 text-xs font-semibold">
+        <Link to="/" className="h-9 px-2.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 flex items-center gap-2 text-xs font-semibold">
           <ArrowLeft className="w-4 h-4" /><span className="hidden xs:inline">レース場一覧</span>
         </Link>
         <div className="flex items-center gap-2 min-w-0">
@@ -114,7 +114,7 @@ export default function Venue() {
             <div className="text-[9px] sm:text-[10px] tracking-widest text-slate-500">VENUE {String(code).padStart(2, "0")}</div>
           </div>
         </div>
-        <button onClick={loadList} className="ml-auto h-9 min-w-9 px-3 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 flex items-center justify-center gap-2 text-xs font-semibold">
+        <button onClick={loadList} className="ml-auto h-9 min-w-9 px-3 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 flex items-center justify-center gap-2 text-xs font-semibold">
           <RefreshCw className="w-4 h-4" /><span className="hidden sm:inline">更新</span>
         </button>
       </div>
@@ -125,8 +125,8 @@ export default function Venue() {
           <button key={r.id} onClick={() => setSelectedId(r.id)}
             className={cn("min-w-[48px] h-10 rounded-md border text-xs font-bold transition active:scale-95 flex flex-col items-center justify-center",
               r.id === selectedId ? "bg-[#f9c836] text-slate-950 border-amber-300" :
-              r.status === "finished" ? "bg-slate-900 text-slate-600 border-slate-800" :
-              "bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-500")}>
+              r.status === "finished" ? "bg-white text-slate-600 border-slate-200" :
+              "bg-slate-50 text-slate-700 border-slate-300 hover:border-slate-500")}>
             <span>{r.race_number}R</span>
             {r.prediction_grade && r.id !== selectedId && <span className="text-[8px] text-slate-500">{r.prediction_grade}</span>}
           </button>

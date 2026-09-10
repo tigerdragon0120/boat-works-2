@@ -32,12 +32,12 @@ export default function DatabaseStatusPanel({ status, loading }) {
     ? { text: '正常', cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40', Icon: CheckCircle }
     : status?.status === 'failed'
     ? { text: 'エラー', cls: 'bg-rose-500/20 text-rose-300 border-rose-400/40', Icon: AlertCircle }
-    : { text: '未構築', cls: 'bg-slate-600/40 text-slate-400 border-slate-500/40', Icon: AlertCircle };
+    : { text: '未構築', cls: 'bg-slate-600/40 text-slate-600 border-slate-500/40', Icon: AlertCircle };
 
   return (
-    <div className="bg-[#1e232d] border border-[#3a404c] rounded-xl p-3 sm:p-4">
+    <div className="bg-white border border-slate-200 rounded-xl p-3 sm:p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-xs font-bold text-slate-400">DBステータス</div>
+        <div className="text-xs font-bold text-slate-600">DBステータス</div>
         <div className="flex items-center gap-2">
           {status?.message && <span className="hidden sm:inline text-[10px] text-slate-500 truncate max-w-[280px]">{status.message}</span>}
           <span className={cn('inline-flex items-center gap-1 px-2 h-6 rounded-full text-[10px] font-bold border', statusBadge.cls)}>
@@ -49,12 +49,12 @@ export default function DatabaseStatusPanel({ status, loading }) {
       {/* モバイル: 2列カード / タブレット以上: 横並び */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-2">
         {items.map((it) => (
-          <div key={it.label} className="bg-[#161a22] rounded-lg p-2 sm:p-2.5 border border-[#2c3546]">
+          <div key={it.label} className="bg-white rounded-lg p-2 sm:p-2.5 border border-slate-200">
             <div className="flex items-center gap-1 text-[9px] sm:text-[10px] text-slate-500 mb-1">
               <it.icon className="w-3 h-3 shrink-0" />
               <span className="truncate">{it.label}</span>
             </div>
-            <div className="font-black text-white text-sm sm:text-base leading-tight">
+            <div className="font-black text-slate-900 text-sm sm:text-base leading-tight">
               {it.value}
               {it.suffix && <span className="text-[9px] sm:text-[10px] font-bold text-slate-500 ml-0.5">{typeof it.value === 'number' ? it.suffix : ''}</span>}
             </div>
