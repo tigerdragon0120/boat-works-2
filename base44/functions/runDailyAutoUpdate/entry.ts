@@ -592,16 +592,18 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
 
   if (tomorrowRaceCount === 0 && jstHour >= 16) {
     logs.push(`AUTO: 翌日番組表取得開始`);
+    const before = Date.now();
     const r = await fetchAndSaveRaceCards(base44, tomorrow, remaining, logs, errors);
     steps.push(`tomorrow_card: ${r.races}R/${r.entries}艇`);
-    remaining -= (Date.now() - startTime);
+    remaining -= (Date.now() - before);
   }
 
   if (remaining > 10000 && tomorrowRaceCount > 0 && tomorrowPreCount < tomorrowRaceCount) {
     logs.push(`AUTO: 翌日PRE予想生成開始`);
+    const before = Date.now();
     const r = await generatePrePredictions(base44, tomorrow, remaining, logs, errors);
     steps.push(`pre_predictions: ${r.generated}R`);
-    remaining -= (Date.now() - startTime);
+    remaining -= (Date.now() - before);
   }
 
   // 当日Raceが0件かどうかではなく、毎回完全性を見ながら不足だけ補完する。
