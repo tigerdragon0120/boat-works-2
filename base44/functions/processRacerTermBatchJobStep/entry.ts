@@ -58,11 +58,19 @@ export default async function(req: Request) {
     let item = ordered2.find((x:any) => x.status === 'queued' || x.status === 'processing');
 
     if (!item) {
-      const completed = ordered.filter((x:any) => x.status === 'success').length;
-      const failed = ordered.filter((x:any) => x.status === 'failed').length;
+      const waitingUpload = ordered2.filter((x:any) => x.status === 'awaiting_upload').length;
+      if (waitingUpload > 0) {
+        await sr.RacerTermImportJob.update(job.id, {
+          status: 'preparing',
+          current_file: '',
+        });
+        return Response.json({ ok: true, done: false, waiting_upload: waitingUpload });
+      }
+      const completed = ordered2.filter((x:any) => x.status === 'success').length;
+      const failed = ordered2.filter((x:any) => x.status === 'failed').length;
       await sr.RacerTermImportJob.update(job.id, {
         status: 'completed', completed_files: completed, failed_files: failed,
-        current_index: ordered.length, current_file: '', finished_at: new Date().toISOString(),
+        current_index: ordered2.length, current_file: '', finished_at: new Date().toISOString(),
       });
       return Response.json({ ok: true, done: true, completed, failed });
     }
@@ -126,7 +134,7 @@ export default async function(req: Request) {
     const after = await sr.RacerTermImportItem.filter({ batch_id: batchId }, 'order_index', 500);
     const completed = (after || []).filter((x:any) => x.status === 'success').length;
     const failed = (after || []).filter((x:any) => x.status === 'failed').length;
-    const pending = (after || []).filter((x:any) => x.status === 'queued' || x.status === 'processing').length;
+    const pending = (after || []).filter((x:any) => x.status === 'queued' || x.status === 'processing' || x.status === 'awaiting_upload').length;
     const done = pending === 0;
     await sr.RacerTermImportJob.update(job.id, {
       status: done ? 'completed' : 'running', completed_files: completed, failed_files: failed,
