@@ -89,8 +89,8 @@ export default function Database() {
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <Summary label="選手プロフィール" value={data.profiles.length} suffix="件表示中" />
-        <Summary label="期別成績" value={data.terms.length} suffix="件表示中" />
+        <Summary label="選手プロフィール" value={meta.profileUnique} suffix="人" sub={meta.profileDuplicate > 0 ? `重複 ${meta.profileDuplicate}件は表示上除外` : '重複なし'} />
+        <Summary label="期別成績" value={meta.termsShown} suffix={meta.termsHasMore ? '件（最新500件）' : '件'} sub={meta.termsHasMore ? '期別成績は大量のため最新500件を表示' : '全件表示'} />
       </div>
 
       {error && <div className="rounded-xl border border-rose-500/30 bg-rose-950/40 px-3 py-2 text-sm text-rose-300">{error}</div>}
@@ -113,8 +113,8 @@ export default function Database() {
   );
 }
 
-function Summary({ label, value, suffix }) {
-  return <div className="bg-[#1e232d] border border-[#3a404c] rounded-xl p-3"><div className="text-[10px] text-slate-500">{label}</div><div className="text-xl font-black text-white mt-1">{value}<span className="text-[10px] text-slate-500 ml-1">{suffix}</span></div></div>;
+function Summary({ label, value, suffix, sub }) {
+  return <div className="bg-[#1e232d] border border-[#3a404c] rounded-xl p-3"><div className="text-[10px] text-slate-500">{label}</div><div className="text-xl font-black text-white mt-1">{value}<span className="text-[10px] text-slate-500 ml-1">{suffix}</span></div>{sub && <div className="text-[9px] text-slate-500 mt-1">{sub}</div>}</div>;
 }
 
 function Card({ children }) { return <div className="bg-[#1e232d] border border-[#3a404c] rounded-xl overflow-hidden">{children}</div>; }
