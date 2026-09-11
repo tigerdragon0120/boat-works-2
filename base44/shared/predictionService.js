@@ -303,11 +303,14 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   const trifectaDocs = result.trifectas.map((t) => {
     const info = ticketInfoMap.get(t.combination);
     const isSelected = selectedSet.has(t.combination);
-    const { judgment, basis } = judgeTrifecta(t, { settings, dataConfidence: result.data_confidence, stage });
     // 実オッズのみ使用(effectiveOddsMap = OddsSnapshot最優先)
     const actualOdds = effectiveOddsMap?.[t.combination] || null;
     const estimatedOdds = Math.max(1.0, Math.round((100 / Math.max(t.probability, 0.1)) * 0.75 * 10) / 10);
     const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
+    // 個別BUY/WATCH/SKIPも、FINALでは実オッズから算出した期待値で判定する。
+    // 以前はexpected_valueを付与する前にjudgeTrifectaを呼んでいたため、
+    // 実オッズ取得済みでも確率ベースのWATCHになっていた。
+    const { judgment, basis } = judgeTrifecta({ ...t, expected_value: ev }, { settings, dataConfidence: result.data_confidence, stage });
     return {
       prediction_id: predictionId, race_id: race.id, race_key: race.race_key, stage,
       combination: t.combination, rank: t.rank, probability: t.probability,
