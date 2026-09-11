@@ -561,12 +561,14 @@ export function computeSetMetrics(selectedTickets, oddsMap, settings) {
   let bestEVTicket = null;
   let worstEfficiency = Infinity;
   let worstEfficiencyTicket = null;
+  const missingOdds = [];
 
   for (const ticket of selectedTickets) {
     const prob = ticket.probability / 100;
     setProbability += ticket.probability;
 
-    const odds = oddsMap?.[ticket.combination] || ticket.estimated_odds || null;
+    // 実オッズのみ使用(推定オッズ・仮オッズは不使用)
+    const odds = oddsMap?.[ticket.combination] || null;
     if (odds != null && odds > 1) {
       hasOdds = true;
       const payout = odds * 100;
@@ -580,6 +582,8 @@ export function computeSetMetrics(selectedTickets, oddsMap, settings) {
 
       if (ev > bestEV) { bestEV = ev; bestEVTicket = ticket.combination; }
       if (ev < worstEfficiency) { worstEfficiency = ev; worstEfficiencyTicket = ticket.combination; }
+    } else {
+      missingOdds.push(ticket.combination);
     }
   }
 
@@ -602,6 +606,8 @@ export function computeSetMetrics(selectedTickets, oddsMap, settings) {
     worst_efficiency_ticket: worstEfficiencyTicket,
     set_expected_recovery: setEV,
     investment,
+    odds_mapping_error: missingOdds.length > 0,
+    missing_odds: missingOdds,
   };
 }
 
@@ -711,6 +717,8 @@ export function runPrediction(entries, settings, options = {}) {
 
   const topTrifecta = trifectas[0];
   const grade = gradePrediction(activeScores);
+  // top_odds: 実オッズのみ使用
+  const topOdds = topTrifecta ? (oddsMap?.[topTrifecta.combination] || null) : null;
 
   return {
     stage, boatScores, trifectas,
@@ -719,6 +727,7 @@ export function runPrediction(entries, settings, options = {}) {
     data_confidence: dataConfidence,
     honmei_boat: honmei, taiko_boat: taiko, ana_boat: ana, keshi_boat: keshi,
     top_trifecta: topTrifecta?.combination, top_probability: topTrifecta?.probability,
+    top_odds: topOdds,
     first_ranking: firstRanking, second_ranking: secondRanking, third_ranking: thirdRanking,
     exhibition_ready: activeScores.some(s => s.exhibition_delta !== 0),
     // 新: 買い目・判定

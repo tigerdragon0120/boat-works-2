@@ -206,7 +206,41 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
       preBoatScores = await client.asServiceRole.entities.BoatPrediction.filter({ prediction_id: prePred[0].id }, "boat_number", 6);
     }
   }
-  const result = runPrediction(entriesWithProfiles, cfg, { oddsMap, preBoatScores });
+
+  // FINAL時: 対象Raceの最新OddsSnapshotを取得し、実オッズを最優先で使用
+  let effectiveOddsMap = oddsMap || {};
+  if (stage === "FINAL") {
+    try {
+      const snapshots = await client.asServiceRole.entities.OddsSnapshot.filter(
+        { race_id: race.id }, "-captured_at", 1
+      );
+      if (snapshots?.[0]?.odds_map && typeof snapshots[0].odds_map === "object") {
+        // OddsSnapshotの実オッズを最優先、引数のoddsMapで補完
+        effectiveOddsMap = { ...oddsMap, ...snapshots[0].odds_map };
+      }
+    } catch {}
+  }
+
+  const result = runPrediction(entriesWithProfiles, cfg, { oddsMap: effectiveOddsMap, preBoatScores });
+
+  // FINAL時: 選択買い目の実オッズマッピングエラーチェック
+  if (stage === "FINAL" && result.set_metrics?.odds_mapping_error) {
+    const missing = result.set_metrics.missing_odds || [];
+    console.error(`[ODDS_MAPPING_ERROR] race=${race.id} key=${race.race_key} missing=${missing.join(",")}`);
+    const { id: errPredId } = await getOrCreatePrediction(client, race.id, race.race_key, stage);
+    await client.asServiceRole.entities.RacePrediction.update(errPredId, {
+      race_id: race.id, race_key: race.race_key, stage, prediction_version: VERSION,
+      computed_at: new Date().toISOString(),
+      status: "MISSING",
+      judgment_reason: `ODDS_MAPPING_ERROR: 実オッズ未取得 ${missing.join(", ")}`,
+      selected_trifectas: result.selected_trifectas,
+      ticket_count: result.ticket_count,
+      top_trifecta: result.top_trifecta,
+      top_probability: result.top_probability,
+      top_odds: result.top_odds,
+    });
+    return { predictionId: errPredId, result, odds_mapping_error: true, missing_odds: missing };
+  }
 
   const { id: predictionId, existing: existingPred } = await getOrCreatePrediction(client, race.id, race.race_key, stage);
 
@@ -231,6 +265,7 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     worst_efficiency_ticket: result.set_metrics?.worst_efficiency_ticket,
     honmei_boat: result.honmei_boat, taiko_boat: result.taiko_boat, ana_boat: result.ana_boat, keshi_boat: result.keshi_boat,
     top_trifecta: result.top_trifecta, top_probability: result.top_probability,
+    top_odds: result.top_odds,
     top_judgment: result.final_judgment,
     race_scenario: result.race_scenario,
     first_ranking: result.first_ranking, second_ranking: result.second_ranking, third_ranking: result.third_ranking,
@@ -269,7 +304,8 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     const info = ticketInfoMap.get(t.combination);
     const isSelected = selectedSet.has(t.combination);
     const { judgment, basis } = judgeTrifecta(t, { settings, dataConfidence: result.data_confidence, stage });
-    const actualOdds = oddsMap?.[t.combination] || null;
+    // 実オッズのみ使用(effectiveOddsMap = OddsSnapshot最優先)
+    const actualOdds = effectiveOddsMap?.[t.combination] || null;
     const estimatedOdds = Math.max(1.0, Math.round((100 / Math.max(t.probability, 0.1)) * 0.75 * 10) / 10);
     const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
     return {
