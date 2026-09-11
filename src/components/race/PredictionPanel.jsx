@@ -37,6 +37,8 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
   const judgment = activePred?.final_judgment || "PENDING";
   const jcfg = judgmentConfig[judgment] || judgmentConfig.PENDING;
   const selectedTri = (allTri || []).filter((t) => t.is_selected).sort((a, b) => (a.ticket_rank || 99) - (b.ticket_rank || 99));
+  // 旧予想データに本命/対抗/穴の重複が残っていても表示時に必ず補正する。
+  const roles = resolveRoleBoats(activePred, activeBoats);
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col h-full">
@@ -159,9 +161,9 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
 
             {/* 本命/対抗/穴 */}
             <div className="grid grid-cols-3 gap-2">
-              <RoleBox label="本命" n={activePred?.honmei_boat} icon={Crown} cls="border-amber-400/40" photo={entries.find((e) => e.boat_number === activePred?.honmei_boat)?.player_photo} reg={entries.find((e) => e.boat_number === activePred?.honmei_boat)?.register_number || entries.find((e) => e.boat_number === activePred?.honmei_boat)?.registration_number} name={entries.find((e) => e.boat_number === activePred?.honmei_boat)?.player_name} />
-              <RoleBox label="対抗" n={activePred?.taiko_boat} icon={Shield} cls="border-blue-400/40" photo={entries.find((e) => e.boat_number === activePred?.taiko_boat)?.player_photo} reg={entries.find((e) => e.boat_number === activePred?.taiko_boat)?.register_number || entries.find((e) => e.boat_number === activePred?.taiko_boat)?.registration_number} name={entries.find((e) => e.boat_number === activePred?.taiko_boat)?.player_name} />
-              <RoleBox label="穴" n={activePred?.ana_boat} icon={Sparkles} cls="border-rose-400/40" photo={entries.find((e) => e.boat_number === activePred?.ana_boat)?.player_photo} reg={entries.find((e) => e.boat_number === activePred?.ana_boat)?.register_number || entries.find((e) => e.boat_number === activePred?.ana_boat)?.registration_number} name={entries.find((e) => e.boat_number === activePred?.ana_boat)?.player_name} />
+              <RoleBox label="本命" n={roles.honmei} icon={Crown} cls="border-amber-400/40" photo={entries.find((e) => e.boat_number === roles.honmei)?.player_photo} reg={entries.find((e) => e.boat_number === roles.honmei)?.register_number || entries.find((e) => e.boat_number === roles.honmei)?.registration_number} name={entries.find((e) => e.boat_number === roles.honmei)?.player_name} />
+              <RoleBox label="対抗" n={roles.taiko} icon={Shield} cls="border-blue-400/40" photo={entries.find((e) => e.boat_number === roles.taiko)?.player_photo} reg={entries.find((e) => e.boat_number === roles.taiko)?.register_number || entries.find((e) => e.boat_number === roles.taiko)?.registration_number} name={entries.find((e) => e.boat_number === roles.taiko)?.player_name} />
+              <RoleBox label="穴" n={roles.ana} icon={Sparkles} cls="border-rose-400/40" photo={entries.find((e) => e.boat_number === roles.ana)?.player_photo} reg={entries.find((e) => e.boat_number === roles.ana)?.register_number || entries.find((e) => e.boat_number === roles.ana)?.registration_number} name={entries.find((e) => e.boat_number === roles.ana)?.player_name} />
             </div>
 
             {/* 展開予測理由 */}
@@ -283,6 +285,24 @@ function TabBtn({ active, onClick, label }) {
   return (
     <button onClick={onClick} className={cn("px-3 h-7 rounded-md text-xs font-bold transition-colors", active ? "bg-[#f9c836] text-slate-950" : "bg-slate-100 text-slate-600 hover:text-slate-900")}>{label}</button>
   );
+}
+
+function resolveRoleBoats(activePred, activeBoats = []) {
+  const rankedFirst = [...activeBoats].sort((a, b) => (b.first_power || 0) - (a.first_power || 0));
+  const honmei = activePred?.honmei_boat ?? rankedFirst[0]?.boat_number;
+  let taiko = activePred?.taiko_boat;
+  if (!taiko || taiko === honmei) {
+    taiko = [...activeBoats]
+      .filter((b) => b.boat_number !== honmei)
+      .sort((a, b) => ((b.second_power || 0) * 0.7 + (b.total_power || 0) * 0.3) - ((a.second_power || 0) * 0.7 + (a.total_power || 0) * 0.3))[0]?.boat_number;
+  }
+  let ana = activePred?.ana_boat;
+  if (!ana || ana === honmei || ana === taiko) {
+    ana = [...activeBoats]
+      .filter((b) => b.boat_number !== honmei && b.boat_number !== taiko)
+      .sort((a, b) => ((b.ana_potential || 0) * 0.7 + (b.first_power || 0) * 0.3) - ((a.ana_potential || 0) * 0.7 + (a.first_power || 0) * 0.3))[0]?.boat_number;
+  }
+  return { honmei, taiko, ana };
 }
 
 function RoleBox({ label, n, icon: Icon, cls, photo, reg, name }) {
