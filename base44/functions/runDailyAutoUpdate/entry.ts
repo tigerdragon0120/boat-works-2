@@ -456,14 +456,15 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     if (Date.now() - startTime > timeBudgetMs) break;
     if (race.status === 'finished' || race.status === 'cancelled') continue;
     if (!race.exhibition_ready) continue; // 展示未取得はスキップ
-    if (race.has_final) continue; // FINAL済みはスキップ
 
-    // 締切10分前〜締切5分後の間のみオッズ取得
+    // オッズは直前で大きく動くため、FINAL用は締切5分前付近だけ取得する。
+    // 早い時点で一度FINALを作って固定すると実際のオッズと乖離するため、
+    // FINAL済みでもこの直前ウィンドウ内では最新オッズで再計算する。
     if (!race.deadline) continue;
     const deadlineMs = new Date(race.deadline).getTime();
     if (!Number.isFinite(deadlineMs)) continue;
     const nowMs = Date.now();
-    if (nowMs < deadlineMs - 10 * 60 * 1000 || nowMs > deadlineMs + 5 * 60 * 1000) continue;
+    if (nowMs < deadlineMs - 6 * 60 * 1000 || nowMs > deadlineMs - 2 * 60 * 1000) continue;
 
     const venueCode = race.venue_code;
     const raceNumber = race.race_number;
