@@ -34,10 +34,16 @@ function getTodayJST(): string {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
 function getTomorrowJST(): string {
-  const now = new Date();
-  const jst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-  jst.setDate(jst.getDate() + 1);
-  return jst.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  // JSTの「今日」文字列を基準に暦日を1日進める。
+  // JST時刻をDateへ再解釈してから再度timeZone変換すると、環境によって+9時間が二重適用され
+  // 21時以降などに翌々日へずれることがあるため、UTCの暦日演算だけを使う。
+  const today = getTodayJST();
+  const [y, m, d] = today.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  const yy = next.getUTCFullYear();
+  const mm = String(next.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(next.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 function nowJSTTime(): string {
   return new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
