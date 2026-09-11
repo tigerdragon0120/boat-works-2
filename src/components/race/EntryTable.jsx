@@ -235,7 +235,7 @@ function Past10Grid({ entries, historyByReg, loading }) {
         </div>
         {entries.map((e) => {
           const reg = String(e.register_number || e.registration_number || "");
-          const hist = historyByReg[reg] || [];
+          const hist = [...(historyByReg[reg] || [])].reverse();
           return (
             <div key={e.boat_number} className={cn("grid grid-cols-[28px_180px_repeat(10,1fr)] gap-1 px-2 py-2 border-b border-slate-200 items-center", rowTint[e.boat_number])}>
               <div className="flex justify-center"><span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span></div>
