@@ -182,6 +182,10 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
           boat_number_id: e.boat_number_id, boat_f2_rate: e.boat_2rate, boat_2rate: e.boat_2rate,
           boat_f3_rate: e.boat_3rate, boat_3rate: e.boat_3rate,
           f_count: e.f_count, l_count: e.l_count, avg_st: e.avg_st,
+          section_points: e.section_points,
+          section_finishes: e.section_finishes,
+          section_st: e.section_st,
+          section_momentum: e.section_momentum,
         };
         for (const [k, v] of Object.entries(optional)) if (v !== null && v !== undefined && v !== '') entryData[k] = v;
         const old = existingEntryByKey.get(`${rno}_${Number(e.boat_number)}`);
