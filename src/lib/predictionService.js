@@ -180,10 +180,10 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
   const trifectaDocs = result.trifectas.map((t) => {
     const info = ticketInfoMap.get(t.combination);
     const isSelected = selectedSet.has(t.combination);
-    const { judgment, basis } = judgeTrifecta(t, { settings, dataConfidence: result.data_confidence, stage });
     const actualOdds = oddsMap?.[t.combination] || null;
     const estimatedOdds = Math.max(1.0, Math.round((100 / Math.max(t.probability, 0.1)) * 0.75 * 10) / 10);
     const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
+    const { judgment, basis } = judgeTrifecta({ ...t, expected_value: ev }, { settings, dataConfidence: result.data_confidence, stage });
     return {
       prediction_id: pid,
       race_id: race.id,
