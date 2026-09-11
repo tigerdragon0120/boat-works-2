@@ -63,7 +63,7 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
             <div className="text-slate-500 text-xs mb-4">PRE/FINAL予想を実行すると<br />買い目と判定が表示されます</div>
             <div className="flex gap-2 w-full max-w-xs">
               <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
-                className="flex-1 h-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-200 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
+                className="flex-1 h-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
                 <Zap className="w-4 h-4" /> PRE
               </button>
               <button onClick={() => run("FINAL")} disabled={busy || entries.length === 0}
@@ -86,7 +86,7 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] text-slate-600">買い目</span>
-                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-200 text-xs font-bold">{activePred?.ticket_count || "—"}点</span>
+                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-900 text-xs font-bold">{activePred?.ticket_count || "—"}点</span>
                   {activePred?.ticket_strategy && (
                     <span className="text-[10px] text-slate-500 truncate">{activePred.ticket_strategy}</span>
                   )}
@@ -229,7 +229,7 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
             {/* 再実行ボタン */}
             <div className="flex gap-2 mt-1">
               <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
-                className="flex-1 h-9 rounded-lg bg-slate-100 border border-slate-200 text-slate-200 font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
+                className="flex-1 h-9 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
                 <Zap className="w-3.5 h-3.5" /> PRE再実行
               </button>
               <button onClick={() => run("FINAL")} disabled={busy || entries.length === 0}
@@ -262,8 +262,8 @@ function TicketRow({ t }) {
         <span className={cn("px-1 h-5 rounded text-[9px] font-bold border flex items-center", groupStyle[t.set_group])}>{t.set_group}</span>
       )}
       <div className="flex-1 grid grid-cols-3 gap-1 text-center text-[10px]">
-        <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-200">{t.probability}%</div></div>
-        <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-200">{odds ?? "—"}</div></div>
+        <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-900">{t.probability}%</div></div>
+        <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-900">{odds ?? "—"}</div></div>
         <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", ev != null && ev >= 120 ? "text-emerald-400" : ev != null && ev >= 90 ? "text-amber-400" : "text-slate-600")}>{ev != null ? `${ev}%` : "—"}</div></div>
       </div>
     </div>
@@ -273,7 +273,7 @@ function TicketRow({ t }) {
 function Metric({ label, v, highlight }) {
   return (
     <div className={cn("rounded-md py-1.5", highlight ? "bg-emerald-500/10" : "bg-white")}>
-      <div className={cn("font-bold text-sm", highlight ? "text-emerald-400" : "text-slate-200")}>{v}</div>
+      <div className={cn("font-bold text-sm", highlight ? "text-emerald-500" : "text-slate-900")}>{v}</div>
       <div className="text-[9px] text-slate-500">{label}</div>
     </div>
   );
