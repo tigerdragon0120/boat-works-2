@@ -325,10 +325,20 @@ export function runPrediction(entries, settings, options = {}) {
   const secondRanking = [...activeScores].sort((a, b) => b.second_power - a.second_power).map(b => b.boat_number);
   const thirdRanking = [...activeScores].sort((a, b) => b.third_power - a.third_power).map(b => b.boat_number);
 
+  // 役割は必ず別艇にする。
+  // 本命 = 1着力トップ
+  // 対抗 = 本命を除いた中で2着力を主軸に総合力も加味した最上位
+  // 穴   = 本命・対抗を除いた中で穴ポテンシャル最上位
   const honmei = firstRanking[0];
-  const taiko = secondRanking[0];
-  const ana = [...activeScores].sort((a, b) => b.ana_potential - a.ana_potential)[0]?.boat_number;
-  const keshi = firstRanking[firstRanking.length - 1];
+  const taikoCandidate = [...activeScores]
+    .filter((b) => b.boat_number !== honmei)
+    .sort((a, b) => ((b.second_power * 0.7 + b.total_power * 0.3) - (a.second_power * 0.7 + a.total_power * 0.3)))[0];
+  const taiko = taikoCandidate?.boat_number ?? firstRanking.find((n) => n !== honmei);
+  const anaCandidate = [...activeScores]
+    .filter((b) => b.boat_number !== honmei && b.boat_number !== taiko)
+    .sort((a, b) => ((b.ana_potential * 0.7 + b.first_power * 0.3) - (a.ana_potential * 0.7 + a.first_power * 0.3)))[0];
+  const ana = anaCandidate?.boat_number ?? firstRanking.find((n) => n !== honmei && n !== taiko);
+  const keshi = [...firstRanking].reverse().find((n) => n !== honmei && n !== taiko && n !== ana) ?? firstRanking[firstRanking.length - 1];
 
   const topTrifecta = trifectas[0];
   const grade = gradePrediction(activeScores);
