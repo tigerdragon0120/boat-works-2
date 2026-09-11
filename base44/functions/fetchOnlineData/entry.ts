@@ -91,19 +91,21 @@ async function processOdds(base44: any, race: any, parsed: any) {
   });
 
   // TrifectaPredictionのactual_odds更新(既存FINALがある場合)
+  // bulkUpdateで一括更新し、DB API呼び出しを削減(レート制限回避)
   const preds = await sr.RacePrediction.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1);
   if (preds && preds[0]) {
     const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: preds[0].id }, 'rank', 120);
-    for (const t of trifectas) {
+    const updates = trifectas.map((t: any) => {
       const actualOdds = oddsMap[t.combination] || null;
       const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
-      await sr.TrifectaPrediction.update(t.id, { actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev });
-    }
+      return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev };
+    });
+    if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates);
   }
 
-  // FINAL生成条件: 展示データあり + 6艇 + オッズあり
+  // FINAL生成条件: 展示データあり + 6艇 + オッズ120組(全組)あり
   // 展示取得済みでFINAL未生成の場合、FINAL予想を生成
-  if (race.exhibition_ready && !race.has_final && oddsCount >= 100) {
+  if (race.exhibition_ready && !race.has_final && oddsCount >= 120) {
     const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
     if (entries.length >= 6) {
       try {
