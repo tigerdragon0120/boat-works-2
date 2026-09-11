@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
-import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
+import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 import { upsertRace, upsertEntry, upsertResultAndVerify, runAndSavePrediction, getSettings } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 
@@ -358,28 +358,21 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
 }
 
 // =====================================================
-// STEP 2: 展示データ取得
+// STEP 2: 展示データ取得(FINAL生成はしない・オッズ取得後に生成)
 // =====================================================
 async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
   const sr = base44.asServiceRole.entities;
   const startTime = Date.now();
-  const settings = await getSettings(base44);
-  const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
-  const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
-  const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
-  const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
   const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
-  let fetched = 0, finalGenerated = 0;
+  let fetched = 0;
 
   for (const race of races) {
     if (Date.now() - startTime > timeBudgetMs) break;
-    if (race.exhibition_ready) continue; // 既に展示取得済み
+    if (race.exhibition_ready) continue;
     if (race.status === 'finished' || race.status === 'cancelled') continue;
 
     // 直前情報は締切の60分前〜締切5分後だけ取得する。
-    // 公式beforeinfoページには開催前でも選手情報が存在するため、時間制限なしで解析すると
-    // 通常の数値を展示値と誤認し、朝からFINALになることがあった。
     if (!race.deadline) continue;
     const deadlineMs = new Date(race.deadline).getTime();
     if (!Number.isFinite(deadlineMs)) continue;
@@ -406,7 +399,6 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       const existing = entryByBoat.get(bn);
       if (!existing) continue;
 
-      // 保護付き更新: null/空で既存値を上書きしない
       const update: any = {};
       if (pe.exhibition_time != null) update.exhibition_time = pe.exhibition_time;
       if (pe.exhibition_st != null) {
@@ -423,45 +415,91 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       }
     }
 
+    // 実展示値(展示タイム+ST)が6艇揃った場合のみ exhibition_ready=true
+    const realCount = parsed.data.real_exhibition_count || 0;
     if (updated > 0) {
-      await sr.Race.update(race.id, { exhibition_ready: true }).catch(() => {});
-      fetched++;
-
-      // FINAL予想生成は6艇分の実展示値が確認できた場合だけ。
-      // 単に6選手がページに存在するだけではFINALにしない。
-      const realExhibitionCount = parsed.data.entries.filter((e: any) =>
-        e.exhibition_time != null && e.exhibition_time >= 5 && e.exhibition_time <= 9 &&
-        e.exhibition_st != null
-      ).length;
-      if (updated >= 6 && realExhibitionCount >= 6) {
-        try {
-          const updatedEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6);
-          await runAndSavePrediction(base44, race, updatedEntries, settings, 'FINAL', {}, profileByReg, rollingByReg);
-          finalGenerated++;
-          logs.push(`${venueName} R${raceNumber}: 展示取得+FINAL予想生成`);
-        } catch (e: any) {
-          logs.push(`${venueName} R${raceNumber}: 展示取得済み(FINAL予想失敗: ${e.message})`);
-        }
-      } else {
-        logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新`);
-      }
-    }
-
-    // 天候情報でRace更新
-    if (parsed.data.weather || parsed.data.wind_speed != null) {
       const raceUpdate: any = {};
+      if (realCount >= 6) raceUpdate.exhibition_ready = true;
       if (parsed.data.weather) raceUpdate.weather = parsed.data.weather;
       if (parsed.data.wind_speed != null) raceUpdate.wind_speed = parsed.data.wind_speed;
       if (parsed.data.water_temp != null) raceUpdate.water_temp = parsed.data.water_temp;
       if (parsed.data.air_temp != null) raceUpdate.air_temp = parsed.data.air_temp;
       if (parsed.data.wave_height != null) raceUpdate.wave_height = parsed.data.wave_height;
       await sr.Race.update(race.id, raceUpdate).catch(() => {});
+      fetched++;
+      logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新(実展示${realCount}/6)`);
     }
 
     await sleep(300);
   }
 
-  return { total: races.length, fetched, final_generated: finalGenerated, errors };
+  return { total: races.length, fetched, errors };
+}
+
+// =====================================================
+// STEP 3: 3連単オッズ取得 + FINAL予想生成
+// 展示取得済みのレースについてオッズを取得し、FINAL予想を生成する。
+// =====================================================
+async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
+  const sr = base44.asServiceRole.entities;
+  const startTime = Date.now();
+  const settings = await getSettings(base44);
+  const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
+  const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
+  const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
+  const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
+
+  const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
+  let oddsFetched = 0, finalGenerated = 0;
+
+  for (const race of races) {
+    if (Date.now() - startTime > timeBudgetMs) break;
+    if (race.status === 'finished' || race.status === 'cancelled') continue;
+    if (!race.exhibition_ready) continue; // 展示未取得はスキップ
+    if (race.has_final) continue; // FINAL済みはスキップ
+
+    // 締切10分前〜締切5分後の間のみオッズ取得
+    if (!race.deadline) continue;
+    const deadlineMs = new Date(race.deadline).getTime();
+    if (!Number.isFinite(deadlineMs)) continue;
+    const nowMs = Date.now();
+    if (nowMs < deadlineMs - 10 * 60 * 1000 || nowMs > deadlineMs + 5 * 60 * 1000) continue;
+
+    const venueCode = race.venue_code;
+    const raceNumber = race.race_number;
+    const venueName = race.venue_name || race.venue || VENUE_MAP[venueCode] || venueCode;
+
+    const url = buildUrl('odds3t', raceDate, venueCode, raceNumber);
+    const res = await fetchHtml(url);
+    if (!res.ok) continue;
+
+    const oddsMap = parseOdds3t(res.html);
+    const oddsCount = Object.keys(oddsMap).length;
+    if (oddsCount < 100) continue; // オッズが十分でない場合はスキップ
+
+    // OddsSnapshot保存
+    await sr.OddsSnapshot.create({
+      race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
+      captured_at: new Date().toISOString(),
+    }).catch(() => {});
+    oddsFetched++;
+
+    // FINAL予想生成(展示+オッズ揃った場合のみ)
+    const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+    if (entries.length >= 6) {
+      try {
+        await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+        finalGenerated++;
+        logs.push(`${venueName} R${raceNumber}: オッズ${oddsCount}件+FINAL予想生成`);
+      } catch (e: any) {
+        errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
+      }
+    }
+
+    await sleep(300);
+  }
+
+  return { total: races.length, odds_fetched: oddsFetched, final_generated: finalGenerated, errors };
 }
 
 // =====================================================
@@ -607,8 +645,17 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
 
   if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
     logs.push(`AUTO: 展示データ取得開始`);
+    const before = Date.now();
     const r = await fetchAndSaveExhibition(base44, today, remaining, logs, errors);
     steps.push(`exhibition: ${r.fetched}R`);
+    remaining -= (Date.now() - before);
+  }
+
+  // 展示取得済みのレースについてオッズ取得+FINAL予想生成
+  if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
+    logs.push(`AUTO: オッズ取得+FINAL予想生成開始`);
+    const r = await fetchAndSaveOddsAndFinal(base44, today, remaining, logs, errors);
+    steps.push(`odds_final: ${r.odds_fetched}R/${r.final_generated}FINAL`);
   }
 
   return { steps, logs, errors };
@@ -653,6 +700,9 @@ export default async function(req: Request) {
         break;
       case 'exhibition':
         result = await fetchAndSaveExhibition(base44, today, TIME_BUDGET, logs, errors);
+        break;
+      case 'odds_final':
+        result = await fetchAndSaveOddsAndFinal(base44, today, TIME_BUDGET, logs, errors);
         break;
       case 'completeness':
         const todayStats = await checkCompleteness(base44, today, logs);

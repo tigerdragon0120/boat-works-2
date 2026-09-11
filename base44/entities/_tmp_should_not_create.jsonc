@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "x": {
+      "type": "string"
+    }
+  },
+  "required": [],
+  "name": "_tmp_should_not_create"
+}

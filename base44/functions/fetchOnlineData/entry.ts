@@ -30,12 +30,14 @@ async function shouldSkipRecentFailure(base44: any, fetchType: string, raceDate:
 }
 
 // === 展示データ処理(決定論的パーサー出力 → RaceEntry更新) ===
+// FINAL予想は展示取得のみでは生成しない。オッズ取得後に生成する。
 async function processExhibition(base44: any, race: any, parsed: any) {
   const sr = base44.asServiceRole.entities;
   const parsedEntries = parsed.entries || [];
   const existingEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
   const entryByBoat = new Map(existingEntries.map((e: any) => [e.boat_number, e]));
 
+  let updated = 0;
   for (const pe of parsedEntries) {
     const bn = num(pe.boat_number);
     if (!bn) continue;
@@ -55,11 +57,15 @@ async function processExhibition(base44: any, race: any, parsed: any) {
 
     if (Object.keys(update).length) {
       await sr.RaceEntry.update(existing.id, update);
+      updated++;
     }
   }
 
   // Race展示取得済フラグ + 天候情報更新
-  const raceUpdate: any = { exhibition_ready: true };
+  // 実展示値(展示タイム+ST)が6艇揃った場合のみ exhibition_ready=true
+  const realCount = parsed.real_exhibition_count || 0;
+  const raceUpdate: any = {};
+  if (realCount >= 6) raceUpdate.exhibition_ready = true;
   if (parsed.weather) raceUpdate.weather = parsed.weather;
   if (parsed.wind_speed != null) raceUpdate.wind_speed = parsed.wind_speed;
   if (parsed.water_temp != null) raceUpdate.water_temp = parsed.water_temp;
@@ -67,22 +73,11 @@ async function processExhibition(base44: any, race: any, parsed: any) {
   if (parsed.wave_height != null) raceUpdate.wave_height = parsed.wave_height;
   await sr.Race.update(race.id, raceUpdate);
 
-  // FINAL予想生成
-  const updatedEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
-  if (updatedEntries.length >= 6) {
-    try {
-      const settings = await getSettings(base44);
-      const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
-      const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
-      const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
-      const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
-      await runAndSavePrediction(base44, race, updatedEntries, settings, 'FINAL', {}, profileByReg, rollingByReg);
-    } catch {}
-  }
-  return { entries_updated: parsedEntries.length };
+  return { entries_updated: updated, exhibition_ready: realCount >= 6, real_exhibition_count: realCount };
 }
 
-// === オッズデータ処理(決定論的パーサー出力 → OddsSnapshot保存) ===
+// === オッズデータ処理(決定論的パーサー出力 → OddsSnapshot保存 + FINAL生成) ===
+// オッズ取得後に展示データが揃っていればFINAL予想を生成する。
 async function processOdds(base44: any, race: any, parsed: any) {
   const sr = base44.asServiceRole.entities;
   const oddsMap = parsed || {};
@@ -95,7 +90,7 @@ async function processOdds(base44: any, race: any, parsed: any) {
     captured_at: new Date().toISOString(),
   });
 
-  // TrifectaPredictionのactual_odds更新
+  // TrifectaPredictionのactual_odds更新(既存FINALがある場合)
   const preds = await sr.RacePrediction.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1);
   if (preds && preds[0]) {
     const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: preds[0].id }, 'rank', 120);
@@ -105,6 +100,26 @@ async function processOdds(base44: any, race: any, parsed: any) {
       await sr.TrifectaPrediction.update(t.id, { actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev });
     }
   }
+
+  // FINAL生成条件: 展示データあり + 6艇 + オッズあり
+  // 展示取得済みでFINAL未生成の場合、FINAL予想を生成
+  if (race.exhibition_ready && !race.has_final && oddsCount >= 100) {
+    const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+    if (entries.length >= 6) {
+      try {
+        const settings = await getSettings(base44);
+        const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
+        const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
+        const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
+        const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
+        await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+        return { odds_count: oddsCount, final_generated: true };
+      } catch (e: any) {
+        return { odds_count: oddsCount, final_error: e.message };
+      }
+    }
+  }
+
   return { odds_count: oddsCount };
 }
 

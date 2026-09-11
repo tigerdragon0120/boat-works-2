@@ -414,13 +414,16 @@ export function parseResult(html, raceDate, venueCode, venueName) {
 
 // =====================================================
 // 直前情報(beforeinfo)解析 → 展示データ
+// HTML構造(boatrace.jp/owpc/pc/race/beforeinfo):
+//   選手行: toban=XXXX → 選手名 → 体重 → 展示タイム → チルト → ...
+//   スタート展示: table1_boatImage1Number is-typeX → 艇番
+//                  table1_boatImage1Time → ST値(.06, F.01等)
 // =====================================================
 export function parseBeforeInfo(html) {
   const errors = [];
   const warnings = [];
 
-  // 各艇の展示タイム・チルト抽出
-  // toban=XXXX をアンカーに各艇のデータを特定
+  // toban=XXXX から登録番号を6艇分抽出(重複除去・順序保持)
   const tobanPattern = /toban=(\d{4})/g;
   const regNumbers = [];
   let tm;
@@ -428,58 +431,79 @@ export function parseBeforeInfo(html) {
     if (!regNumbers.includes(tm[1])) regNumbers.push(tm[1]);
   }
 
-  const exhibitionData = [];
-
-  // スタート展示セクション抽出
-  const stExStart = html.indexOf("スタート展示");
-  const stExSection = stExStart >= 0 ? html.slice(stExStart, stExStart + 2000) : "";
-
-  // スタート展示ST: img_boat2_X.png の後にST値
-  const stExPattern = /img_boat2_(\d)\.png[\s\S]*?(-?\d+\.\d+|F\.\d+)/g;
+  // スタート展示ST抽出: table1_boatImage1Number is-typeX → 艇番, table1_boatImage1Time → ST
   const stExMap = {};
+  const stExPattern = /table1_boatImage1Number\s+is-type(\d)[^>]*>(\d)<\/span>[\s\S]*?table1_boatImage1Time[^>]*>([^<]+)<\/span>/g;
   let se;
-  while ((se = stExPattern.exec(stExSection)) !== null) {
-    const bn = num(se[1]);
-    let stVal = se[2];
-    if (stVal.startsWith("F")) stVal = -Math.abs(num(stVal.slice(1)));
-    else stVal = num(stVal);
-    stExMap[bn] = stVal;
+  while ((se = stExPattern.exec(html)) !== null) {
+    const bn = num(se[2]);
+    let stStr = se[3].trim();
+    let stVal = null;
+    if (stStr.startsWith("F")) {
+      // "F.01" → -0.01, "F.03" → -0.03 (F後の数値は hundredths)
+      const afterF = stStr.replace(/^F\.?/, "");
+      stVal = -Math.abs(num("0." + afterF) || 0);
+    } else {
+      // ".06" → 0.06, "0.06" → 0.06
+      stVal = num(stStr.replace(/^\./, "0."));
+    }
+    if (bn >= 1 && bn <= 6) stExMap[bn] = stVal;
   }
 
-  // 進入(展示コース)抽出: スタート展示セクションのコース情報
-  // boatrace.jpでは進入は1-6の並びで表示される
-  const coursePattern = /img_boat2_(\d)\.png[\s\S]*?(\d)\s*\.|img_boat2_(\d)\.png[\s\S]*?進入[\s\S]*?(\d)/g;
+  // スタート展示進入コース抽出: is-typeX のXがコース番号
   const courseMap = {};
+  const coursePattern = /table1_boatImage1Number\s+is-type(\d)[^>]*>(\d)<\/span>/g;
+  let ce;
+  while ((ce = coursePattern.exec(html)) !== null) {
+    const course = num(ce[1]);
+    const bn = num(ce[2]);
+    if (bn >= 1 && bn <= 6) courseMap[bn] = course;
+  }
 
-  // 各艇の展示タイム・チルト抽出
+  const exhibitionData = [];
+
   for (let i = 0; i < Math.min(6, regNumbers.length); i++) {
     const regNum = regNumbers[i];
     const boatNumber = i + 1;
 
+    // toban=XXXX の直後のHTMLから展示タイム・チルトを抽出
+    // 構造: <td rowspan="4">展示タイム</td><td rowspan="4">チルト</td>
     const tobanIdx = html.indexOf(`toban=${regNum}`);
     if (tobanIdx < 0) continue;
 
-    const section = html.slice(tobanIdx, tobanIdx + 1500);
-    const text = normalizeWidth(stripTags(section));
+    // 選手名の後の td 要素を順に抽出
+    const section = html.slice(tobanIdx, tobanIdx + 2000);
+    const tdRe = /<td[^>]*rowspan="(\d+)"[^>]*>([\s\S]*?)<\/td>/g;
+    const tdValues = [];
+    let td;
+    while ((td = tdRe.exec(section)) !== null) {
+      const text = stripTags(td[2]).replace(/&nbsp;/g, "").trim();
+      tdValues.push(text);
+    }
 
-    // 展示タイム抽出 (6.XX形式)
-    const exhTimeMatch = text.match(/(\d+\.\d{2})/);
-    const exhibitionTime = exhTimeMatch ? num(exhTimeMatch[1]) : null;
-
-    // チルト抽出 (-X.X or X.X形式、展示タイムの直後)
-    const tiltMatch = text.match(/-?\d+\.\d{2}\s*(-?\d+\.\d)/);
-    const tilt = tiltMatch ? num(tiltMatch[1]) : null;
+    // tdValuesの構造: [艇番, 選手名(リンク内), 体重, 展示タイム, チルト, ...]
+    // 展示タイムは "6.71" 形式、チルトは "0.0" 形式
+    let exhibitionTime = null;
+    let tilt = null;
+    for (const v of tdValues) {
+      if (exhibitionTime === null && /^\d+\.\d{2}$/.test(v) && num(v) >= 5 && num(v) <= 9) {
+        exhibitionTime = num(v);
+      } else if (tilt === null && exhibitionTime !== null && /^-?\d+\.\d$/.test(v)) {
+        tilt = num(v);
+      }
+      if (exhibitionTime !== null && tilt !== null) break;
+    }
 
     // 欠場判定
-    const isAbsent = /欠場|欠/.test(text);
+    const isAbsent = /欠場|返還/.test(section);
 
     exhibitionData.push({
       boat_number: boatNumber,
       registration_number: regNum,
       exhibition_time: exhibitionTime,
-      exhibition_st: stExMap[boatNumber] || null,
-      exhibition_st_raw: stExMap[boatNumber] || null,
-      exhibition_course: boatNumber, // デフォルト=艇番(展示進入が取得できない場合)
+      exhibition_st: stExMap[boatNumber] ?? null,
+      exhibition_st_raw: stExMap[boatNumber] ?? null,
+      exhibition_course: courseMap[boatNumber] || boatNumber,
       tilt,
       is_absent: isAbsent,
       is_scratched: isAbsent,
@@ -488,8 +512,8 @@ export function parseBeforeInfo(html) {
 
   // 天候情報抽出
   let weather = null, windSpeed = null, waterTemp = null, airTemp = null, waveHeight = null;
-  const weatherMatch = html.match(/気温([\d.]+)℃/);
-  if (weatherMatch) airTemp = num(weatherMatch[1]);
+  const airTempMatch = html.match(/気温([\d.]+)℃/);
+  if (airTempMatch) airTemp = num(airTempMatch[1]);
   const windMatch = html.match(/風速(\d+)m/);
   if (windMatch) windSpeed = num(windMatch[1]);
   const waterMatch = html.match(/水温([\d.]+)℃/);
@@ -499,12 +523,20 @@ export function parseBeforeInfo(html) {
   const weatherTypeMatch = html.match(/(晴れ|曇り|雨|雪|霧)/);
   if (weatherTypeMatch) weather = weatherTypeMatch[1];
 
+  // 実展示値(展示タイム+ST)が6艇揃った場合のみOK
+  const realCount = exhibitionData.filter(
+    (e) => e.exhibition_time != null && e.exhibition_st != null
+  ).length;
+
   if (exhibitionData.length < 6) {
     warnings.push(`展示データ${exhibitionData.length}艇(6艇期待)`);
   }
+  if (realCount < 6) {
+    warnings.push(`実展示値${realCount}艇(展示タイム+ST必要)`);
+  }
 
   return {
-    ok: exhibitionData.length >= 6,
+    ok: exhibitionData.length >= 6 && realCount >= 6,
     errors,
     warnings,
     data: {
@@ -514,88 +546,117 @@ export function parseBeforeInfo(html) {
       water_temp: waterTemp,
       air_temp: airTemp,
       wave_height: waveHeight,
+      real_exhibition_count: realCount,
     },
   };
 }
 
 // =====================================================
 // 3連単オッズ(odds3t)解析 → odds_map
+// HTML構造(boatrace.jp/owpc/pc/race/odds3t):
+//   thead: 6列グループ(2着=1〜6)、各グループ3列(2着番号, 選手名, ...)
+//   tbody: 20行(5ブロック×4行)、各行6グループ
+//     各グループ: (1着 rowspan="4"), 3着, oddsPoint
+//     rowspan=4の1着値は4行分継続
+//   組み合わせ: 1着-2着-3着 = odds
 // =====================================================
 export function parseOdds3t(html) {
   const oddsMap = {};
 
-  // boatrace.jpの3連単オッズ表は、1st-2nd-3rdの120通りを表形式で表示。
-  // 各セルに (1着艇, 3着艇, オッズ) または (オッズ値のみ) が含まれる。
-  // HTMLの td 要素内のテキストから数値を抽出し、位置から組み合わせを推定。
-
-  // より確実な方法: HTML内の odds値(小数)を含む td を順次抽出し、
-  // 表の構造(1行6列、1st=2〜6の5グループ、各4行)から組み合わせを復元。
-
-  // 3連単オッズセクションを特定
   const oddsStart = html.indexOf("3連単オッズ");
   if (oddsStart < 0) return oddsMap;
-  const oddsSection = html.slice(oddsStart, oddsStart + 50000);
 
-  // td 要素内のテキストを抽出
-  const tdPattern = /<td[^>]*>([\s\S]*?)<\/td>/g;
-  const cellTexts = [];
-  let td;
-  while ((td = tdPattern.exec(oddsSection)) !== null) {
-    const text = stripTags(td[1]).trim();
-    if (text) cellTexts.push(text);
+  // テーブル範囲を特定
+  const tableStart = html.indexOf("<table", oddsStart);
+  if (tableStart < 0) return oddsMap;
+  const tableEnd = html.indexOf("</table>", tableStart);
+  const tableHtml = html.slice(tableStart, tableEnd + 10);
+
+  // theadから2着艇番(1-6)を抽出
+  const theadStart = tableHtml.indexOf("<thead");
+  const theadEnd = tableHtml.indexOf("</thead>");
+  const theadHtml = theadStart >= 0 ? tableHtml.slice(theadStart, theadEnd + 8) : "";
+  const secondBoatNumbers = [];
+  const headerBoatRe = /is-boatColor(\d)[^>]*>(\d)</g;
+  let hm;
+  while ((hm = headerBoatRe.exec(theadHtml)) !== null) {
+    secondBoatNumbers.push(num(hm[2]));
+  }
+  if (secondBoatNumbers.length < 6) return oddsMap;
+
+  // tbodyを取得
+  const tbodyStart = tableHtml.indexOf("<tbody");
+  if (tbodyStart < 0) return oddsMap;
+  const tbodyEnd = tableHtml.indexOf("</tbody>", tbodyStart);
+  const tbodyHtml = tableHtml.slice(tbodyStart, tbodyEnd + 8);
+
+  // trごとに分割
+  const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/g;
+  const rows = [];
+  let tr;
+  while ((tr = trRe.exec(tbodyHtml)) !== null) {
+    rows.push(tr[1]);
   }
 
-  // セルテキストから数値を抽出
-  // 1着→2着→3着の順で120通りが並んでいる構造を利用
-  // boatrace.jpの標準レイアウト:
-  //   1着艇ごとにブロック(2〜6の5ブロック)
-  //   各ブロック内: 2着艇ごとに行(5行)、3着艇ごとに4つのオッズ値
-  //   1行 = 6列(2着艇1〜6、ただし1着艇と同じはスキップ)
-  //   各列 = (3着艇番号, オッズ値) のペア、または (1着, 3着, オッズ) のトリプル
+  // 各列グループの現在の1着値(rowspan追跡用)
+  const currentFirst = [null, null, null, null, null, null];
+  const remainingRowspan = [0, 0, 0, 0, 0, 0];
 
-  // シンプルな抽出: 全セルから数値を順に読み、120通りのオッズとして復元
-  // より確実なのは、表の行/列構造から推定する方法
-
-  // 代替アプローチ: 全 \d-\d-\d パターンとその後のオッズ値を抽出
-  // ただしオッズページには組番が "X-Y-Z" 形式で表示されない場合がある
-
-  // 実用的アプローチ: td内のテキストが "数字 数字 小数" のパターン(1着,3着,オッズ)
-  // または "数字 小数" (3着,オッズ) のパターンを抽出
-  for (const text of cellTexts) {
-    // "1 2 11.9" 形式 → 1着=1, 2着=2(列位置), 3着=3(明示), オッズ=11.9
-    const tripleMatch = text.match(/^(\d)\s+(\d)\s+(\d+(?:\.\d+)?)$/);
-    if (tripleMatch) {
-      const first = num(tripleMatch[1]);
-      const third = num(tripleMatch[2]);
-      const odds = num(tripleMatch[3]);
-      // 2着は列位置から推定できないため、このパターンは "1着-3着-オッズ" と解釈
-      // ただし2着情報が不足するため、この方法は不完全
-      continue;
+  for (const rowHtml of rows) {
+    // 行内の全tdを抽出(属性付き)
+    const tdRe = /<td([^>]*)>([\s\S]*?)<\/td>/g;
+    const cells = [];
+    let td;
+    while ((td = tdRe.exec(rowHtml)) !== null) {
+      const attrs = td[1];
+      const text = stripTags(td[2]).replace(/&nbsp;/g, "").trim();
+      const rowspanMatch = attrs.match(/rowspan="(\d+)"/);
+      const rowspan = rowspanMatch ? parseInt(rowspanMatch[1], 10) : 0;
+      const isBoatColor = /is-boatColor/.test(attrs);
+      const isOddsPoint = /oddsPoint/.test(attrs);
+      cells.push({ text, rowspan, isBoatColor, isOddsPoint });
     }
-    // 単独のオッズ値(小数) → 組み合わせは位置から推定が必要
-    const oddsMatch = text.match(/^(\d+(?:\.\d+)?)$/);
-    if (oddsMatch) {
-      const odds = num(oddsMatch[1]);
-      if (odds >= 1.0 && odds <= 9999) {
-        // 位置情報がないためスキップ(後で改善)
+
+    // 列グループ(0-5)ごとに処理
+    // 各グループは3セル: (1着+rowspan or 継続), 3着, odds
+    // rowspanがある場合は1着が新しい値、ない場合は前の1着を継続
+    let colGroup = 0;
+    let cellIdx = 0;
+    while (cellIdx < cells.length && colGroup < 6) {
+      // rowspan残りが0の場合、次のセルが1着(rowspan付き)
+      if (remainingRowspan[colGroup] <= 0) {
+        // 1着セルを探す
+        if (cellIdx < cells.length && cells[cellIdx].rowspan > 0) {
+          currentFirst[colGroup] = num(cells[cellIdx].text);
+          remainingRowspan[colGroup] = cells[cellIdx].rowspan;
+          cellIdx++;
+        }
       }
+
+      if (remainingRowspan[colGroup] > 0) {
+        // 3着 + odds のペアを抽出
+        if (cellIdx + 1 < cells.length) {
+          const thirdBoat = num(cells[cellIdx].text);
+          const oddsVal = num(cells[cellIdx + 1].text.replace(/,/g, ""));
+          const firstBoat = currentFirst[colGroup];
+          const secondBoat = secondBoatNumbers[colGroup];
+
+          if (firstBoat && secondBoat && thirdBoat &&
+              firstBoat !== secondBoat && firstBoat !== thirdBoat && secondBoat !== thirdBoat &&
+              oddsVal && oddsVal >= 1.0) {
+            oddsMap[`${firstBoat}-${secondBoat}-${thirdBoat}`] = oddsVal;
+          }
+          cellIdx += 2;
+        }
+      }
+      colGroup++;
+    }
+
+    // rowspan カウントダウン
+    for (let i = 0; i < 6; i++) {
+      if (remainingRowspan[i] > 0) remainingRowspan[i]--;
     }
   }
-
-  // より確実な方法: 3連単の全120通りの組み合わせを生成し、
-  // HTML内で "X-Y-Z" 形式のパターンとオッズ値を探す
-  // ただしboatrace.jpのオッズページは組番を表示しない場合がある
-
-  // 最終アプローチ: 表の構造を解析して組み合わせを復元
-  // boatrace.jpの3連単オッズ表の標準構造:
-  //   - 5ブロック(1着=2,3,4,5,6) ※1着=1はない(1着が1の場合は別の場所)
-  //   実際は6ブロック(1着=1〜6)、各ブロック5行(2着)、各行4列(3着)
-  //   ただし1着と2着が同じ場合はスキップ
-
-  // 実装: 3連単オッズ表の行を順に解析
-  // 各行は1着艇を示し、続くセルが2着-3着のオッズ
-  // この実装は複雑なため、基本版として空のoddsMapを返す
-  // 実運用では展示情報取得後にオッズが必要な場合のみ呼ばれる
 
   return oddsMap;
 }
