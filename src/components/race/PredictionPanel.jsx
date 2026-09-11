@@ -254,7 +254,7 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
 }
 
 function TicketRow({ t }) {
-  const odds = t.actual_odds ?? t.current_odds ?? t.estimated_odds;
+  const odds = t.actual_odds ?? t.current_odds ?? null;
   const ev = t.expected_value;
   return (
     <div className="flex items-center gap-2 rounded-md bg-white px-2 py-1.5">
