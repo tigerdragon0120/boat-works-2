@@ -253,14 +253,14 @@ function ExhibitionInfo({ entries }) {
 
 function OddsView({ allTri }) {
   if (!allTri?.length) return <Empty msg="オッズデータがありません" />;
-  const sorted = [...allTri].sort((a, b) => (a.actual_odds || a.estimated_odds || 999) - (b.actual_odds || b.estimated_odds || 999)).slice(0, 30);
+  const sorted = [...allTri].sort((a, b) => ((a.actual_odds ?? Infinity) - (b.actual_odds ?? Infinity))).slice(0, 30);
   return (
     <div className="p-2">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
         {sorted.map((t) => (
           <div key={t.combination} className="rounded-lg border border-slate-200 bg-white p-2">
             <div className="font-mono font-bold text-slate-900 text-sm">{t.combination}</div>
-            <div className="text-[10px] text-slate-500 mt-0.5">オッズ <span className="font-bold text-slate-900">{t.actual_odds || t.estimated_odds || "—"}</span></div>
+            <div className="text-[10px] text-slate-500 mt-0.5">実オッズ <span className="font-bold text-slate-900">{t.actual_odds ?? "—"}</span></div>
             <div className="text-[10px] text-slate-500">確率 <span className="font-bold text-slate-900">{t.probability}%</span></div>
           </div>
         ))}
@@ -284,7 +284,7 @@ function TrifectaView({ probRank, evRank, rankMode, setRankMode }) {
           <span className="font-mono font-bold text-slate-900 text-base w-16">{t.combination}</span>
           <div className="flex-1 grid grid-cols-3 gap-1 text-center text-[10px]">
             <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-900">{t.probability}%</div></div>
-            <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-900">{t.actual_odds ?? t.estimated_odds ?? "—"}</div></div>
+            <div><div className="text-slate-500">実オッズ</div><div className="font-bold text-slate-900">{t.actual_odds ?? "—"}</div></div>
             <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", t.expected_value >= 150 ? "text-emerald-400" : t.expected_value >= 110 ? "text-amber-400" : "text-slate-600")}>{t.expected_value}%</div></div>
           </div>
           <span className={cn("ml-2 px-1.5 h-5 rounded text-[9px] font-bold border flex items-center", judgmentStyle[t.judgment] || judgmentStyle.SKIP)}>{t.judgment}</span>
@@ -311,7 +311,7 @@ function BetTicketView({ activePred, allTri }) {
       </div>
       {/* 買い目リスト */}
       {selected.map((t) => {
-        const odds = t.actual_odds ?? t.current_odds ?? t.estimated_odds;
+        const odds = t.actual_odds ?? t.current_odds ?? null;
         const ev = t.expected_value;
         return (
           <div key={t.combination} className="rounded-lg border border-slate-200 bg-white p-2.5">
