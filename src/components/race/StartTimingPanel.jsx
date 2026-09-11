@@ -117,7 +117,7 @@ export default function StartTimingPanel({ entries, compact = false }) {
                 </div>
 
                 {/* 中央: 水面トラック + ボート + スタートライン */}
-                <div className="flex-1 relative rounded-md bg-gradient-to-r from-[#081626] via-[#0a2238] to-[#0e2d4a] overflow-hidden">
+                <div className="flex-1 h-full min-h-[28px] relative rounded-md bg-gradient-to-r from-[#081626] via-[#0a2238] to-[#0e2d4a] overflow-hidden">
                   {/* 水面テクスチャ(波紋) */}
                   <div
                     className="absolute inset-0 opacity-25"
