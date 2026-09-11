@@ -35,6 +35,8 @@ const filterTabs = ["選手成績", "節間成績", "モーター履歴", "全�
 export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode }) {
   const [subTab, setSubTab] = useState("出走表");
   const [filter, setFilter] = useState("選手成績");
+  const roles = resolveRoleBoats(activePred, activeBoats);
+  const displayPred = activePred ? { ...activePred, honmei_boat: roles.honmei, taiko_boat: roles.taiko, ana_boat: roles.ana } : activePred;
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col h-full">
@@ -73,12 +75,12 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
 
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-auto">
-        {subTab === "買い目" && <BetTicketView activePred={activePred} allTri={allTri} />}
-        {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={activePred} />}
+        {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} />}
+        {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} />}
         {subTab === "直前情報" && <ExhibitionInfo entries={entries} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
         {subTab === "3連単" && <TrifectaView probRank={probRank} evRank={evRank} rankMode={rankMode} setRankMode={setRankMode} />}
-        {subTab === "6艇評価" && <BoatEvalView entries={entries} activeBoats={activeBoats} activePred={activePred} />}
+        {subTab === "6艇評価" && <BoatEvalView entries={entries} activeBoats={activeBoats} activePred={displayPred} />}
       </div>
     </div>
   );
@@ -108,6 +110,24 @@ const filterCols = {
     headers: ["勝率", "2連率", "3連率", "FL", "ST"],
   },
 };
+
+function resolveRoleBoats(activePred, activeBoats = []) {
+  const rankedFirst = [...activeBoats].sort((a, b) => (b.first_power || 0) - (a.first_power || 0));
+  const honmei = activePred?.honmei_boat ?? rankedFirst[0]?.boat_number;
+  let taiko = activePred?.taiko_boat;
+  if (!taiko || taiko === honmei) {
+    taiko = [...activeBoats]
+      .filter((b) => b.boat_number !== honmei)
+      .sort((a, b) => ((b.second_power || 0) * 0.7 + (b.total_power || 0) * 0.3) - ((a.second_power || 0) * 0.7 + (a.total_power || 0) * 0.3))[0]?.boat_number;
+  }
+  let ana = activePred?.ana_boat;
+  if (!ana || ana === honmei || ana === taiko) {
+    ana = [...activeBoats]
+      .filter((b) => b.boat_number !== honmei && b.boat_number !== taiko)
+      .sort((a, b) => ((b.ana_potential || 0) * 0.7 + (b.first_power || 0) * 0.3) - ((a.ana_potential || 0) * 0.7 + (a.first_power || 0) * 0.3))[0]?.boat_number;
+  }
+  return { honmei, taiko, ana };
+}
 
 function EntryGrid({ entries, filter, activeBoats, activePred }) {
   if (!entries.length) return <Empty msg="出走表データがありません" />;
