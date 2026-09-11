@@ -603,11 +603,15 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   let remaining = timeBudgetMs;
 
   // 優先順位:
-  // 1. 翌日番組表が未取得 → 取得(夜間優先)
-  // 2. 翌日PRE予想が未生成 → 生成
-  // 3. 当日番組表の不足を毎回補完（部分取得で止まっても次回継続）
-  // 4. 当日結果が未取得 → 取得(レース後)
-  // 5. 当日展示データ → 取得(レース中)
+  // 1. 当日展示データ（締切が近いレースを最優先）
+  // 2. 当日オッズ + FINAL予想
+  // 3. 当日結果
+  // 4. 当日番組表の不足補完
+  // 5. 翌日番組表/PRE
+  //
+  // 重要: 展示・FINALは取得可能時間が短いリアルタイム処理。
+  // 番組表補完や結果回収を先に実行して時間予算を使い切ると、
+  // 場によって展示が入る/入らない状態になるため、必ず最優先にする。
 
   if (tomorrowRaceCount === 0 && jstHour >= 16) {
     logs.push(`AUTO: 翌日番組表取得開始`);
@@ -625,13 +629,20 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     remaining -= (Date.now() - before);
   }
 
-  // 当日Raceが0件かどうかではなく、毎回完全性を見ながら不足だけ補完する。
-  // fetchAndSaveRaceCards側が6艇揃ったRaceをスキップするため冪等で安全。
-  if (remaining > 10000) {
-    logs.push(`AUTO: 当日番組表の完全性確認・不足補完開始`);
+  // リアルタイム系を最優先。ここを番組表/結果より後ろに置かない。
+  if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
+    logs.push(`AUTO: 展示データ取得開始（最優先）`);
     const before = Date.now();
-    const r = await fetchAndSaveRaceCards(base44, today, remaining, logs, errors);
-    steps.push(`today_card: +${r.races}R/+${r.entries}艇`);
+    const r = await fetchAndSaveExhibition(base44, today, remaining, logs, errors);
+    steps.push(`exhibition: ${r.fetched}R`);
+    remaining -= (Date.now() - before);
+  }
+
+  if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
+    logs.push(`AUTO: オッズ取得+FINAL予想生成開始（最優先）`);
+    const before = Date.now();
+    const r = await fetchAndSaveOddsAndFinal(base44, today, remaining, logs, errors);
+    steps.push(`odds_final: ${r.odds_fetched}R/${r.final_generated}FINAL`);
     remaining -= (Date.now() - before);
   }
 
@@ -643,19 +654,14 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     remaining -= (Date.now() - before);
   }
 
-  if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
-    logs.push(`AUTO: 展示データ取得開始`);
+  // 当日Raceが0件かどうかではなく、毎回完全性を見ながら不足だけ補完する。
+  // リアルタイム取得を終えて余った時間だけ使う。
+  if (remaining > 10000) {
+    logs.push(`AUTO: 当日番組表の完全性確認・不足補完開始`);
     const before = Date.now();
-    const r = await fetchAndSaveExhibition(base44, today, remaining, logs, errors);
-    steps.push(`exhibition: ${r.fetched}R`);
+    const r = await fetchAndSaveRaceCards(base44, today, remaining, logs, errors);
+    steps.push(`today_card: +${r.races}R/+${r.entries}艇`);
     remaining -= (Date.now() - before);
-  }
-
-  // 展示取得済みのレースについてオッズ取得+FINAL予想生成
-  if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
-    logs.push(`AUTO: オッズ取得+FINAL予想生成開始`);
-    const r = await fetchAndSaveOddsAndFinal(base44, today, remaining, logs, errors);
-    steps.push(`odds_final: ${r.odds_fetched}R/${r.final_generated}FINAL`);
   }
 
   return { steps, logs, errors };
