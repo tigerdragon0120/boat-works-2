@@ -168,22 +168,22 @@ function renderDataCols(filter, e) {
   switch (filter) {
     case "節間成績":
       return [
-        <div key="pts" className="text-center font-bold text-slate-200">{e.section_points != null ? e.section_points : "—"}</div>,
+        <div key="pts" className="text-center font-bold text-slate-900">{e.section_points != null ? e.section_points : "—"}</div>,
         <div key="sst" className="text-center font-mono text-slate-700">{num(e.section_st)}</div>,
         <div key="fin" className="text-center text-slate-700 truncate" title={e.section_finishes || ""}>{e.section_finishes || "—"}</div>,
         <div key="mom" className={cn("text-center font-bold", (e.section_momentum || 0) >= 60 ? "text-emerald-400" : (e.section_momentum || 0) >= 40 ? "text-amber-400" : "text-slate-600")}>{num(e.section_momentum, 0)}</div>,
       ];
     case "モーター履歴":
       return [
-        <div key="mno" className="text-center font-bold text-slate-200">{e.motor_number || "—"}</div>,
-        <div key="m2" className="text-center"><div className="font-bold text-slate-200">{pct(e.motor_f2_rate ?? e.motor_2rate)}</div></div>,
+        <div key="mno" className="text-center font-bold text-slate-900">{e.motor_number || "—"}</div>,
+        <div key="m2" className="text-center"><div className="font-bold text-slate-900">{pct(e.motor_f2_rate ?? e.motor_2rate)}</div></div>,
         <div key="m3" className="text-center text-slate-600">{pct(e.motor_f3_rate ?? e.motor_3rate)}</div>,
-        <div key="bno" className="text-center font-bold text-slate-200">{e.boat_number_id || "—"}</div>,
-        <div key="b2" className="text-center"><div className="font-bold text-slate-200">{pct(e.boat_f2_rate ?? e.boat_2rate)}</div></div>,
+        <div key="bno" className="text-center font-bold text-slate-900">{e.boat_number_id || "—"}</div>,
+        <div key="b2" className="text-center"><div className="font-bold text-slate-900">{pct(e.boat_f2_rate ?? e.boat_2rate)}</div></div>,
       ];
     case "全国成績":
       return [
-        <div key="wr" className="text-center font-bold text-slate-200">{num(e.national_win_rate)}</div>,
+        <div key="wr" className="text-center font-bold text-slate-900">{num(e.national_win_rate)}</div>,
         <div key="f2" className="text-center text-slate-700">{pct(e.national_f2_rate ?? e.national_2rate)}</div>,
         <div key="f3" className="text-center text-slate-600">{pct(e.national_f3_rate ?? e.national_3rate)}</div>,
         <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
@@ -191,7 +191,7 @@ function renderDataCols(filter, e) {
       ];
     case "当地成績":
       return [
-        <div key="wr" className="text-center font-bold text-slate-200">{num(e.local_win_rate)}</div>,
+        <div key="wr" className="text-center font-bold text-slate-900">{num(e.local_win_rate)}</div>,
         <div key="f2" className="text-center text-slate-700">{pct(e.local_f2_rate ?? e.local_2rate)}</div>,
         <div key="f3" className="text-center text-slate-600">{pct(e.local_f3_rate ?? e.local_3rate)}</div>,
         <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
@@ -201,8 +201,8 @@ function renderDataCols(filter, e) {
       return [
         <div key="fl" className="text-center">{e.f_count > 0 ? <span className="text-rose-400 font-bold">F{e.f_count}</span> : <span className="text-slate-600">—</span>}</div>,
         <div key="st" className="text-center font-mono text-slate-700">{num(e.avg_st)}</div>,
-        <div key="nw" className="text-center"><div className="font-bold text-slate-200">{num(e.national_win_rate)}</div><div className="text-[9px] text-slate-500">2連{pct(e.national_f2_rate ?? e.national_2rate)}</div></div>,
-        <div key="lw" className="text-center"><div className="font-bold text-slate-200">{num(e.local_win_rate)}</div><div className="text-[9px] text-slate-500">2連{pct(e.local_f2_rate ?? e.local_2rate)}</div></div>,
+        <div key="nw" className="text-center"><div className="font-bold text-slate-900">{num(e.national_win_rate)}</div><div className="text-[9px] text-slate-500">2連{pct(e.national_f2_rate ?? e.national_2rate)}</div></div>,
+        <div key="lw" className="text-center"><div className="font-bold text-slate-900">{num(e.local_win_rate)}</div><div className="text-[9px] text-slate-500">2連{pct(e.local_f2_rate ?? e.local_2rate)}</div></div>,
       ];
   }
 }
@@ -218,12 +218,12 @@ function ExhibitionInfo({ entries }) {
         <div key={e.boat_number} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
           <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
           <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} size="sm" />
-          <span className="text-xs font-bold text-slate-200 w-20 truncate">{e.player_name || ""}</span>
+          <span className="text-xs font-bold text-slate-900 w-20 truncate">{e.player_name || ""}</span>
           <div className="flex-1 grid grid-cols-4 gap-1 text-center text-[10px]">
-            <div><div className="text-slate-500">展示T</div><div className="font-mono font-bold text-slate-200">{e.exhibition_time?.toFixed(2) || "—"}</div></div>
-            <div><div className="text-slate-500">展示ST</div><div className="font-mono font-bold text-slate-200">{e.exhibition_st?.toFixed(2) || "—"}</div></div>
-            <div><div className="text-slate-500">進入</div><div className="font-bold text-slate-200">{e.exhibition_course || "—"}</div></div>
-            <div><div className="text-slate-500">チルト</div><div className="font-bold text-slate-200">{e.tilt?.toFixed(1) || "—"}</div></div>
+            <div><div className="text-slate-500">展示T</div><div className="font-mono font-bold text-slate-900">{e.exhibition_time?.toFixed(2) || "—"}</div></div>
+            <div><div className="text-slate-500">展示ST</div><div className="font-mono font-bold text-slate-900">{e.exhibition_st?.toFixed(2) || "—"}</div></div>
+            <div><div className="text-slate-500">進入</div><div className="font-bold text-slate-900">{e.exhibition_course || "—"}</div></div>
+            <div><div className="text-slate-500">チルト</div><div className="font-bold text-slate-900">{e.tilt?.toFixed(1) || "—"}</div></div>
           </div>
         </div>
       ))}
@@ -240,8 +240,8 @@ function OddsView({ allTri }) {
         {sorted.map((t) => (
           <div key={t.combination} className="rounded-lg border border-slate-200 bg-white p-2">
             <div className="font-mono font-bold text-slate-900 text-sm">{t.combination}</div>
-            <div className="text-[10px] text-slate-500 mt-0.5">オッズ <span className="font-bold text-slate-200">{t.actual_odds || t.estimated_odds || "—"}</span></div>
-            <div className="text-[10px] text-slate-500">確率 <span className="font-bold text-slate-200">{t.probability}%</span></div>
+            <div className="text-[10px] text-slate-500 mt-0.5">オッズ <span className="font-bold text-slate-900">{t.actual_odds || t.estimated_odds || "—"}</span></div>
+            <div className="text-[10px] text-slate-500">確率 <span className="font-bold text-slate-900">{t.probability}%</span></div>
           </div>
         ))}
       </div>
@@ -263,8 +263,8 @@ function TrifectaView({ probRank, evRank, rankMode, setRankMode }) {
           <span className={cn("inline-flex w-6 h-6 rounded-md items-center justify-center text-[11px] font-bold mr-2", t.rank <= 3 ? "bg-[#f9c836] text-slate-950" : "bg-slate-100 text-slate-600")}>{t.rank}</span>
           <span className="font-mono font-bold text-slate-900 text-base w-16">{t.combination}</span>
           <div className="flex-1 grid grid-cols-3 gap-1 text-center text-[10px]">
-            <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-200">{t.probability}%</div></div>
-            <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-200">{t.actual_odds ?? t.estimated_odds ?? "—"}</div></div>
+            <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-900">{t.probability}%</div></div>
+            <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-900">{t.actual_odds ?? t.estimated_odds ?? "—"}</div></div>
             <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", t.expected_value >= 150 ? "text-emerald-400" : t.expected_value >= 110 ? "text-amber-400" : "text-slate-600")}>{t.expected_value}%</div></div>
           </div>
           <span className={cn("ml-2 px-1.5 h-5 rounded text-[9px] font-bold border flex items-center", judgmentStyle[t.judgment] || judgmentStyle.SKIP)}>{t.judgment}</span>
@@ -301,10 +301,10 @@ function BetTicketView({ activePred, allTri }) {
               {t.set_group && <span className={cn("px-1.5 h-5 rounded text-[10px] font-bold border flex items-center", t.set_group === "A" ? "text-rose-300 bg-rose-500/10 border-rose-400/30" : t.set_group === "B" ? "text-amber-300 bg-amber-500/10 border-amber-400/30" : "text-slate-600 bg-slate-700/30 border-slate-600")}>{t.set_group}</span>}
             </div>
             <div className="grid grid-cols-4 gap-1 text-center text-[10px]">
-              <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-200">{t.probability}%</div></div>
-              <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-200">{odds ?? "—"}</div></div>
+              <div><div className="text-slate-500">確率</div><div className="font-bold text-slate-900">{t.probability}%</div></div>
+              <div><div className="text-slate-500">オッズ</div><div className="font-bold text-slate-900">{odds ?? "—"}</div></div>
               <div><div className="text-slate-500">期待値</div><div className={cn("font-bold", ev != null && ev >= 120 ? "text-emerald-400" : ev != null && ev >= 90 ? "text-amber-400" : "text-slate-600")}>{ev != null ? `${ev}%` : "—"}</div></div>
-              <div><div className="text-slate-500">順位</div><div className="font-bold text-slate-200">{t.rank}/120</div></div>
+              <div><div className="text-slate-500">順位</div><div className="font-bold text-slate-900">{t.rank}/120</div></div>
             </div>
             {t.selection_reason && <div className="text-[10px] text-slate-500 mt-1.5 pt-1.5 border-t border-slate-200">{t.selection_reason}</div>}
           </div>
@@ -315,10 +315,10 @@ function BetTicketView({ activePred, allTri }) {
         <div className="rounded-lg border border-slate-200 bg-white p-2.5">
           <div className="text-[10px] font-bold text-blue-400 mb-1.5">セット分析</div>
           <div className="grid grid-cols-2 gap-1.5 text-center text-[10px]">
-            <div className="rounded bg-white py-1"><div className="font-bold text-slate-200">{activePred.set_probability}%</div><div className="text-slate-500">セット的中率</div></div>
-            <div className="rounded bg-white py-1"><div className="font-bold text-slate-200">{activePred.synthetic_odds != null ? `${activePred.synthetic_odds}倍` : "—"}</div><div className="text-slate-500">合成オッズ</div></div>
-            <div className="rounded bg-white py-1"><div className={cn("font-bold", activePred.set_expected_recovery >= 120 ? "text-emerald-400" : "text-slate-200")}>{activePred.set_expected_recovery != null ? `${activePred.set_expected_recovery}%` : "—"}</div><div className="text-slate-500">期待回収率</div></div>
-            <div className="rounded bg-white py-1"><div className="font-bold text-slate-200">{activePred.avg_payout != null ? `${activePred.avg_payout}円` : "—"}</div><div className="text-slate-500">平均払戻</div></div>
+            <div className="rounded bg-white py-1"><div className="font-bold text-slate-900">{activePred.set_probability}%</div><div className="text-slate-500">セット的中率</div></div>
+            <div className="rounded bg-white py-1"><div className="font-bold text-slate-900">{activePred.synthetic_odds != null ? `${activePred.synthetic_odds}倍` : "—"}</div><div className="text-slate-500">合成オッズ</div></div>
+            <div className="rounded bg-white py-1"><div className={cn("font-bold", activePred.set_expected_recovery >= 120 ? "text-emerald-400" : "text-slate-900")}>{activePred.set_expected_recovery != null ? `${activePred.set_expected_recovery}%` : "—"}</div><div className="text-slate-500">期待回収率</div></div>
+            <div className="rounded bg-white py-1"><div className="font-bold text-slate-900">{activePred.avg_payout != null ? `${activePred.avg_payout}円` : "—"}</div><div className="text-slate-500">平均払戻</div></div>
           </div>
         </div>
       )}
@@ -382,7 +382,7 @@ function Mini({ label, v }) {
   return (
     <div className="rounded bg-white py-1">
       <div className="text-slate-500">{label}</div>
-      <div className="font-bold text-slate-200 text-xs">{v != null ? (typeof v === "number" ? v.toFixed(0) : v) : "—"}</div>
+      <div className="font-bold text-slate-900 text-xs">{v != null ? (typeof v === "number" ? v.toFixed(0) : v) : "—"}</div>
     </div>
   );
 }
