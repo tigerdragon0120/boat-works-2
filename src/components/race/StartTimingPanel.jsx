@@ -27,12 +27,11 @@ function isFlying(st, stRaw) {
 }
 
 // ST → 水平オフセット(%): 速い(低い)ほど右(ライン寄り)、Fはライン越え
-function stToOffset(st, stRaw, minST, range) {
+function stToOffset(st, stRaw) {
   const v = stRaw != null ? stRaw : st;
-  if (v == null || !Number.isFinite(v)) return 50;
-  if (v < 0) return 93; // F はライン越え
-  const normalized = (v - minST) / range;
-  return 86 - normalized * 66; // 20%〜86%
+  if (v == null || !Number.isFinite(v)) return 30;
+  // 0.00 = スタートライン(72%)。正STは手前、Fはライン越え。
+  return Math.max(10, Math.min(91, 72 - v * 140));
 }
 
 export default function StartTimingPanel({ entries, compact = false }) {
@@ -93,7 +92,7 @@ export default function StartTimingPanel({ entries, compact = false }) {
             const flying = !absent && isFlying(b.exhibition_st, b.exhibition_st_raw);
             const stVal = b.exhibition_st_raw != null ? b.exhibition_st_raw : b.exhibition_st;
             const stText = formatST(stVal, absent);
-            const offset = absent ? 50 : stToOffset(b.exhibition_st, b.exhibition_st_raw, minST, range);
+            const offset = absent ? 30 : stToOffset(b.exhibition_st, b.exhibition_st_raw);
 
             return (
               <div
@@ -128,11 +127,11 @@ export default function StartTimingPanel({ entries, compact = false }) {
                     }}
                   />
 
-                  {/* スタートライン(右側の縦線) */}
-                  <div className="absolute right-[8%] top-0 bottom-0 w-[3px] bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)] z-20" />
-                  <div className="absolute right-[1%] top-0 bottom-0 flex items-center z-20">
-                    <span className="text-[7px] text-red-400/60 font-bold [writing-mode:vertical-rl] rotate-180">SL</span>
-                  </div>
+                  {/* 実ST基準のスタートライン: 0.00 = 72% */}
+                  <div className="absolute left-[72%] top-0 bottom-0 w-[3px] bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.95)] z-20" />
+                  <div className="absolute left-[72%] top-0 -translate-x-1/2 z-20 rounded-b bg-red-500 px-1.5 py-[1px] text-[7px] font-black text-white">START</div>
+                  {/* Fゾーンの目安 */}
+                  <div className="absolute left-[86%] top-0 bottom-0 border-l border-dashed border-white/45 z-10" />
 
                   {/* ボートアイコン(ST位置に配置) */}
                   {!absent && (
@@ -140,7 +139,7 @@ export default function StartTimingPanel({ entries, compact = false }) {
                       className="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-30"
                       style={{ left: `${offset}%`, transform: "translate(-50%, -50%)" }}
                     >
-                      <BoatIcon hex={color.hex} flying={flying} />
+                      <BoatIcon hex={color.hex} flying={flying} boatNumber={b.boat_number} />
                     </div>
                   )}
 
@@ -192,25 +191,25 @@ function PanelTitle() {
 }
 
 // ボートアイコン(上から見たシルエット)
-function BoatIcon({ hex, flying }) {
+function BoatIcon({ hex, flying, boatNumber }) {
   return (
-    <svg
-      width="30"
-      height="20"
-      viewBox="0 0 20 13"
-      className={flying ? "drop-shadow-[0_0_4px_rgba(244,63,94,0.9)]" : "drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]"}
-    >
-      {/* 船体(矢印形) */}
-      <path
-        d="M3 5 L14 5 L12 10 L5 10 Z M10 1 L15 5 L5 5 Z"
-        fill={hex}
-        stroke="#ffffff"
-        strokeWidth="0.9"
-        strokeLinejoin="round"
-      />
-      {flying && (
-        <circle cx="17" cy="6" r="1.8" fill="#f43f5e" stroke="#fff" strokeWidth="0.9" />
-      )}
-    </svg>
+    <div className="relative">
+      <svg
+        width="46"
+        height="28"
+        viewBox="0 0 46 28"
+        className={flying ? "drop-shadow-[0_0_7px_rgba(244,63,94,0.95)]" : "drop-shadow-[0_2px_3px_rgba(0,0,0,0.65)]"}
+      >
+        {/* 航跡 */}
+        <path d="M1 14 C7 10, 12 10, 17 14 C12 18, 7 18, 1 14Z" fill="rgba(255,255,255,.30)" />
+        {/* 船体 */}
+        <path d="M12 7 L35 8 L44 14 L35 21 L12 22 L8 14 Z" fill={hex} stroke="#ffffff" strokeWidth="1.5" strokeLinejoin="round" />
+        {/* コックピット */}
+        <ellipse cx="25" cy="14.5" rx="6" ry="4" fill="#0f172a" stroke="#e2e8f0" strokeWidth="1" />
+        <circle cx="25" cy="14.5" r="1.6" fill="#ffffff" />
+        <text x="13.5" y="17.5" fontSize="9" fontWeight="900" fill={boatNumber === 1 || boatNumber === 5 ? "#111827" : "#ffffff"}>{boatNumber}</text>
+      </svg>
+      {flying && <div className="absolute -right-1 -top-1 rounded bg-rose-500 px-1 text-[8px] font-black text-white">F</div>}
+    </div>
   );
 }
