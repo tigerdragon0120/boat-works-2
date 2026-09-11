@@ -572,17 +572,18 @@ export function parseOdds3t(html) {
   const tableEnd = html.indexOf("</table>", tableStart);
   const tableHtml = html.slice(tableStart, tableEnd + 10);
 
-  // theadから2着艇番(1-6)を抽出
+  // theadの6列は「1着艇」(1〜6)。
+  // 以前ここを2着艇と誤認していたため、1着と2着が入れ替わったオッズを保存していた。
   const theadStart = tableHtml.indexOf("<thead");
   const theadEnd = tableHtml.indexOf("</thead>");
   const theadHtml = theadStart >= 0 ? tableHtml.slice(theadStart, theadEnd + 8) : "";
-  const secondBoatNumbers = [];
+  const firstBoatNumbers = [];
   const headerBoatRe = /is-boatColor(\d)[^>]*>(\d)</g;
   let hm;
   while ((hm = headerBoatRe.exec(theadHtml)) !== null) {
-    secondBoatNumbers.push(num(hm[2]));
+    firstBoatNumbers.push(num(hm[2]));
   }
-  if (secondBoatNumbers.length < 6) return oddsMap;
+  if (firstBoatNumbers.length < 6) return oddsMap;
 
   // tbodyを取得
   const tbodyStart = tableHtml.indexOf("<tbody");
@@ -598,8 +599,8 @@ export function parseOdds3t(html) {
     rows.push(tr[1]);
   }
 
-  // 各列グループの現在の1着値(rowspan追跡用)
-  const currentFirst = [null, null, null, null, null, null];
+  // 各列グループの現在の2着値(rowspan追跡用)
+  const currentSecond = [null, null, null, null, null, null];
   const remainingRowspan = [0, 0, 0, 0, 0, 0];
 
   for (const rowHtml of rows) {
@@ -623,11 +624,10 @@ export function parseOdds3t(html) {
     let colGroup = 0;
     let cellIdx = 0;
     while (cellIdx < cells.length && colGroup < 6) {
-      // rowspan残りが0の場合、次のセルが1着(rowspan付き)
+      // rowspan残りが0の場合、次のセルが2着(rowspan付き)
       if (remainingRowspan[colGroup] <= 0) {
-        // 1着セルを探す
         if (cellIdx < cells.length && cells[cellIdx].rowspan > 0) {
-          currentFirst[colGroup] = num(cells[cellIdx].text);
+          currentSecond[colGroup] = num(cells[cellIdx].text);
           remainingRowspan[colGroup] = cells[cellIdx].rowspan;
           cellIdx++;
         }
@@ -638,8 +638,8 @@ export function parseOdds3t(html) {
         if (cellIdx + 1 < cells.length) {
           const thirdBoat = num(cells[cellIdx].text);
           const oddsVal = num(cells[cellIdx + 1].text.replace(/,/g, ""));
-          const firstBoat = currentFirst[colGroup];
-          const secondBoat = secondBoatNumbers[colGroup];
+          const firstBoat = firstBoatNumbers[colGroup];
+          const secondBoat = currentSecond[colGroup];
 
           if (firstBoat && secondBoat && thirdBoat &&
               firstBoat !== secondBoat && firstBoat !== thirdBoat && secondBoat !== thirdBoat &&
