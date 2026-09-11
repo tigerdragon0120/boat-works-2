@@ -75,6 +75,46 @@ export default function Verification() {
         </div>
       </section>
 
+      <section className="bg-white rounded-2xl border border-slate-200 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div>
+            <div className="text-[10px] font-bold text-slate-400">DATA FOUNDATION</div>
+            <h3 className="font-bold text-slate-900">予想に使う「過去 × 直近 × 当日」データ</h3>
+            <p className="text-[11px] text-slate-500 mt-1">長期の地力だけでも、直近だけでも判断せず、時間軸を分けて6艇を評価します。</p>
+          </div>
+          <Database className="w-5 h-5 text-indigo-500" />
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+          <DataCard label="選手プロファイル" value={summary.data_coverage?.performance_profiles || 0} sub="3年・全期間・コース・場別" />
+          <DataCard label="ローリング統計" value={summary.data_coverage?.rolling_stats || 0} sub="6か月・1年・トレンド" />
+          <DataCard label="学習サンプル" value={summary.data_coverage?.learning_samples || 0} sub="予想時点→確定結果" />
+          <DataCard label="要因分析" value={summary.data_coverage?.factor_samples || 0} sub="長期/直近/展示/オッズ" />
+        </div>
+        <div className="grid sm:grid-cols-3 gap-2">
+          <LayerCard title="長期 25%" text="3年＋全期間。選手本来の地力を安定軸にする" />
+          <LayerCard title="中期 35%" text="6か月＋1年。今期の実力変化を反映する" />
+          <LayerCard title="直近 40%" text="5走・10走・20走＋ST/級別トレンドを最重視" strong />
+        </div>
+      </section>
+
+      <section className="bg-white rounded-2xl border border-slate-200 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div>
+            <div className="text-[10px] font-bold text-slate-400">FACTOR LEARNING</div>
+            <h3 className="font-bold text-slate-900">何がBUY的中に効いたか</h3>
+            <p className="text-[11px] text-slate-500 mt-1">的中レースと不的中レースで各要因の平均値を比較。サンプルが貯まるほど、重み調整の根拠になります。</p>
+          </div>
+          <div className="text-right text-[10px] text-slate-400">確定要因データ {summary.factor_coverage?.resolved || 0}R</div>
+        </div>
+        {(summary.factor_impact || []).every(x => !x.samples) ? (
+          <div className="rounded-xl bg-slate-50 border border-dashed border-slate-200 py-8 text-center text-xs text-slate-400">新しいFINAL予想から要因データを蓄積します。結果確定後ここに比較が出ます。</div>
+        ) : (
+          <div className="space-y-3">
+            {(summary.factor_impact || []).map((f) => <FactorRow key={f.key} data={f} />)}
+          </div>
+        )}
+      </section>
+
       <section className="grid lg:grid-cols-2 gap-4">
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
           <div className="flex items-center justify-between mb-3">
@@ -228,6 +268,43 @@ function LearningBox({ n, title, text }) {
       <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-black mb-2">{n}</div>
       <div className="text-xs font-bold text-slate-800">{title}</div>
       <div className="text-[10px] text-slate-500 mt-1 leading-relaxed">{text}</div>
+    </div>
+  );
+}
+
+function DataCard({ label, value, sub }) {
+  return <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="text-2xl font-black text-slate-900">{fmt(value)}</div><div className="text-[11px] font-bold text-slate-700">{label}</div><div className="text-[9px] text-slate-400 mt-1">{sub}</div></div>;
+}
+
+function LayerCard({ title, text, strong }) {
+  return <div className={cn("rounded-xl border p-3", strong ? "border-indigo-200 bg-indigo-50" : "border-slate-200 bg-slate-50")}><div className={cn("text-xs font-black", strong ? "text-indigo-700" : "text-slate-800")}>{title}</div><div className="text-[10px] text-slate-500 mt-1 leading-relaxed">{text}</div></div>;
+}
+
+const FACTOR_LABELS = {
+  long_term: "長期地力（3年・全期間）",
+  mid_term: "中期成績（6か月・1年）",
+  recent: "直近フォーム（5/10/20走）",
+  course_venue: "コース・場適性",
+  section: "今節・節間状態",
+  exhibition: "展示・直前気配",
+  odds: "直前オッズ",
+  confidence: "データ信頼度",
+};
+
+function FactorRow({ data }) {
+  const hit = data.hit_avg;
+  const miss = data.miss_avg;
+  const gap = data.gap;
+  return (
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] mb-1.5">
+        <span className="font-bold text-slate-700">{FACTOR_LABELS[data.key] || data.key}</span>
+        <span className="text-slate-400">的中 <b className="text-emerald-600">{hit ?? '—'}</b> / 外れ <b className="text-rose-500">{miss ?? '—'}</b>{gap != null && <span className={cn("ml-2 font-bold", gap >= 0 ? "text-emerald-600" : "text-rose-500")}>差 {gap > 0 ? '+' : ''}{gap}</span>}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-emerald-400 rounded-full" style={{width:`${Math.max(0, Math.min(100, hit || 0))}%`}} /></div>
+        <div className="h-2 rounded-full bg-slate-100 overflow-hidden"><div className="h-full bg-rose-300 rounded-full" style={{width:`${Math.max(0, Math.min(100, miss || 0))}%`}} /></div>
+      </div>
     </div>
   );
 }
