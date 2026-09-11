@@ -482,9 +482,42 @@ export async function getVerificationSummary() {
     else missBreakdown.other += 1;
   }
 
-  const learningSamples = await base44.entities.PredictionLearningSample.list("-created_at", 1000).catch(() => []);
+  const [learningSamples, factorRows, profiles, rollingStats] = await Promise.all([
+    base44.entities.PredictionLearningSample.list("-created_at", 1000).catch(() => []),
+    base44.entities.PredictionFactorAnalysis.list("-created_at", 1000).catch(() => []),
+    base44.entities.RacerPerformanceProfile.list("-updated_at", 5000).catch(() => []),
+    base44.entities.RacerRollingStats.list("-calculated_at", 5000).catch(() => []),
+  ]);
   const learnedRaceIds = new Set((learningSamples || []).filter((s) => s.actual_result).map((s) => s.race_id));
   const learningLinked = buyRecords.filter((v) => learnedRaceIds.has(v.race_id)).length;
+
+  const resolvedFactors = (factorRows || []).filter((f) => f.stage === 'FINAL' && f.actual_result && f.factor_summary);
+  const factorKeys = ['long_term','mid_term','recent','course_venue','section','exhibition','odds','confidence'];
+  const factorImpact = factorKeys.map((key) => {
+    const hitVals = resolvedFactors.filter((f) => f.hit).map((f) => Number(f.factor_summary?.[key])).filter(Number.isFinite);
+    const missVals = resolvedFactors.filter((f) => !f.hit).map((f) => Number(f.factor_summary?.[key])).filter(Number.isFinite);
+    const avg = (arr) => arr.length ? Math.round((arr.reduce((a,b) => a+b,0) / arr.length) * 10) / 10 : null;
+    const hitAvg = avg(hitVals), missAvg = avg(missVals);
+    return {
+      key,
+      hit_avg: hitAvg,
+      miss_avg: missAvg,
+      gap: hitAvg != null && missAvg != null ? Math.round((hitAvg - missAvg) * 10) / 10 : null,
+      samples: hitVals.length + missVals.length,
+    };
+  });
+
+  const factorCoverage = {
+    resolved: resolvedFactors.length,
+    hit: resolvedFactors.filter((f) => f.hit).length,
+    miss: resolvedFactors.filter((f) => !f.hit).length,
+  };
+  const dataCoverage = {
+    performance_profiles: (profiles || []).length,
+    rolling_stats: (rollingStats || []).length,
+    learning_samples: (learningSamples || []).length,
+    factor_samples: (factorRows || []).length,
+  };
 
   return {
     total,
@@ -501,6 +534,9 @@ export async function getVerificationSummary() {
     tickets_7: byTicketCount(7),
     tickets_8: byTicketCount(8),
     miss_breakdown: missBreakdown,
+    factor_impact: factorImpact,
+    factor_coverage: factorCoverage,
+    data_coverage: dataCoverage,
     records: buyRecords,
   };
 }
