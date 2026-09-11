@@ -141,6 +141,92 @@ export function parseDeadlineTimes(html) {
 // =====================================================
 // 出走表(racelist)解析 → Bファイル形式データ
 // =====================================================
+// racelistの各選手は4行構成（艇番色/進入/ST/成績）。
+// 3行目=今節ST、4行目=今節着順として、同じ列を対応付けて読む。
+function parseCurrentSeriesFromRacerBlock(html, photoIdx) {
+  if (photoIdx < 0) return { section_points: null, section_finishes: null, section_st: null, section_momentum: null };
+  const rowStart = html.lastIndexOf('<tr', photoIdx);
+  if (rowStart < 0) return { section_points: null, section_finishes: null, section_st: null, section_momentum: null };
+
+  const tail = html.slice(rowStart, Math.min(html.length, rowStart + 16000));
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/g;
+  const rows = [];
+  let rm;
+  while ((rm = rowRe.exec(tail)) !== null && rows.length < 4) rows.push(rm[1]);
+  if (rows.length < 4) return { section_points: null, section_finishes: null, section_st: null, section_momentum: null };
+
+  const cellTexts = (rowHtml) => {
+    const vals = [];
+    const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/g;
+    let m;
+    while ((m = tdRe.exec(rowHtml)) !== null) {
+      vals.push(normalizeWidth(stripTags(m[1])).replace(/\s+/g, '').replace(/&nbsp;/gi, '').trim());
+    }
+    return vals;
+  };
+
+  // rowspanの固定列は1行目だけに存在するため、3/4行目は今節列だけが並ぶ。
+  const stCells = cellTexts(rows[2]);
+  const finishCells = cellTexts(rows[3]);
+  const len = Math.min(stCells.length, finishCells.length);
+  const finishes = [];
+  const sts = [];
+
+  for (let i = 0; i < len; i++) {
+    const finish = String(finishCells[i] || '').trim();
+    const stRaw = String(stCells[i] || '').trim().toUpperCase();
+    // 空欄・将来日列は除外。着順のほかF/L/K/S等の事故記号も履歴として保持。
+    if (!finish || finish === '-' || finish === '—') continue;
+    if (!/^(?:[1-6]|F|L\d?|K\d?|S\d?|転|落|欠|失|妨|不|エ)$/i.test(finish)) continue;
+    finishes.push(finish);
+
+    let st = null;
+    if (/^F\.?\d+$/.test(stRaw)) {
+      const n = Number(stRaw.replace(/^F/, ''));
+      if (Number.isFinite(n)) st = -Math.abs(n >= 1 ? n / 100 : n);
+    } else if (/^\.?\d+$/.test(stRaw)) {
+      const n = Number(stRaw.startsWith('.') ? `0${stRaw}` : stRaw);
+      if (Number.isFinite(n)) st = n;
+    }
+    if (st != null) sts.push(st);
+  }
+
+  const numericFinishes = finishes.map((v) => Number(v)).filter((v) => Number.isInteger(v) && v >= 1 && v <= 6);
+  const avgSt = sts.length ? Math.round((sts.reduce((a, b) => a + b, 0) / sts.length) * 1000) / 1000 : null;
+
+  // Ptsは今節着順から作る0〜10の節間レーティング。直近ほど少し重くする。
+  const finishPoint = { 1: 10, 2: 8, 3: 6, 4: 4, 5: 2, 6: 1 };
+  let sectionPoints = null;
+  if (numericFinishes.length) {
+    let weighted = 0, weightSum = 0;
+    numericFinishes.forEach((f, idx) => {
+      const w = 1 + idx * 0.15;
+      weighted += finishPoint[f] * w;
+      weightSum += w;
+    });
+    sectionPoints = Math.round((weighted / weightSum) * 10) / 10;
+  }
+
+  // 勢い: 着順70% + ST30%。0〜100。
+  let momentum = null;
+  if (numericFinishes.length || avgSt != null) {
+    const finishScoreMap = { 1: 100, 2: 82, 3: 66, 4: 50, 5: 30, 6: 15 };
+    const finishScore = numericFinishes.length
+      ? numericFinishes.reduce((s, f, idx) => s + finishScoreMap[f] * (1 + idx * 0.15), 0) /
+        numericFinishes.reduce((s, _f, idx) => s + (1 + idx * 0.15), 0)
+      : 50;
+    const stScore = avgSt != null ? Math.max(0, Math.min(100, 70 + (0.15 - avgSt) * 220)) : 50;
+    momentum = Math.round((finishScore * 0.7 + stScore * 0.3) * 10) / 10;
+  }
+
+  return {
+    section_points: sectionPoints,
+    section_finishes: finishes.length ? finishes.join('-') : null,
+    section_st: avgSt,
+    section_momentum: momentum,
+  };
+}
+
 export function parseRaceCard(html, raceDate, venueCode, venueName, raceNumber = null) {
   const errors = [];
   const warnings = [];
@@ -245,6 +331,8 @@ export function parseRaceCard(html, raceDate, venueCode, venueName, raceNumber =
     const boat2rate = boatMatch ? num(boatMatch[2]) : null;
     const boat3rate = boatMatch ? num(boatMatch[3]) : null;
 
+    const seriesStats = parseCurrentSeriesFromRacerBlock(html, photoIdx);
+
     entries.push({
       boat_number: boatNumber,
       registration_number: regNum,
@@ -273,6 +361,10 @@ export function parseRaceCard(html, raceDate, venueCode, venueName, raceNumber =
       f_count: fCount,
       l_count: lCount,
       avg_st: avgSt,
+      section_points: seriesStats.section_points,
+      section_finishes: seriesStats.section_finishes,
+      section_st: seriesStats.section_st,
+      section_momentum: seriesStats.section_momentum,
     });
   }
 
