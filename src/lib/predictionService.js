@@ -216,6 +216,12 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
       boat_scores: result.boatScores.map((s) => ({
         boat: s.boat_number,
         first: s.first_power, second: s.second_power, third: s.third_power, total: s.total_power, delta: s.exhibition_delta,
+        factors: s.factor_scores || null,
+        recent_form_score: s.recent_form_score,
+        st_trend_score: s.st_trend_score,
+        class_trend_score: s.class_trend_score,
+        performance_trend: s.performance_trend,
+        racer_power_score: s.racer_power_score,
       })),
       trifectas_top: result.trifectas.slice(0, maxBets).map((t) => ({
         c: t.combination, p: t.probability,
@@ -228,6 +234,50 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     },
     created_at: new Date().toISOString(),
   });
+
+  // 要因分析スナップショット。過去/直近/コース・場/節間/展示/オッズを分離して保存し、
+  // 結果確定後に「どの層が効いた/外した」を検証できるようにする。
+  try {
+    const activeFactorBoats = result.boatScores.filter((s) => !s._absent);
+    const avgFactor = (key) => {
+      const vals = activeFactorBoats.map((s) => s.factor_scores?.[key]).filter((v) => Number.isFinite(v));
+      return vals.length ? Math.round((vals.reduce((a,b) => a+b, 0) / vals.length) * 10) / 10 : 50;
+    };
+    const selectedOdds = (result.selected_trifectas || []).map((c) => oddsMap?.[c]).filter((v) => Number.isFinite(v));
+    const oddsScore = selectedOdds.length
+      ? Math.round(Math.min(100, Math.max(0, selectedOdds.reduce((a,b) => a+b,0) / selectedOdds.length * 2)) * 10) / 10
+      : 50;
+    const factorDoc = {
+      race_id: race.id,
+      race_key: race.race_key,
+      prediction_id: pid,
+      stage,
+      final_judgment: result.final_judgment || null,
+      selected_trifectas: result.selected_trifectas || [],
+      factor_summary: {
+        long_term: avgFactor('long_term'),
+        mid_term: avgFactor('mid_term'),
+        recent: avgFactor('recent'),
+        course_venue: avgFactor('course_venue'),
+        section: avgFactor('section'),
+        exhibition: avgFactor('exhibition'),
+        odds: oddsScore,
+        confidence: result.data_confidence || 0,
+      },
+      boat_factors: activeFactorBoats.map((s) => ({
+        boat: s.boat_number,
+        first_power: s.first_power,
+        total_power: s.total_power,
+        ...(s.factor_scores || {}),
+      })),
+      created_at: new Date().toISOString(),
+    };
+    const oldFactors = await base44.entities.PredictionFactorAnalysis.filter({ race_id: race.id, stage }, '-created_at', 1);
+    if (oldFactors?.[0]) await base44.entities.PredictionFactorAnalysis.update(oldFactors[0].id, factorDoc);
+    else await base44.entities.PredictionFactorAnalysis.create(factorDoc);
+  } catch (e) {
+    console.warn('PredictionFactorAnalysis save skipped', e);
+  }
 
   // Race更新
   const raceUpdate = {
@@ -327,6 +377,32 @@ export async function saveResultAndVerify(raceId, resultTrifecta, payout, finish
   const samples = await base44.entities.PredictionLearningSample.filter({ race_id: raceId }, "-created_at", 10);
   for (const s of samples) {
     await base44.entities.PredictionLearningSample.update(s.id, { actual_result: resultTrifecta, payout });
+  }
+
+  // 要因分析にも結果を付与して学習ループを閉じる
+  try {
+    const factors = await base44.entities.PredictionFactorAnalysis.filter({ race_id: raceId }, '-created_at', 10);
+    const actualArr = resultTrifecta.split('-').map(Number);
+    for (const f of factors || []) {
+      const selected = f.selected_trifectas || [];
+      const hit = selected.includes(resultTrifecta);
+      let missLayer = '';
+      if (!hit) {
+        const top = fin?.top_trifecta?.split('-').map(Number) || [];
+        if (top.length === 3 && actualArr[0] !== top[0]) missLayer = '1着';
+        else if (top.length === 3 && actualArr[1] !== top[1]) missLayer = '2着';
+        else if (top.length === 3 && actualArr[2] !== top[2]) missLayer = '3着';
+        else missLayer = '買い目構成';
+      }
+      await base44.entities.PredictionFactorAnalysis.update(f.id, {
+        actual_result: resultTrifecta,
+        hit,
+        miss_layer: missLayer,
+        resolved_at: new Date().toISOString(),
+      });
+    }
+  } catch (e) {
+    console.warn('PredictionFactorAnalysis result link skipped', e);
   }
 
   return { result: savedResult, verification: savedVerif };
