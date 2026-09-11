@@ -457,14 +457,16 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     if (race.status === 'finished' || race.status === 'cancelled') continue;
     if (!race.exhibition_ready) continue; // 展示未取得はスキップ
 
-    // オッズは直前で大きく動くため、FINAL用は締切5分前付近だけ取得する。
-    // 早い時点で一度FINALを作って固定すると実際のオッズと乖離するため、
-    // FINAL済みでもこの直前ウィンドウ内では最新オッズで再計算する。
+    // 表示用オッズは公式に出たら早めに取り込み、FINAL判定は締切5分前付近だけ行う。
+    // これにより「公式にはオッズが出ているのにアプリは—」を防ぎつつ、
+    // BUY/SKIPは直前オッズで確定する。
     if (!race.deadline) continue;
     const deadlineMs = new Date(race.deadline).getTime();
     if (!Number.isFinite(deadlineMs)) continue;
     const nowMs = Date.now();
-    if (nowMs < deadlineMs - 6 * 60 * 1000 || nowMs > deadlineMs - 2 * 60 * 1000) continue;
+    const inDisplayOddsWindow = nowMs >= deadlineMs - 25 * 60 * 1000 && nowMs <= deadlineMs - 1 * 60 * 1000;
+    const inFinalWindow = nowMs >= deadlineMs - 6 * 60 * 1000 && nowMs <= deadlineMs - 2 * 60 * 1000;
+    if (!inDisplayOddsWindow) continue;
 
     const venueCode = race.venue_code;
     const raceNumber = race.race_number;
@@ -480,21 +482,38 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
 
     // OddsSnapshot保存
     await sr.OddsSnapshot.create({
-      race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
+      race_id: race.id, stage: inFinalWindow ? 'FINAL' : 'LIVE', odds_map: oddsMap,
       captured_at: new Date().toISOString(),
     }).catch(() => {});
     oddsFetched++;
 
-    // FINAL予想生成(展示+オッズ揃った場合のみ)
-    const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
-    if (entries.length >= 6) {
-      try {
-        await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-        finalGenerated++;
-        logs.push(`${venueName} R${raceNumber}: オッズ${oddsCount}件+FINAL予想生成`);
-      } catch (e: any) {
-        errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
+    // PRE/FINALどちらが表示中でも実オッズを画面に出せるよう、
+    // 最新予想の120通りへactual_odds/current_oddsを反映する。
+    const latestPreds = await sr.RacePrediction.filter({ race_id: race.id }, '-computed_at', 2).catch(() => []);
+    for (const pred of latestPreds) {
+      const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: pred.id }, 'rank', 120).catch(() => []);
+      const updates = trifectas.map((t: any) => {
+        const actualOdds = oddsMap[t.combination] || null;
+        const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
+        return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev };
+      });
+      if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates).catch(() => {});
+    }
+
+    // FINAL予想は締切5分前付近だけ再計算する。
+    if (inFinalWindow) {
+      const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+      if (entries.length >= 6) {
+        try {
+          await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          finalGenerated++;
+          logs.push(`${venueName} R${raceNumber}: 実オッズ${oddsCount}件反映+FINAL予想生成`);
+        } catch (e: any) {
+          errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
+        }
       }
+    } else {
+      logs.push(`${venueName} R${raceNumber}: 実オッズ${oddsCount}件を表示用に反映`);
     }
 
     await sleep(300);
