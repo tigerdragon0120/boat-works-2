@@ -1,0 +1,33 @@
+{
+  "name": "PreGenerationCursor",
+  "type": "object",
+  "description": "PRE\u4e88\u60f3\u306e\u5b89\u5168\u306a\u5206\u5272\u751f\u6210\u9032\u6357\u3002Base44 rate limit\u56de\u907f\u7528\u3002",
+  "properties": {
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "last_race_id": {
+      "type": "string"
+    },
+    "processed": {
+      "type": "number"
+    },
+    "last_run_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "rate_limited",
+        "complete"
+      ]
+    }
+  },
+  "required": [
+    "race_date"
+  ]
+}

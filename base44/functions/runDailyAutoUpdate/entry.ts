@@ -356,29 +356,62 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
   const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
-  let generated = 0, skipped = 0;
+  const pending = races.filter((r: any) => !r.has_pre);
+  let generated = 0, skipped = races.length - pending.length, rateLimited = false;
 
-  for (const race of races) {
-    if (Date.now() - startTime > timeBudgetMs) {
-      logs.push(`PRE予想: 時間予算到達 — 残り${races.length - races.indexOf(race)}R`);
+  // 1回の実行で最大5Rだけ生成する。
+  // runAndSavePrediction は1Rあたり複数Entityを書き込むため、短時間に大量実行するとBase44の429制限に達する。
+  // 30分周期の自動更新または手動ボタンで続きを安全に処理する。
+  const batch = pending.slice(0, 5);
+
+  for (const race of batch) {
+    if (Date.now() - startTime > timeBudgetMs - 5000) {
+      logs.push(`PRE予想: 時間予算到達 — 次回へ継続`);
       break;
     }
-    if (race.has_pre) { skipped++; continue; }
 
-    const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
-    if (entries.length < 6) continue;
-
-    try {
-      await runAndSavePrediction(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-      generated++;
-      logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: PRE予想生成`);
-    } catch (e: any) {
-      errors.push(`PRE予想 ${race.venue_code} R${race.race_number}: ${e.message}`);
+    const entries = await withRateLimitRetry(
+      () => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6),
+      4
+    ).catch(() => []);
+    if (entries.length < 6) {
+      logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: 6艇未満のため保留`);
+      continue;
     }
-    await sleep(200);
+
+    let success = false;
+    for (let attempt = 0; attempt < 3 && !success; attempt++) {
+      try {
+        await runAndSavePrediction(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+        success = true;
+        generated++;
+        logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: PRE予想生成`);
+      } catch (e: any) {
+        const msg = String(e?.message || e || '');
+        if (/rate\s*limit|too many requests|429/i.test(msg)) {
+          rateLimited = true;
+          const waitMs = 4000 * (attempt + 1);
+          logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: Rate limit — ${waitMs/1000}秒待機して再試行`);
+          await sleep(waitMs);
+          continue;
+        }
+        errors.push(`PRE予想 ${race.venue_code} R${race.race_number}: ${msg}`);
+        break;
+      }
+    }
+
+    if (!success && rateLimited) {
+      logs.push(`PRE予想: Rate limit保護のため今回の処理を停止。残りは次回継続`);
+      break;
+    }
+
+    // 1Rごとに十分な間隔を空ける
+    await sleep(1800);
   }
 
-  return { total: races.length, generated, skipped, errors };
+  const remaining = Math.max(0, pending.length - generated);
+  logs.push(`PRE予想: 今回${generated}R生成 / 残り${remaining}R`);
+  return { total: races.length, generated, skipped, remaining, rate_limited: rateLimited, errors };
 }
 
 // =====================================================
