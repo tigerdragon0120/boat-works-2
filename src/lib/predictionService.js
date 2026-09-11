@@ -369,59 +369,62 @@ export async function listTodayRaceStatus() {
   });
 }
 
-// 検証集計(BUY/WATCH/SKIP別・買い目数別)
+// 検証集計: 「BUYしたレースが当たったか」を中心に、次の予想ロジック改善へ繋げる
 export async function getVerificationSummary() {
-  const verifs = await base44.entities.PredictionVerification.list("-verified_at", 500);
+  const raw = await base44.entities.PredictionVerification.list("-verified_at", 500);
+  // 実結果が入っている正規データだけを検証対象にする
+  const verifs = (raw || []).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
   const total = verifs.length;
-  if (total === 0) return { total: 0 };
-  const preHits = verifs.filter((v) => v.pre_hit).length;
-  const finalHits = verifs.filter((v) => v.final_hit).length;
-  const recHits = verifs.filter((v) => v.recommended_hit).length;
+  if (total === 0) return { total: 0, records: [] };
 
-  // 判定別集計
-  const byJudgment = (j) => {
-    const list = verifs.filter((v) => v.final_judgment === j);
-    if (!list.length) return { count: 0, hit_rate: 0, recovery_rate: 0 };
-    const hits = list.filter((v) => v.recommended_hit).length;
-    const invest = list.reduce((a, v) => a + (v.investment || 0), 0);
-    const ret = list.filter((v) => v.recommended_hit).reduce((a, v) => a + (v.payout || 0), 0);
-    return {
-      count: list.length,
-      hit_rate: Math.round((hits / list.length) * 1000) / 10,
-      recovery_rate: invest > 0 ? Math.round((ret / invest) * 100) : 0,
-    };
-  };
+  const buyRecords = verifs.filter((v) => v.final_judgment === "BUY");
+  const buyHits = buyRecords.filter((v) => v.recommended_hit).length;
+  const buyInvest = buyRecords.reduce((a, v) => a + (v.investment || 0), 0);
+  const buyReturn = buyRecords.filter((v) => v.recommended_hit).reduce((a, v) => a + (v.payout || 0), 0);
+  const buyHitRate = buyRecords.length ? Math.round((buyHits / buyRecords.length) * 1000) / 10 : 0;
+  const buyRecoveryRate = buyInvest > 0 ? Math.round((buyReturn / buyInvest) * 100) : 0;
 
-  // 買い目数別集計
   const byTicketCount = (n) => {
-    const list = verifs.filter((v) => v.ticket_count === n);
-    if (!list.length) return { count: 0, hit_rate: 0, recovery_rate: 0 };
+    const list = buyRecords.filter((v) => Number(v.ticket_count) === n);
     const hits = list.filter((v) => v.recommended_hit).length;
     const invest = list.reduce((a, v) => a + (v.investment || 0), 0);
     const ret = list.filter((v) => v.recommended_hit).reduce((a, v) => a + (v.payout || 0), 0);
     return {
       count: list.length,
-      hit_rate: Math.round((hits / list.length) * 1000) / 10,
+      hits,
+      hit_rate: list.length ? Math.round((hits / list.length) * 1000) / 10 : 0,
       recovery_rate: invest > 0 ? Math.round((ret / invest) * 100) : 0,
     };
   };
 
-  const totalInvest = verifs.reduce((a, v) => a + (v.investment || 0), 0);
-  const totalReturn = verifs.filter((v) => v.recommended_hit).reduce((a, v) => a + (v.payout || 0), 0);
-  const recovery = totalInvest > 0 ? Math.round((totalReturn / totalInvest) * 100) : 0;
+  const missBreakdown = { first: 0, second: 0, third: 0, other: 0 };
+  for (const v of buyRecords.filter((x) => !x.recommended_hit)) {
+    const reason = String(v.miss_reason || "");
+    if (reason.startsWith("1着")) missBreakdown.first += 1;
+    else if (reason.startsWith("2着")) missBreakdown.second += 1;
+    else if (reason.startsWith("3着")) missBreakdown.third += 1;
+    else missBreakdown.other += 1;
+  }
+
+  const learningSamples = await base44.entities.PredictionLearningSample.list("-created_at", 1000).catch(() => []);
+  const learnedRaceIds = new Set((learningSamples || []).filter((s) => s.actual_result).map((s) => s.race_id));
+  const learningLinked = buyRecords.filter((v) => learnedRaceIds.has(v.race_id)).length;
 
   return {
     total,
-    pre_hit_rate: Math.round((preHits / total) * 1000) / 10,
-    final_hit_rate: Math.round((finalHits / total) * 1000) / 10,
-    recommended_hit_rate: Math.round((recHits / total) * 1000) / 10,
-    recovery_rate: recovery,
-    buy: byJudgment("BUY"),
-    watch: byJudgment("WATCH"),
-    skip: byJudgment("SKIP"),
+    buy_count: buyRecords.length,
+    buy_hits: buyHits,
+    buy_misses: Math.max(0, buyRecords.length - buyHits),
+    buy_hit_rate: buyHitRate,
+    buy_recovery_rate: buyRecoveryRate,
+    buy_investment: buyInvest,
+    buy_return: buyReturn,
+    learning_linked: learningLinked,
+    learning_link_rate: buyRecords.length ? Math.round((learningLinked / buyRecords.length) * 1000) / 10 : 0,
     tickets_6: byTicketCount(6),
     tickets_7: byTicketCount(7),
     tickets_8: byTicketCount(8),
-    records: verifs,
+    miss_breakdown: missBreakdown,
+    records: buyRecords,
   };
 }
