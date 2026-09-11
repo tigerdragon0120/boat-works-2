@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Waves } from "lucide-react";
 import {
@@ -8,6 +8,7 @@ import {
 import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
+import { fetchOnlineData } from "@/lib/dataManagementService";
 
 export default function Venue() {
   const { code } = useParams();
@@ -27,6 +28,7 @@ export default function Venue() {
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState("FINAL");
   const [rankMode, setRankMode] = useState("prob");
+  const sectionFetchTried = useRef(new Set());
 
   const loadList = async () => {
     setLoading(true);
@@ -48,7 +50,23 @@ export default function Venue() {
     const r = races.find((x) => x.id === selectedId);
     setRace(r);
     if (!r) return;
-    const es = await getRaceEntries(selectedId);
+    let es = await getRaceEntries(selectedId);
+
+    // 節間成績が未取得なら、そのレースの公式racelistから自動補完する。
+    // 画面の「更新」だけでも節間成績が埋まるようにし、同一表示中の無限再取得は防ぐ。
+    const hasSection = (es || []).some((e) =>
+      e.section_points != null || e.section_st != null || !!e.section_finishes || e.section_momentum != null
+    );
+    const sectionKey = `${r.race_date}_${String(r.venue_code).padStart(2, "0")}_${r.race_number}`;
+    if (!hasSection && !sectionFetchTried.current.has(sectionKey)) {
+      sectionFetchTried.current.add(sectionKey);
+      try {
+        await fetchOnlineData("section", r.race_date, r.venue_code, r.race_number, r.id);
+        es = await getRaceEntries(selectedId);
+      } catch (err) {
+        console.warn("節間成績の自動取得に失敗", sectionKey, err);
+      }
+    }
     setEntries(es || []);
     const p = await getPrediction(selectedId, "PRE");
     const f = await getPrediction(selectedId, "FINAL");
