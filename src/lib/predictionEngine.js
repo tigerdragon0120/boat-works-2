@@ -93,6 +93,7 @@ function computeOtherScore(profile, entry, metric) {
 
 export function computeBoatScores(entry, settings) {
   const profile = entry._profile;
+  const rolling = entry._rollingStats;
   const stage = settings?.stage || "PRE";
   const isFinal = stage === "FINAL";
 
@@ -103,6 +104,26 @@ export function computeBoatScores(entry, settings) {
   const officialWin = entry.national_win_rate != null ? clamp(entry.national_win_rate * 10, 0, 100) : null;
   const officialF2 = entry.national_f2_rate != null ? clamp(entry.national_f2_rate, 0, 100) : null;
   const officialF3 = entry.national_f3_rate != null ? clamp(entry.national_f3_rate, 0, 100) : null;
+
+  // 長期・中期・直近を分離して評価する。
+  // 長期=3年/全期間の地力、中期=6か月/1年、直近=5/10/20走+トレンド。
+  const longTerm = weightedAverage([
+    [profile?.stats_3y?.win_rate, 0.65],
+    [profile?.stats_all?.win_rate, 0.35],
+  ], officialWin ?? 50);
+  const midTerm = weightedAverage([
+    [profile?.stats_6m?.win_rate, 0.60],
+    [profile?.stats_1y?.win_rate, 0.40],
+  ], profileWin ?? officialWin ?? 50);
+  const recent5 = profile?.recent_form?.recent_5_win_rate;
+  const recent10 = profile?.recent_form?.recent_10_win_rate;
+  const recent20 = profile?.recent_form?.recent_20_win_rate;
+  const rollingRecent = rolling?.trend_scores?.recent_form_score;
+  const rollingPerformance = rolling?.trend_scores?.performance_trend;
+  const recentTerm = weightedAverage([
+    [recent5, 0.35], [recent10, 0.25], [recent20, 0.15],
+    [rollingRecent, 0.15], [rollingPerformance, 0.10],
+  ], profile?.recent_form?.recent_win_rate ?? midTerm ?? 50);
 
   const otherFirst = computeOtherScore(profile, entry, 'win_rate');
   const otherSecond = computeOtherScore(profile, entry, 'top2_rate');
@@ -117,6 +138,13 @@ export function computeBoatScores(entry, settings) {
   let first_power = computePower(profileWin, officialWin, otherFirst);
   let second_power = computePower(profileF2, officialF2, otherSecond);
   let third_power = computePower(profileF3, officialF3, otherThird);
+
+  // ベース能力に「長期25%・中期35%・直近40%」の時間軸ブレンドを加える。
+  // 直近を最も重くするが、短期のブレだけで極端に振れないよう長期地力を残す。
+  const temporalBlend = weightedAverage([[longTerm, 0.25], [midTerm, 0.35], [recentTerm, 0.40]], first_power);
+  first_power = clamp(first_power * 0.72 + temporalBlend * 0.28, 5, 100);
+  second_power = clamp(second_power * 0.78 + temporalBlend * 0.22, 5, 100);
+  third_power = clamp(third_power * 0.82 + temporalBlend * 0.18, 5, 100);
 
   let exhibition_delta = 0;
   let exhibition_score = 50;
@@ -139,6 +167,15 @@ export function computeBoatScores(entry, settings) {
     return vs != null ? round1(vs) : 50;
   })();
   const section_form = isValid(entry.section_points) ? round1(clamp(entry.section_points * 2, 0, 100)) : 50;
+  const courseStrength = weightedAverage([
+    [getCourseScore(profile, entry, 'win_rate'), 0.65],
+    [getVenueScore(profile, entry, 'win_rate'), 0.35],
+  ], 50);
+  const recentFormScore = round1(recentTerm);
+  const stTrendScore = round1(rolling?.trend_scores?.st_trend_score ?? stToScore(profile?.recent_form?.recent_st || entry.avg_st) ?? 50);
+  const classTrendScore = round1(rolling?.trend_scores?.class_trend_score ?? 50);
+  const performanceTrend = round1(rolling?.trend_scores?.performance_trend ?? 50);
+  const racerPowerScore = round1(rolling?.trend_scores?.racer_power_score ?? temporalBlend);
   const ana_potential = round1(clamp(exhibition_power * 0.4 + section_form * 0.3 + (100 - first_power) * 0.3, 0, 100));
   const total_power = round1((first_power + second_power + third_power) / 3);
 
@@ -173,6 +210,23 @@ export function computeBoatScores(entry, settings) {
     third_power: round1(third_power),
     total_power,
     start_power, motor_power, exhibition_power, local_fit, section_form, ana_potential,
+    course_strength: round1(courseStrength),
+    recent_form_score: recentFormScore,
+    st_trend_score: stTrendScore,
+    class_trend_score: classTrendScore,
+    performance_trend: performanceTrend,
+    racer_power_score: racerPowerScore,
+    factor_scores: {
+      long_term: round1(longTerm),
+      mid_term: round1(midTerm),
+      recent: recentFormScore,
+      course_venue: round1(courseStrength),
+      section: section_form,
+      exhibition: exhibition_power,
+      motor: motor_power,
+      start: start_power,
+      temporal_blend: round1(temporalBlend),
+    },
     exhibition_delta: round1(exhibition_delta),
     reasons, notes,
     dataCount: profile?.total_samples || 0,

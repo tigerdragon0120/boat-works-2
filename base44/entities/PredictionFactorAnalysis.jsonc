@@ -1,0 +1,94 @@
+{
+  "name": "PredictionFactorAnalysis",
+  "type": "object",
+  "description": "BUY\u4e88\u60f3\u306e\u8981\u56e0\u5206\u6790\u3002\u9577\u671f\u30fb\u4e2d\u671f\u30fb\u76f4\u8fd1\u30fb\u7bc0\u9593\u30fb\u5c55\u793a\u30fb\u30aa\u30c3\u30ba\u306e\u5bc4\u4e0e\u3068\u78ba\u5b9a\u7d50\u679c\u3092\u4fdd\u5b58\u3059\u308b\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "prediction_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ]
+    },
+    "final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "actual_result": {
+      "type": "string"
+    },
+    "hit": {
+      "type": "boolean"
+    },
+    "factor_summary": {
+      "type": "object",
+      "properties": {
+        "long_term": {
+          "type": "number"
+        },
+        "mid_term": {
+          "type": "number"
+        },
+        "recent": {
+          "type": "number"
+        },
+        "course_venue": {
+          "type": "number"
+        },
+        "section": {
+          "type": "number"
+        },
+        "exhibition": {
+          "type": "number"
+        },
+        "odds": {
+          "type": "number"
+        },
+        "confidence": {
+          "type": "number"
+        }
+      }
+    },
+    "boat_factors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "miss_layer": {
+      "type": "string",
+      "description": "1\u7740/2\u7740/3\u7740/\u8cb7\u3044\u76ee\u69cb\u6210/\u30aa\u30c3\u30ba/\u305d\u306e\u4ed6"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id",
+    "stage"
+  ]
+}
