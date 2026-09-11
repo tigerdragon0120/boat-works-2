@@ -129,15 +129,15 @@ export default function StartTimingPanel({ entries, compact = false }) {
                   />
 
                   {/* スタートライン(右側の縦線) */}
-                  <div className="absolute right-2.5 top-0 bottom-0 w-[2px] bg-gradient-to-b from-transparent via-red-500/70 to-transparent" />
-                  <div className="absolute right-0.5 top-0 bottom-0 flex items-center">
+                  <div className="absolute right-[8%] top-0 bottom-0 w-[3px] bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.9)] z-20" />
+                  <div className="absolute right-[1%] top-0 bottom-0 flex items-center z-20">
                     <span className="text-[7px] text-red-400/60 font-bold [writing-mode:vertical-rl] rotate-180">SL</span>
                   </div>
 
                   {/* ボートアイコン(ST位置に配置) */}
                   {!absent && (
                     <div
-                      className="absolute top-1/2 -translate-y-1/2 transition-all duration-300"
+                      className="absolute top-1/2 -translate-y-1/2 transition-all duration-300 z-30"
                       style={{ left: `${offset}%`, transform: "translate(-50%, -50%)" }}
                     >
                       <BoatIcon hex={color.hex} flying={flying} />
@@ -195,8 +195,8 @@ function PanelTitle() {
 function BoatIcon({ hex, flying }) {
   return (
     <svg
-      width="20"
-      height="13"
+      width="30"
+      height="20"
       viewBox="0 0 20 13"
       className={flying ? "drop-shadow-[0_0_4px_rgba(244,63,94,0.9)]" : "drop-shadow-[0_1px_2px_rgba(0,0,0,0.4)]"}
     >
@@ -204,12 +204,12 @@ function BoatIcon({ hex, flying }) {
       <path
         d="M3 5 L14 5 L12 10 L5 10 Z M10 1 L15 5 L5 5 Z"
         fill={hex}
-        stroke="rgba(0,0,0,0.4)"
-        strokeWidth="0.5"
+        stroke="#ffffff"
+        strokeWidth="0.9"
         strokeLinejoin="round"
       />
       {flying && (
-        <circle cx="17" cy="6" r="1.8" fill="#f43f5e" stroke="#fff" strokeWidth="0.5" />
+        <circle cx="17" cy="6" r="1.8" fill="#f43f5e" stroke="#fff" strokeWidth="0.9" />
       )}
     </svg>
   );
