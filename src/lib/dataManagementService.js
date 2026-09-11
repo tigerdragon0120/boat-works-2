@@ -6,7 +6,7 @@ import { parseRacerTermFile, detectTermFromFilename } from "@/lib/racerTermParse
 
 // === 自動更新システム ===
 export async function getAutoUpdateStatus() {
-  return await base44.functions.invoke("getAutoUpdateStatus", {});
+  return await base44.functions.invoke("getAutoUpdateStatusV2", {});
 }
 
 export async function runAutoUpdateStep(step) {
