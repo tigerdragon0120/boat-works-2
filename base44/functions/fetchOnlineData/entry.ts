@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { upsertResultAndVerify, getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
-import { fetchHtml, parseBeforeInfo, parseResult, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
+import { fetchHtml, parseBeforeInfo, parseResult, parseOdds3t, parseRaceCard, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -27,6 +27,32 @@ async function shouldSkipRecentFailure(base44: any, fetchType: string, raceDate:
     }
     return false;
   } catch { return false; }
+}
+
+// === 節間成績処理(racelist → RaceEntry更新) ===
+async function processSection(base44: any, race: any, parsed: any) {
+  const sr = base44.asServiceRole.entities;
+  const raceData = parsed?.venues?.[0]?.races?.[0];
+  const parsedEntries = raceData?.entries || [];
+  const existingEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+  const entryByBoat = new Map(existingEntries.map((e: any) => [Number(e.boat_number), e]));
+  let updated = 0;
+
+  for (const pe of parsedEntries) {
+    const bn = num(pe.boat_number);
+    const existing = entryByBoat.get(bn);
+    if (!bn || !existing) continue;
+    const update: any = {};
+    if (pe.section_points != null) update.section_points = pe.section_points;
+    if (pe.section_finishes) update.section_finishes = pe.section_finishes;
+    if (pe.section_st != null) update.section_st = pe.section_st;
+    if (pe.section_momentum != null) update.section_momentum = pe.section_momentum;
+    if (Object.keys(update).length) {
+      await sr.RaceEntry.update(existing.id, update);
+      updated++;
+    }
+  }
+  return { entries_updated: updated };
 }
 
 // === 展示データ処理(決定論的パーサー出力 → RaceEntry更新) ===
@@ -241,7 +267,7 @@ export default async function(req: Request) {
     }
 
     // URL構築(正しいURL形式: jcd パラメータ使用)
-    const url = buildUrl(fetch_type === 'exhibition' ? 'beforeinfo' : fetch_type === 'odds' ? 'odds3t' : 'raceresult', race_date, vc, rn);
+    const url = buildUrl(fetch_type === 'exhibition' ? 'beforeinfo' : fetch_type === 'odds' ? 'odds3t' : fetch_type === 'section' ? 'racelist' : 'raceresult', race_date, vc, rn);
 
     // HTML取得(決定論的パーサー使用、InvokeLLM不使用)
     const fetchRes = await fetchHtml(url);
@@ -257,7 +283,12 @@ export default async function(req: Request) {
     // 決定論的HTML解析(InvokeLLM不使用)
     let parsed: any;
     try {
-      if (fetch_type === 'exhibition') {
+      if (fetch_type === 'section') {
+        const venueName = race.venue_name || race.venue || VENUE_MAP[vc] || vc;
+        const p = parseRaceCard(fetchRes.html, race_date, vc, venueName, rn);
+        if (!p.ok) throw new Error((p.errors || []).join('; ') || '節間成績解析失敗');
+        parsed = p.data;
+      } else if (fetch_type === 'exhibition') {
         const p = parseBeforeInfo(fetchRes.html);
         if (!p.ok) throw new Error(p.errors.join('; ') || '展示データ解析失敗');
         parsed = p.data;
@@ -283,6 +314,9 @@ export default async function(req: Request) {
     try {
       let resultData: any = {};
       switch (fetch_type) {
+        case 'section':
+          resultData = await processSection(base44, race, parsed);
+          break;
         case 'exhibition':
           resultData = await processExhibition(base44, race, parsed);
           break;
