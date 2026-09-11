@@ -4,10 +4,15 @@ function getTodayJST(): string {
   return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
 function getTomorrowJST(): string {
-  const now = new Date();
-  const jst = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
-  jst.setDate(jst.getDate() + 1);
-  return jst.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
+  // JSTの今日を文字列で固定し、UTCの暦日演算で+1日する。
+  // タイムゾーン変換の二重適用による翌々日ズレを防ぐ。
+  const today = getTodayJST();
+  const [y, m, d] = today.split('-').map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d + 1));
+  const yy = next.getUTCFullYear();
+  const mm = String(next.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(next.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
 }
 
 export default async function(req: Request) {
