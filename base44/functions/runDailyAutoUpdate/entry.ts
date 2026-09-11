@@ -93,16 +93,30 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     }
     if (deadlineFixes.length) await sr.Race.bulkUpdate(deadlineFixes).catch((e: any) => errors.push(`${venueName}: 締切補正 ${e.message}`));
 
-    const missingRaceNos = Array.from({ length: 12 }, (_, i) => i + 1).filter(rno => (entryCountByRace[String(rno)] || 0) < 6);
-    if (!missingRaceNos.length) {
+    // 出走表6艇が揃っていても、節間成績が空ならracelistを再取得して補完する。
+    // 以前は「6艇揃い=スキップ」だったため、section_* が永遠にnullのままになっていた。
+    const entriesByRace: Record<string, any[]> = {};
+    for (const e of existingEntries) {
+      const rn = String(e.race_number);
+      if (!entriesByRace[rn]) entriesByRace[rn] = [];
+      entriesByRace[rn].push(e);
+    }
+    const targetRaceNos = Array.from({ length: 12 }, (_, i) => i + 1).filter((rno) => {
+      const raceEntries = entriesByRace[String(rno)] || [];
+      if (raceEntries.length < 6) return true;
+      return raceEntries.some((e: any) =>
+        e.section_points == null && !e.section_finishes && e.section_st == null && e.section_momentum == null
+      );
+    });
+    if (!targetRaceNos.length) {
       skippedVenues++;
       continue;
     }
 
     const parsedCards: any[] = [];
-    for (let i = 0; i < missingRaceNos.length; i += 4) {
+    for (let i = 0; i < targetRaceNos.length; i += 4) {
       if (Date.now() - startTime > timeBudgetMs - 5000) break;
-      const batch = missingRaceNos.slice(i, i + 4);
+      const batch = targetRaceNos.slice(i, i + 4);
       const got = await Promise.all(batch.map(async (rno) => {
         try {
           const res = await fetchHtml(buildUrl('racelist', raceDate, venueCode, rno));
