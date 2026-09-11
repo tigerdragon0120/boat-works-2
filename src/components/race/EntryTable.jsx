@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import StartTimingPanel from "@/components/race/StartTimingPanel";
+import { base44 } from "@/api/base44Client";
 
 
 const boatColors = {
@@ -30,7 +31,7 @@ const judgmentStyle = {
 };
 
 const subTabs = ["買い目", "出走表", "直前情報", "オッズ", "3連単", "6艇評価"];
-const filterTabs = ["選手成績", "節間成績", "モーター履歴", "全国成績", "当地成績"];
+const filterTabs = ["選手成績", "枠番過去10走", "節間成績", "モーター履歴", "全国成績", "当地成績"];
 
 export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode }) {
   const [subTab, setSubTab] = useState("出走表");
@@ -130,7 +131,34 @@ function resolveRoleBoats(activePred, activeBoats = []) {
 }
 
 function EntryGrid({ entries, filter, activeBoats, activePred }) {
+  const [past10ByReg, setPast10ByReg] = useState({});
+  const [past10Loading, setPast10Loading] = useState(false);
+
+  const regsKey = useMemo(() => entries.map((e) => e.register_number || e.registration_number || "").filter(Boolean).join(","), [entries]);
+
+  useEffect(() => {
+    if (filter !== "枠番過去10走" || !regsKey) return;
+    let cancelled = false;
+    const loadPast10 = async () => {
+      setPast10Loading(true);
+      try {
+        const pairs = await Promise.all(entries.map(async (e) => {
+          const reg = e.register_number || e.registration_number;
+          if (!reg) return ["", []];
+          const rows = await base44.entities.RacerRaceHistory.filter({ registration_number: String(reg) }, "-race_date", 10).catch(() => []);
+          return [String(reg), rows || []];
+        }));
+        if (!cancelled) setPast10ByReg(Object.fromEntries(pairs.filter(([k]) => k)));
+      } finally {
+        if (!cancelled) setPast10Loading(false);
+      }
+    };
+    loadPast10();
+    return () => { cancelled = true; };
+  }, [filter, regsKey]);
+
   if (!entries.length) return <Empty msg="出走表データがありません" />;
+  if (filter === "枠番過去10走") return <Past10Grid entries={entries} historyByReg={past10ByReg} loading={past10Loading} />;
   const roleOf = (n) => {
     if (activePred?.honmei_boat === n) return "本命";
     if (activePred?.taiko_boat === n) return "対抗";
@@ -176,6 +204,53 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function Past10Grid({ entries, historyByReg, loading }) {
+  const slot = (e, h, idx) => {
+    if (!h) return <div key={idx} className="text-center text-slate-300">—</div>;
+    const frame = Number(h.boat_number || h.course || 0);
+    const finish = h.finish_order ?? h.finish_status ?? "—";
+    const st = h.st != null ? Number(h.st).toFixed(2) : "—";
+    return (
+      <div key={h.id || idx} className="min-w-[46px] text-center leading-tight">
+        <div className="text-[9px] text-slate-500">{10 - idx}走</div>
+        <div className="mt-0.5 flex items-center justify-center gap-0.5">
+          <span className={cn("w-4 h-4 rounded-sm flex items-center justify-center text-[9px] font-black", boatColors[frame] || "bg-slate-200 text-slate-700")}>{frame || "-"}</span>
+          <span className="text-[10px] font-bold text-slate-900">{finish}</span>
+        </div>
+        <div className="text-[9px] text-slate-500 mt-0.5">ST {st}</div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="text-[11px] overflow-x-auto">
+      <div className="min-w-[930px]">
+        <div className="grid grid-cols-[28px_180px_repeat(10,1fr)] gap-1 px-2 py-1.5 bg-white border-b border-slate-200 text-slate-500 font-bold text-[10px] sticky top-0 z-10">
+          <div className="text-center">枠</div><div>選手名</div>
+          {[10,9,8,7,6,5,4,3,2,1].map((n) => <div key={n} className="text-center">{n}走</div>)}
+        </div>
+        {entries.map((e) => {
+          const reg = String(e.register_number || e.registration_number || "");
+          const hist = historyByReg[reg] || [];
+          return (
+            <div key={e.boat_number} className={cn("grid grid-cols-[28px_180px_repeat(10,1fr)] gap-1 px-2 py-2 border-b border-slate-200 items-center", rowTint[e.boat_number])}>
+              <div className="flex justify-center"><span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span></div>
+              <div className="min-w-0 flex items-center gap-1.5">
+                <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} />
+                <div className="min-w-0"><div className="font-bold text-slate-900 text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</div><div className="text-[9px] text-slate-500">登録{reg || "—"}</div></div>
+              </div>
+              {loading && !hist.length
+                ? Array.from({ length: 10 }).map((_, i) => <div key={i} className="text-center text-slate-300 animate-pulse">…</div>)
+                : Array.from({ length: 10 }).map((_, i) => slot(e, hist[i], i))}
+            </div>
+          );
+        })}
+      </div>
+      <div className="px-3 py-2 text-[10px] text-slate-400">各マスは「枠番・着順・ST」。左が10走前、右が前走です。</div>
     </div>
   );
 }
