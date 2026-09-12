@@ -208,6 +208,13 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
           updated++;
         } else skipped++;
 
+        // 同一レース6艇のSTからスタート順を算出(1=最速)。今後のK取込では履歴に永続化する。
+        const stOrderByBoat = new Map<number, number>();
+        const starters = (r.entries || [])
+          .filter((x:any) => !x.is_absent && !x.is_disqualified && num(x.st) != null && num(x.boat_number) != null)
+          .sort((a:any,b:any) => Number(a.st) - Number(b.st));
+        starters.forEach((x:any, idx:number) => stOrderByBoat.set(Number(x.boat_number), idx + 1));
+
         for (const e of r.entries || []) {
           const bn = num(e.boat_number);
           if (!bn) continue;
@@ -233,7 +240,8 @@ async function saveKFileData(base44: any, data: any, fastHistorical = true) {
           const histDoc: any = {
             registration_number: reg, race_date: raceDate, venue_code: venueCode, race_number: raceNumber,
             boat_number: bn, course: num(e.course) || undefined, finish_order: num(e.finish_order) || undefined,
-            st: num(e.st) ?? undefined, motor_number: num(e.motor_number) || undefined,
+            st: num(e.st) ?? undefined, start_order: stOrderByBoat.get(Number(bn)) || undefined,
+            motor_number: num(e.motor_number) || undefined,
             is_absent: !!e.is_absent, is_disqualified: !!e.is_disqualified,
             finish_status: str(e.finish_status) || undefined,
           };
