@@ -145,10 +145,14 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
         const pairs = await Promise.all(entries.map(async (e) => {
           const reg = e.register_number || e.registration_number;
           if (!reg) return ["", []];
-          const rows = await base44.entities.RacerRaceHistory.filter({ registration_number: String(reg) }, "-race_date", 10).catch(() => []);
-          return [String(reg), rows || []];
+          return [`${String(reg)}_${Number(e.boat_number)}`, null];
         }));
-        if (!cancelled) setPast10ByReg(Object.fromEntries(pairs.filter(([k]) => k)));
+        const reqEntries = entries.map((e) => ({
+          registration_number: String(e.register_number || e.registration_number || ""),
+          lane: Number(e.boat_number),
+        })).filter((x) => /^\d{4}$/.test(x.registration_number) && x.lane >= 1 && x.lane <= 6);
+        const res = await base44.functions.invoke("getLanePast10Stats", { entries: reqEntries });
+        if (!cancelled) setPast10ByReg(res?.data?.by_key || {});
       } finally {
         if (!cancelled) setPast10Loading(false);
       }
@@ -158,7 +162,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
   }, [filter, regsKey]);
 
   if (!entries.length) return <Empty msg="出走表データがありません" />;
-  if (filter === "枠番過去10走") return <Past10Grid entries={entries} historyByReg={past10ByReg} loading={past10Loading} />;
+  if (filter === "枠番過去10走") return <Past10Grid entries={entries} statsByKey={past10ByReg} loading={past10Loading} />;
   const roleOf = (n) => {
     if (activePred?.honmei_boat === n) return "本命";
     if (activePred?.taiko_boat === n) return "対抗";
@@ -208,7 +212,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
   );
 }
 
-function Past10Grid({ entries, historyByReg, loading }) {
+function Past10Grid({ entries, statsByKey, loading }) {
   const slot = (e, h, idx) => {
     if (!h) return <div key={idx} className="text-center text-slate-300">—</div>;
     const frame = Number(h.boat_number || h.course || 0);
@@ -222,6 +226,7 @@ function Past10Grid({ entries, historyByReg, loading }) {
           <span className="text-[10px] font-bold text-slate-900">{finish}</span>
         </div>
         <div className="text-[9px] text-slate-500 mt-0.5">ST {st}</div>
+        <div className="text-[9px] text-slate-400">順 {h.start_order ?? "—"}</div>
       </div>
     );
   };
@@ -229,20 +234,25 @@ function Past10Grid({ entries, historyByReg, loading }) {
   return (
     <div className="text-[11px] overflow-x-auto">
       <div className="min-w-[930px]">
-        <div className="grid grid-cols-[28px_180px_repeat(10,1fr)] gap-1 px-2 py-1.5 bg-white border-b border-slate-200 text-slate-500 font-bold text-[10px] sticky top-0 z-10">
+        <div className="grid grid-cols-[28px_160px_56px_58px_54px_repeat(10,1fr)] gap-1 px-2 py-1.5 bg-white border-b border-slate-200 text-slate-500 font-bold text-[10px] sticky top-0 z-10">
           <div className="text-center">枠</div><div>選手名</div>
+          <div className="text-center">勝率</div><div className="text-center">平均ST</div><div className="text-center">ST順</div>
           {[10,9,8,7,6,5,4,3,2,1].map((n) => <div key={n} className="text-center">{n}走</div>)}
         </div>
         {entries.map((e) => {
           const reg = String(e.register_number || e.registration_number || "");
-          const hist = [...(historyByReg[reg] || [])].reverse();
+          const stats = statsByKey[`${reg}_${Number(e.boat_number)}`] || null;
+          const hist = [...(stats?.recent10 || [])].reverse();
           return (
-            <div key={e.boat_number} className={cn("grid grid-cols-[28px_180px_repeat(10,1fr)] gap-1 px-2 py-2 border-b border-slate-200 items-center", rowTint[e.boat_number])}>
+            <div key={e.boat_number} className={cn("grid grid-cols-[28px_160px_56px_58px_54px_repeat(10,1fr)] gap-1 px-2 py-2 border-b border-slate-200 items-center", rowTint[e.boat_number])}>
               <div className="flex justify-center"><span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span></div>
               <div className="min-w-0 flex items-center gap-1.5">
                 <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} />
                 <div className="min-w-0"><div className="font-bold text-slate-900 text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</div><div className="text-[9px] text-slate-500">登録{reg || "—"}</div></div>
               </div>
+              <div className="text-center font-black text-slate-900">{stats?.win_rate != null ? `${stats.win_rate}%` : "—"}</div>
+              <div className="text-center font-mono font-bold text-slate-800">{stats?.avg_st != null ? Number(stats.avg_st).toFixed(3) : "—"}</div>
+              <div className="text-center font-bold text-slate-800">{stats?.avg_start_order != null ? Number(stats.avg_start_order).toFixed(1) : "—"}</div>
               {loading && !hist.length
                 ? Array.from({ length: 10 }).map((_, i) => <div key={i} className="text-center text-slate-300 animate-pulse">…</div>)
                 : Array.from({ length: 10 }).map((_, i) => slot(e, hist[i], i))}
@@ -250,7 +260,7 @@ function Past10Grid({ entries, historyByReg, loading }) {
           );
         })}
       </div>
-      <div className="px-3 py-2 text-[10px] text-slate-400">各マスは「枠番・着順・ST」。左が10走前、右が前走です。</div>
+      <div className="px-3 py-2 text-[10px] text-slate-400">現在の枠番と同じ枠で走った過去10走だけを表示。各マスは「枠番・着順・ST・スタート順」。左が10走前、右が前走です。</div>
     </div>
   );
 }
