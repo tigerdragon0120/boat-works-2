@@ -4,6 +4,21 @@ import { runPrediction, judgeTrifecta } from "@/lib/predictionEngine";
 
 const VERSION = "v3";
 
+// レート制限(429)対策: 指数バックオフ付きリトライ
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export async function withRetry(fn, max = 4) {
+  let last;
+  for (let i = 0; i <= max; i++) {
+    try { return await fn(); } catch (e) {
+      last = e;
+      const msg = String(e?.message || e || "");
+      if (!/rate\s*limit|429|too many requests/i.test(msg) || i === max) throw e;
+      await sleep(Math.min(8000, 500 * 2 ** i));
+    }
+  }
+  throw last;
+}
+
 // 今日の日付(YYYY-MM-DD) — BOAT WORKSは日本時間基準。
 // UTCのtoISOString()だと日本時間0:00〜8:59に前日扱いになるため、必ずAsia/Tokyoで算出する。
 export const todayStr = () => new Intl.DateTimeFormat("en-CA", {
@@ -37,30 +52,30 @@ export async function getSettings() {
 
 // 今日のレース一覧(終了済みは別途)
 export async function listTodayRaces({ includeFinished = false } = {}) {
-  const races = await base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500);
+  const races = await withRetry(() => base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500));
   if (!includeFinished) return (races || []).filter((r) => r.status !== "finished" && r.status !== "cancelled");
   return races || [];
 };
 
 // レース詳細(エントリー一覧)
 export async function getRaceEntries(raceId) {
-  return await base44.entities.RaceEntry.filter({ race_id: raceId }, "boat_number", 6);
+  return await withRetry(() => base44.entities.RaceEntry.filter({ race_id: raceId }, "boat_number", 6));
 }
 
 // 既存予想取得(race_id+stage+versionで1件)
 export async function getPrediction(raceId, stage) {
-  const list = await base44.entities.RacePrediction.filter({
+  const list = await withRetry(() => base44.entities.RacePrediction.filter({
     race_id: raceId, stage, prediction_version: VERSION,
-  }, "-computed_at", 1);
+  }, "-computed_at", 1));
   return list && list[0];
 }
 
 export async function getBoatPredictions(predictionId) {
-  return await base44.entities.BoatPrediction.filter({ prediction_id: predictionId }, "boat_number", 6);
+  return await withRetry(() => base44.entities.BoatPrediction.filter({ prediction_id: predictionId }, "boat_number", 6));
 }
 
 export async function getTrifectaPredictions(predictionId) {
-  return await base44.entities.TrifectaPrediction.filter({ prediction_id: predictionId }, "rank", 120);
+  return await withRetry(() => base44.entities.TrifectaPrediction.filter({ prediction_id: predictionId }, "rank", 120));
 }
 
 // 予想を実行して保存(PRE/FINAL)。重複作成しない。
