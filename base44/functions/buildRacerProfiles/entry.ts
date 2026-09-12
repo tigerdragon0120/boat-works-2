@@ -116,6 +116,7 @@ interface RaceRecord {
   finish_order: number;
   finish_status: string;
   start_timing: number;
+  start_order: number;
   winning_method: string;
   is_absent: boolean;
   is_disqualified: boolean;
@@ -125,6 +126,22 @@ interface RaceRecord {
 // JOIN + registration_number別グループ化
 function joinAndGroupByReg(entries: any[], resultByRaceKey: Map<string, any>): Map<string, RaceRecord[]> {
   const byReg = new Map<string, RaceRecord[]>();
+
+  // race_keyごとにST順を算出。1=最速。枠番別直近10走の「平均スタート順」に使用する。
+  const startOrderByRaceBoat = new Map<string, number>();
+  const groupedByRace = new Map<string, any[]>();
+  for (const e of entries) {
+    if (!e.race_key) continue;
+    if (!groupedByRace.has(e.race_key)) groupedByRace.set(e.race_key, []);
+    groupedByRace.get(e.race_key)!.push(e);
+  }
+  for (const [raceKey, rows] of groupedByRace) {
+    const starters = rows
+      .filter((x:any) => !x.is_absent && !x.is_disqualified && num(x.start_timing) != null && num(x.boat_number) != null)
+      .sort((a:any,b:any) => Number(a.start_timing) - Number(b.start_timing));
+    starters.forEach((x:any, idx:number) => startOrderByRaceBoat.set(`${raceKey}_${Number(x.boat_number)}`, idx + 1));
+  }
+
   for (const e of entries) {
     const reg = String(e.registration_number || '').trim();
     if (!reg) continue;
@@ -141,6 +158,7 @@ function joinAndGroupByReg(entries: any[], resultByRaceKey: Map<string, any>): M
       finish_order: num(e.finish_order),
       finish_status: String(e.finish_status || ''),
       start_timing: num(e.start_timing),
+      start_order: startOrderByRaceBoat.get(`${e.race_key}_${Number(e.boat_number)}`) || null,
       winning_method: offResult?.winning_method || '',
       is_absent: !!e.is_absent,
       is_disqualified: !!e.is_disqualified,
@@ -234,6 +252,31 @@ function computeRecentFormExpanded(races: RaceRecord[]) {
 // ============================================================
 // course_stats 拡張 (flat, start_course基準)
 // ============================================================
+function computeLaneRecent10(races: RaceRecord[]) {
+  const finished = races.filter(isFinished);
+  const out:any = {};
+  for (let lane=1; lane<=6; lane++) {
+    const recent = finished.filter(r => Number(r.boat_number) === lane).slice(0,10);
+    const stVals = recent.map(r => num(r.start_timing)).filter((v:any)=>v!=null);
+    const soVals = recent.map(r => num(r.start_order)).filter((v:any)=>v!=null);
+    out[String(lane)] = {
+      lane,
+      sample_count: recent.length,
+      win_rate: recent.length ? pct(recent.filter(r=>r.finish_order===1).length,recent.length) : null,
+      top2_rate: recent.length ? pct(recent.filter(r=>r.finish_order<=2).length,recent.length) : null,
+      top3_rate: recent.length ? pct(recent.filter(r=>r.finish_order<=3).length,recent.length) : null,
+      avg_st: stVals.length ? round3(stVals.reduce((a:number,b:number)=>a+b,0)/stVals.length) : null,
+      avg_start_order: soVals.length ? round1(soVals.reduce((a:number,b:number)=>a+b,0)/soVals.length) : null,
+      recent10: recent.map(r=>({
+        race_date:r.race_date, venue_code:r.venue_code, race_number:r.race_number,
+        boat_number:r.boat_number, start_course:r.start_course, finish_order:r.finish_order,
+        st:r.start_timing, start_order:r.start_order,
+      })),
+    };
+  }
+  return out;
+}
+
 function computeCourseStatsExpanded(races: RaceRecord[]) {
   const finished = races.filter(isFinished);
   const cs: any = {};
@@ -710,6 +753,7 @@ export default async function(req: Request) {
     let noTermStats = 0, noRaceHistory = 0;
     const toCreate: any[] = [];
     const toUpdate: any[] = [];
+    const laneRecentDocs: any[] = [];
 
     for (const [reg, active] of activeRacers) {
       const terms = termStatsByReg.get(reg) || [];
@@ -757,6 +801,12 @@ export default async function(req: Request) {
       // === RACE HISTORY (OfficialRaceEntryResultV2 + OfficialRaceResultV2) ===
       const recentForm = computeRecentFormExpanded(raceRecords);
       const courseStats = computeCourseStatsExpanded(raceRecords);
+      const laneRecent10 = computeLaneRecent10(raceRecords);
+      for (let lane=1; lane<=6; lane++) {
+        const ls = laneRecent10[String(lane)];
+        if (!ls || !ls.sample_count) continue;
+        laneRecentDocs.push({ registration_number:reg, lane, ...ls, updated_at:now });
+      }
       const courseStatsByPeriod = computeCourseStatsByPeriod(raceRecords);
       const winningMethods = computeWinningMethodsExpanded(raceRecords);
       const courseWinningMethods = computeCourseWinningMethods(raceRecords);
@@ -843,6 +893,17 @@ export default async function(req: Request) {
       await sr.RacerPerformanceProfile.bulkUpdate(toUpdate.slice(i, i + 500));
     }
 
+    // 選手×枠番の直近10走集計をキャッシュ。予想時に全履歴を再検索しないための高速化。
+    const existingLane = await all(sr.RacerLaneRecentStats, '-updated_at', 50000);
+    const laneByKey = new Map(existingLane.map((x:any)=>[`${x.registration_number}_${Number(x.lane)}`,x]));
+    const laneCreates:any[] = [], laneUpdates:any[] = [];
+    for (const d of laneRecentDocs) {
+      const old:any = laneByKey.get(`${d.registration_number}_${Number(d.lane)}`);
+      if (old) laneUpdates.push({id:old.id,...d}); else laneCreates.push(d);
+    }
+    for (let i=0;i<laneCreates.length;i+=500) await sr.RacerLaneRecentStats.bulkCreate(laneCreates.slice(i,i+500));
+    for (let i=0;i<laneUpdates.length;i+=500) await sr.RacerLaneRecentStats.bulkUpdate(laneUpdates.slice(i,i+500));
+
     return Response.json({
       status: 'success',
       total_active_racers: activeRacers.size,
@@ -855,7 +916,8 @@ export default async function(req: Request) {
       official_results_total: officialResults.length,
       racers_without_term_stats: noTermStats,
       racers_without_race_history: noRaceHistory,
-      message: `選手プロファイル${upserted}件更新(新規${created}・期別データなし${noTermStats}・履歴なし${noRaceHistory})`,
+      lane_recent_stats: laneRecentDocs.length,
+      message: `選手プロファイル${upserted}件更新(新規${created}・枠番直近10走${laneRecentDocs.length}件・期別データなし${noTermStats}・履歴なし${noRaceHistory})`,
     });
   } catch(error: any) {
     return Response.json({ status: 'error', message: error?.message || String(error) }, { status: 500 });
