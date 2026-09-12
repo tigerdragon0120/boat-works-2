@@ -27,7 +27,9 @@ async function retry(fn, max = 5) {
 }
 
 // =====================================================
-// 着順点計算(BOAT RACE公式ルール)
+// 着順点計算(BOATCAST方式)
+// BOATCASTの枠番別過去10走は基本着順点のみ使用。
+// SG/G1/G2/優勝戦などのグレード加点は行わない。
 // =====================================================
 const BASE_POINTS = { 1: 10, 2: 8, 3: 6, 4: 4, 5: 2, 6: 1 };
 
@@ -36,21 +38,56 @@ function calculateFinishPoint(h) {
   if (h.is_disqualified) return 0;
   const finish = Number(h.finish_order);
   if (!Number.isFinite(finish) || finish < 1 || finish > 6) return 0;
-  let point = BASE_POINTS[finish] || 0;
-  const grade = String(h.race_grade || '').toUpperCase();
-  const raceName = String(h.race_name || '');
-  if (grade.includes('SG') || raceName.includes('SG')) {
-    point += 2;
-  } else if (grade.includes('G1') || grade.includes('G2') || raceName.includes('G1') || raceName.includes('G2')) {
-    point += 1;
-  }
-  const raceType = String(h.race_type || '');
-  const isChampionship =
-    (raceType.includes('優勝') || raceName.includes('優勝')) && !raceName.includes('準優');
-  if (isChampionship) {
-    point += 1;
-  }
-  return point;
+  return BASE_POINTS[finish] || 0;
+}
+
+// 特殊結果(F/L/K/S/欠等)かどうか。これらは勝率の分母からも除外する。
+function isSpecialResult(h) {
+  return (h.finish_status && String(h.finish_status).trim() !== '') || h.is_disqualified || h.is_absent;
+}
+
+// =====================================================
+// 公式サイトからST情報を取得(DB欠損時の補完用)
+// boatrace.jpのレース結果ページから6艇のSTを解析する。
+// STがDBに欠損している場合のみ呼ばれ、BOATCASTと同じST値を取得する。
+// =====================================================
+const officialSTCache = new Map();
+
+async function fetchOfficialST(date, venueCode, raceNumber) {
+  const cacheKey = `${date}_${venueCode}_${raceNumber}`;
+  if (officialSTCache.has(cacheKey)) return officialSTCache.get(cacheKey);
+
+  const hd = date.replace(/-/g, '');
+  const url = `https://boatrace.jp/owpc/pc/race/raceresult?rno=${raceNumber}&jcd=${venueCode}&hd=${hd}`;
+  let stMap = null;
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const html = await res.text();
+      // "スタート情報"セクションを抽出
+      const startIdx = html.indexOf('スタート情報');
+      if (startIdx >= 0) {
+        const searchEnd = html.indexOf('水面気象情報', startIdx);
+        const sectionEnd = searchEnd > 0 ? searchEnd : html.indexOf('勝式', startIdx);
+        const section = html.slice(startIdx, sectionEnd > 0 ? sectionEnd : startIdx + 3000);
+        // img_boat2_X.png の後に続く ST値(.XX または F.XX)を抽出
+        stMap = {};
+        const regex = /img_boat2_(\d)\.png[^.]*?\.(\d+)/g;
+        let match;
+        while ((match = regex.exec(section)) !== null) {
+          const bn = parseInt(match[1]);
+          const st = parseFloat(`0.${match[2]}`);
+          if (bn >= 1 && bn <= 6 && Number.isFinite(st)) stMap[bn] = st;
+        }
+        if (Object.keys(stMap).length === 0) stMap = null;
+      }
+    }
+  } catch {}
+  officialSTCache.set(cacheKey, stMap);
+  return stMap;
 }
 
 // =====================================================
@@ -185,15 +222,56 @@ export async function computeLanePast10Stats(sr, requested, raceDate, raceContex
       await sleep(200);
     }
 
+    // DB欠損STを公式サイトから並列取得して補完しつつST順位を計算
+    // 1. 補完が必要なレースを特定
+    const racesNeedingOfficial = [];
+    for (const raceKey of uniqueRaceKeys) {
+      const boats = allBoatsByRace.get(raceKey);
+      if (!boats) continue;
+      const hasNullST = [1,2,3,4,5,6].some(bn => {
+        const b = boats.get(bn);
+        return !b || b.st == null || !Number.isFinite(Number(b.st));
+      });
+      if (hasNullST) {
+        const [date, venue, race] = raceKey.split('_');
+        racesNeedingOfficial.push({ raceKey, date, venue, race: parseInt(race) });
+      }
+    }
+
+    // 2. 公式STを並列取得(5件ずつ)
+    let officialFetched = 0;
+    const FETCH_BATCH = 5;
+    for (let i = 0; i < racesNeedingOfficial.length; i += FETCH_BATCH) {
+      const batch = racesNeedingOfficial.slice(i, i + FETCH_BATCH);
+      const results = await Promise.allSettled(
+        batch.map(async (r) => ({
+          raceKey: r.raceKey,
+          stMap: await fetchOfficialST(r.date, r.venue, r.race),
+        }))
+      );
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue;
+        const { raceKey, stMap } = result.value;
+        if (!stMap) continue;
+        officialFetched++;
+        const boats = allBoatsByRace.get(raceKey);
+        if (!boats) continue;
+        for (const bn of [1,2,3,4,5,6]) {
+          if (stMap[bn] != null) {
+            if (!boats.has(bn)) boats.set(bn, { boat_number: bn, st: stMap[bn] });
+            else if (boats.get(bn).st == null || !Number.isFinite(Number(boats.get(bn).st))) {
+              boats.get(bn).st = stMap[bn];
+            }
+          }
+        }
+      }
+    }
+
+    // 3. 補完済みデータでST順位計算
     for (const raceKey of uniqueRaceKeys) {
       const boats = allBoatsByRace.get(raceKey);
       if (!boats) {
         stRankExcludedRaces.set(raceKey, 'レースデータ取得失敗');
-        continue;
-      }
-      const missingBoats = [1,2,3,4,5,6].filter(bn => !boats.has(bn));
-      if (missingBoats.length > 0) {
-        stRankExcludedRaces.set(raceKey, `艇不足: ${missingBoats.join(',')}号艇`);
         continue;
       }
       const nullStBoats = [1,2,3,4,5,6].filter(bn => {
@@ -210,7 +288,7 @@ export async function computeLanePast10Stats(sr, requested, raceDate, raceContex
       stOrderByRace.set(raceKey, orderMap);
     }
 
-    logs.push(`[LanePast10] ST順位: 計算済み=${stOrderByRace.size} | 対象外=${stRankExcludedRaces.size} / 全${uniqueRaceKeys.size}レース`);
+    logs.push(`[LanePast10] ST順位: 計算済み=${stOrderByRace.size} | 対象外=${stRankExcludedRaces.size} | 公式ST補完=${officialFetched} / 全${uniqueRaceKeys.size}レース`);
   }
 
   // =====================================================
@@ -232,6 +310,11 @@ export async function computeLanePast10Stats(sr, requested, raceDate, raceContex
         const race = raceMap.get(raceKey) || {};
         const stOrderMap = stOrderByRace.get(raceKey);
         const calculatedStartOrder = stOrderMap?.get(Number(h.boat_number)) ?? null;
+        // DB欠損STを公式ST(Phase 2.5でallBoatsByRaceに補完済み)で補完
+        const raceBoats = allBoatsByRace.get(raceKey);
+        const officialBoat = raceBoats?.get(Number(h.boat_number));
+        const dbSt = num(h.st);
+        const effectiveSt = dbSt != null ? dbSt : (officialBoat?.st != null ? num(officialBoat.st) : null);
         const enriched = {
           id: h.id,
           race_date: h.race_date,
@@ -241,8 +324,10 @@ export async function computeLanePast10Stats(sr, requested, raceDate, raceContex
           course: num(h.course),
           finish_order: num(h.finish_order),
           finish_status: h.finish_status || null,
-          st: num(h.st),
+          st: effectiveSt,
           start_order: num(h.start_order) ?? num(h.st_rank) ?? num(h.start_rank) ?? calculatedStartOrder,
+          is_disqualified: h.is_disqualified || false,
+          is_absent: h.is_absent || false,
           race_grade: race.grade || null,
           race_type: race.race_type || null,
           race_name: race.race_name || null,
@@ -255,8 +340,9 @@ export async function computeLanePast10Stats(sr, requested, raceDate, raceContex
       const stVals = recent10.map((h) => h.st).filter((v) => v != null);
       const soVals = recent10.map((h) => h.start_order).filter((v) => v != null);
 
+      // BOATCAST方式: 勝率 = 着順点合計 / 有効出走数(特殊結果を除く)
       const totalPoints = recent10.reduce((sum, h) => sum + (h.finish_point || 0), 0);
-      const validRaceCount = recent10.length;
+      const validRaceCount = recent10.filter((h) => !isSpecialResult(h)).length;
       const winningRate = validRaceCount > 0 ? round2(totalPoints / validRaceCount) : null;
 
       const recent3Finished = finished.slice(-3);
@@ -301,7 +387,7 @@ export async function computeLanePast10Stats(sr, requested, raceDate, raceContex
         winning_rate: winningRate,
         top2_rate: finished.length ? round1(finished.filter((h) => h.finish_order <= 2).length / finished.length * 100) : null,
         top3_rate: finished.length ? round1(finished.filter((h) => h.finish_order <= 3).length / finished.length * 100) : null,
-        avg_st: stVals.length ? round3(stVals.reduce((a, b) => a + b, 0) / stVals.length) : null,
+        avg_st: stVals.length ? round2(stVals.reduce((a, b) => a + b, 0) / stVals.length) : null,
         avg_start_order: soVals.length ? round1(soVals.reduce((a, b) => a + b, 0) / soVals.length) : null,
         st_rank_sample_count: soVals.length,
         recent3_momentum: recent3Momentum,
