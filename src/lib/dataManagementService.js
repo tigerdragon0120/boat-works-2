@@ -9,6 +9,11 @@ export async function getAutoUpdateStatus() {
   return await base44.functions.invoke("getAutoUpdateStatusV2", {});
 }
 
+// === 第6段階クリーンアップ監視 ===
+export async function getCleanupMonitorStatus() {
+  return await base44.functions.invoke("getCleanupMonitorStatus", {});
+}
+
 export async function runAutoUpdateStep(step) {
   return await base44.functions.invoke("runDailyAutoUpdate", { step });
 }

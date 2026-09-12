@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getDashboardData, generateMissingPrePredictions } from "@/lib/dataManagementService";
-import { RefreshCw, Database, Clock, TrendingUp, AlertTriangle, CheckCircle2, Zap } from "lucide-react";
+import { getDashboardData, generateMissingPrePredictions, getCleanupMonitorStatus } from "@/lib/dataManagementService";
+import { RefreshCw, Database, Clock, TrendingUp, AlertTriangle, CheckCircle2, Zap, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function DataDashboard() {
@@ -9,12 +9,17 @@ export default function DataDashboard() {
   const [preRunning, setPreRunning] = useState(false);
   const [preProgress, setPreProgress] = useState(null);
   const [preMessage, setPreMessage] = useState("");
+  const [monitor, setMonitor] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const d = await getDashboardData();
+      const [d, m] = await Promise.all([
+        getDashboardData(),
+        getCleanupMonitorStatus().catch(() => null),
+      ]);
       setData(d);
+      setMonitor(m?.data || m || null);
     } catch {}
     setLoading(false);
   }, []);
@@ -149,6 +154,92 @@ export default function DataDashboard() {
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      {/* クリーンアップ監視パネル(第6段階) */}
+      {monitor && (
+        <CleanupMonitorPanel monitor={monitor} />
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// クリーンアップ監視パネル
+// Race/RaceEntry/FINAL/RESULT重複・CONFLICT・MISSING逆戻りを監視
+// ============================================================
+function CleanupMonitorPanel({ monitor }) {
+  const m = monitor || {};
+  const anomalies = m.anomalies || {};
+  const allZero = m.all_zero;
+  const anomalyItems = [
+    { label: "Race重複", v: anomalies.race_duplicates ?? 0 },
+    { label: "Entry重複", v: anomalies.entry_duplicates ?? 0 },
+    { label: "FINAL重複", v: anomalies.final_duplicates ?? 0 },
+    { label: "RESULT重複", v: anomalies.result_duplicates ?? 0 },
+    { label: "CONFLICT", v: anomalies.result_conflicts ?? 0 },
+    { label: "MISSING逆戻り", v: anomalies.missing_finals ?? 0 },
+  ];
+  const resultSources = m.result_sources || {};
+  const oddsSources = m.odds_sources || {};
+  const fetchStats = m.fetch_stats || {};
+
+  return (
+    <div className={cn(
+      "rounded-xl border p-3 space-y-2",
+      allZero ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200"
+    )}>
+      <div className="flex items-center gap-1.5">
+        <ShieldCheck className={cn("w-3.5 h-3.5", allZero ? "text-emerald-600" : "text-rose-600")} />
+        <span className="text-xs font-bold text-slate-700">クリーンアップ監視(第6段階)</span>
+        <span className={cn(
+          "ml-auto px-2 h-5 rounded text-[10px] font-bold flex items-center gap-1",
+          allZero ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+        )}>
+          {allZero ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+          {allZero ? "異常0件" : "異常あり"}
+        </span>
+      </div>
+
+      {/* 異常0件目標グリッド */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+        {anomalyItems.map((a) => (
+          <div key={a.label} className={cn(
+            "rounded-lg px-2 py-1.5 text-center",
+            a.v === 0 ? "bg-white/60" : "bg-rose-100"
+          )}>
+            <div className={cn("font-bold text-sm leading-none", a.v === 0 ? "text-emerald-600" : "text-rose-700")}>{a.v}</div>
+            <div className="text-[9px] text-slate-500 mt-0.5">{a.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* データソース別取得元 */}
+      <div className="grid sm:grid-cols-3 gap-2 text-[10px]">
+        <div className="bg-white/60 rounded-lg p-2">
+          <div className="font-bold text-slate-600 mb-1">結果取得元</div>
+          <div className="flex gap-2">
+            <span className="text-sky-700">BCAST:{resultSources.BOATCAST || 0}</span>
+            <span className="text-slate-500">LOCAL:{resultSources.LOCAL || 0}</span>
+            <span className="text-slate-400">TXT:{resultSources.TXT || 0}</span>
+          </div>
+        </div>
+        <div className="bg-white/60 rounded-lg p-2">
+          <div className="font-bold text-slate-600 mb-1">オッズ取得元</div>
+          <div className="flex gap-2">
+            <span className="text-sky-700">BCAST:{oddsSources.BOATCAST || 0}</span>
+            <span className="text-slate-500">LOCAL:{oddsSources.LOCAL || 0}</span>
+          </div>
+        </div>
+        <div className="bg-white/60 rounded-lg p-2">
+          <div className="font-bold text-slate-600 mb-1">取得ログ(直近100)</div>
+          <div className="flex gap-2 flex-wrap">
+            <span className="text-emerald-600">OK:{fetchStats.success || 0}</span>
+            <span className="text-rose-600">FAIL:{fetchStats.failed || 0}</span>
+            <span className="text-amber-600">NODATA:{fetchStats.no_data || 0}</span>
+            <span className="text-slate-500">SKIP:{fetchStats.skipped || 0}</span>
+          </div>
         </div>
       </div>
     </div>
