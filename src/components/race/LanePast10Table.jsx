@@ -84,7 +84,7 @@ export default function LanePast10Table({ entries, race }) {
           start_order: null,
           is_disqualified: false,
           is_absent: p.finish === "欠",
-        }));
+        })).reverse();
         statsByKey[`${reg}_${r.lane}`] = {
           registration_number: reg,
           lane: r.lane,
