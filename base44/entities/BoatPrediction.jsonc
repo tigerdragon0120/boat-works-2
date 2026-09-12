@@ -80,6 +80,26 @@
       "type": "number",
       "description": "\u7a74\u671f\u5f85\u5ea6"
     },
+    "lane_recent_score": {
+      "type": "number",
+      "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd110\u8d70\u30b9\u30b3\u30a2"
+    },
+    "lane_recent_win_rate": {
+      "type": "number",
+      "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd110\u8d701\u7740\u7387%"
+    },
+    "lane_recent_avg_st": {
+      "type": "number",
+      "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd110\u8d70\u5e73\u5747ST"
+    },
+    "lane_recent_avg_start_order": {
+      "type": "number",
+      "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd110\u8d70\u5e73\u5747\u30b9\u30bf\u30fc\u30c8\u9806"
+    },
+    "lane_recent_sample_count": {
+      "type": "number",
+      "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd1\u30c7\u30fc\u30bf\u6570(\u6700\u592710)"
+    },
     "recent_form_score": {
       "type": "number",
       "description": "\u76f4\u8fd1\u8abf\u5b50\u30b9\u30b3\u30a2(RacerRollingStats)"
