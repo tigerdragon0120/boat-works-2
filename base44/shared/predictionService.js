@@ -8,6 +8,7 @@ import { normalizeTkz, normalizeStartExhibition, normalizeExhibitionData } from 
 import { mergeExhibition } from "./exhibitionMerger.js";
 import { resolveProductionOdds, shouldFetchOdds } from "./oddsResolver.js";
 import { resolveRaceResult, mergeResultProtect } from "./resultResolver.js";
+import { runAndSavePredictionV2, verifyV2Prediction } from "./predictionServiceV2.js";
 
 const VERSION = "v3";
 
@@ -454,6 +455,13 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   if (stage === "FINAL") { raceUpdate.has_final = true; if (race.status !== "finished") raceUpdate.status = "final"; }
   await client.asServiceRole.entities.Race.update(race.id, raceUpdate);
 
+  // V2予想(並行計算・V1に影響しない)
+  // runAndSavePredictionが直接呼ばれた場合もV2を生成する。
+  // syncAndPredict経由でもV2が呼ばれるが、getOrCreateV2Predictionで重複防止される。
+  try {
+    await runAndSavePredictionV2(client, race, entries, settings, stage, effectiveOddsMap || oddsMap, profileByReg, rollingByReg);
+  } catch (e) { /* V2エラーはV1に影響しない */ }
+
   return { predictionId, result };
 }
 
@@ -690,6 +698,9 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
   // 予想照合(PRE/FINAL)
   const verification = await verifyPrediction(client, race, result);
 
+  // V2検証(V1に影響しない)
+  await verifyV2Prediction(client, race, result).catch(() => {});
+
   return { saved, verification, skipped: false };
 }
 
@@ -756,6 +767,10 @@ export async function upsertResultAndVerify(client, race, resultData) {
   await sr.Race.update(race.id, { status: "finished" });
 
   const verification = await verifyPrediction(client, race, resultData);
+
+  // V2検証(V1に影響しない)
+  await verifyV2Prediction(client, race, resultData).catch(() => {});
+
   return { result: saved, verification };
 }
 
@@ -865,6 +880,13 @@ export async function syncAndPredict(client, payload, opts = {}) {
         }
       }
 
+      // V2 PRE予想(並行計算・V1に影響しない)
+      if (complete && !opts.skip_predictions) {
+        try {
+          await runAndSavePredictionV2(client, race, entryDocs, settings, "PRE", {}, profileByReg, rollingByReg);
+        } catch (e) { /* V2エラーはV1に影響しない */ }
+      }
+
       // FINAL予想(展示取得済みの場合のみ)
       if (complete && raceData.exhibition_ready && !opts.skip_predictions) {
         addVenue(raceData.venue_code, "exhibition");
@@ -872,6 +894,13 @@ export async function syncAndPredict(client, payload, opts = {}) {
           const finResult = await runAndSavePrediction(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {}, profileByReg, rollingByReg);
           if (!finResult?.skipped) { summary.final_generated++; addVenue(raceData.venue_code, "final"); }
         } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "FINAL予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
+      }
+
+      // V2 FINAL予想(並行計算・V1に影響しない)
+      if (complete && raceData.exhibition_ready && !opts.skip_predictions) {
+        try {
+          await runAndSavePredictionV2(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {}, profileByReg, rollingByReg);
+        } catch (e) { /* V2エラーはV1に影響しない */ }
       }
 
       // 結果: APIはresults配列またはraceオブジェクト直下(result_trifecta)に格納

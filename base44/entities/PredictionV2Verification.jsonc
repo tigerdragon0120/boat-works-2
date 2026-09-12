@@ -1,0 +1,176 @@
+{
+  "name": "PredictionV2Verification",
+  "type": "object",
+  "description": "V1/V2\u4e88\u60f3\u306e\u4e26\u884c\u691c\u8a3c\u7d50\u679c\u3002\u7d50\u679c\u78ba\u5b9a\u5f8c\u306bV1\u3068V2\u3092\u4e21\u65b9\u691c\u8a3c\u3057\u3001\u5916\u308c\u539f\u56e0\u3092\u5206\u985e\u3057\u3066\u4fdd\u5b58\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "actual_result": {
+      "type": "string",
+      "description": "\u5b9f\u969b\u306e3\u9023\u5358\u7d50\u679c"
+    },
+    "v1_pre_prediction": {
+      "type": "string"
+    },
+    "v1_final_prediction": {
+      "type": "string"
+    },
+    "v1_pre_hit": {
+      "type": "boolean"
+    },
+    "v1_final_hit": {
+      "type": "boolean"
+    },
+    "v1_recommended_hit": {
+      "type": "boolean",
+      "description": "V1\u63a8\u5968\u8cb7\u3044\u76ee(6-8\u70b9)\u7684\u4e2d"
+    },
+    "v1_final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "v1_ticket_count": {
+      "type": "number"
+    },
+    "v1_selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "v1_payout": {
+      "type": "number"
+    },
+    "v1_investment": {
+      "type": "number"
+    },
+    "v1_recovery_rate": {
+      "type": "number"
+    },
+    "v2_pre_prediction": {
+      "type": "string"
+    },
+    "v2_final_prediction": {
+      "type": "string"
+    },
+    "v2_pre_hit": {
+      "type": "boolean"
+    },
+    "v2_final_hit": {
+      "type": "boolean"
+    },
+    "v2_recommended_hit": {
+      "type": "boolean",
+      "description": "V2\u63a8\u5968\u8cb7\u3044\u76ee(6-8\u70b9)\u7684\u4e2d"
+    },
+    "v2_final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "v2_ticket_count": {
+      "type": "number"
+    },
+    "v2_selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "v2_payout": {
+      "type": "number"
+    },
+    "v2_investment": {
+      "type": "number"
+    },
+    "v2_recovery_rate": {
+      "type": "number"
+    },
+    "v2_boat_scores": {
+      "type": "array",
+      "description": "V2 6\u8247\u30b9\u30b3\u30a2(\u691c\u8a3c\u6642\u4fdd\u5b58)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "boat_number": {
+            "type": "number"
+          },
+          "past_score": {
+            "type": "number"
+          },
+          "recent_score": {
+            "type": "number"
+          },
+          "today_score": {
+            "type": "number"
+          },
+          "pre_score": {
+            "type": "number"
+          },
+          "final_delta": {
+            "type": "number"
+          },
+          "final_score": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "miss_reason_primary": {
+      "type": "string",
+      "enum": [
+        "first_miss",
+        "second_miss",
+        "third_miss",
+        "ticket_narrow",
+        "entry_mismatch",
+        "exhibition_over",
+        "exhibition_under",
+        "waku10_over",
+        "waku10_under",
+        "odds_exclusion",
+        "other"
+      ],
+      "description": "\u5916\u308c\u4e3b\u539f\u56e0"
+    },
+    "miss_reason_secondary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "\u5916\u308c\u526f\u539f\u56e0"
+    },
+    "miss_analysis": {
+      "type": "object",
+      "description": "\u5916\u308c\u5206\u6790\u8a73\u7d30"
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id"
+  ]
+}

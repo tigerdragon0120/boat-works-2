@@ -572,3 +572,75 @@ export async function getVerificationSummary() {
     records: buyRecords,
   };
 }
+
+// ============================================================
+// V1 vs V2 比較検証サマリー
+// PredictionV2VerificationからV1/V2並行検証結果を集計
+// ============================================================
+export async function getV2VerificationSummary() {
+  const raw = await base44.entities.PredictionV2Verification.list("-verified_at", 500).catch(() => []);
+  const verifs = (raw || []).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
+  const total = verifs.length;
+  if (total === 0) return { total: 0, v1: {}, v2: {}, comparison: {}, records: [] };
+
+  // V1集計
+  const v1Buy = verifs.filter((v) => v.v1_final_judgment === "BUY");
+  const v1Hits = v1Buy.filter((v) => v.v1_recommended_hit).length;
+  const v1Invest = v1Buy.reduce((a, v) => a + (v.v1_investment || 0), 0);
+  const v1Return = v1Buy.filter((v) => v.v1_recommended_hit).reduce((a, v) => a + (v.v1_payout || 0), 0);
+  const v1HitRate = v1Buy.length ? Math.round((v1Hits / v1Buy.length) * 1000) / 10 : 0;
+  const v1Recovery = v1Invest > 0 ? Math.round((v1Return / v1Invest) * 100) : 0;
+
+  // V2集計
+  const v2Buy = verifs.filter((v) => v.v2_final_judgment === "BUY");
+  const v2Hits = v2Buy.filter((v) => v.v2_recommended_hit).length;
+  const v2Invest = v2Buy.reduce((a, v) => a + (v.v2_investment || 0), 0);
+  const v2Return = v2Buy.filter((v) => v.v2_recommended_hit).reduce((a, v) => a + (v.v2_payout || 0), 0);
+  const v2HitRate = v2Buy.length ? Math.round((v2Hits / v2Buy.length) * 1000) / 10 : 0;
+  const v2Recovery = v2Invest > 0 ? Math.round((v2Return / v2Invest) * 100) : 0;
+
+  // チケット数別集計
+  const byTicketCount = (verifs, prefix, n) => {
+    const list = verifs.filter((v) => v[`${prefix}_final_judgment`] === "BUY" && Number(v[`${prefix}_ticket_count`]) === n);
+    const hits = list.filter((v) => v[`${prefix}_recommended_hit`]).length;
+    const invest = list.reduce((a, v) => a + (v[`${prefix}_investment`] || 0), 0);
+    const ret = list.filter((v) => v[`${prefix}_recommended_hit`]).reduce((a, v) => a + (v[`${prefix}_payout`] || 0), 0);
+    return {
+      count: list.length, hits,
+      hit_rate: list.length ? Math.round((hits / list.length) * 1000) / 10 : 0,
+      recovery_rate: invest > 0 ? Math.round((ret / invest) * 100) : 0,
+    };
+  };
+
+  // 外れ原因集計(V2)
+  const missReasons = {};
+  for (const v of v2Buy.filter((x) => !x.v2_recommended_hit)) {
+    const reason = v.miss_reason_primary || "other";
+    missReasons[reason] = (missReasons[reason] || 0) + 1;
+  }
+
+  return {
+    total,
+    v1: {
+      buy_count: v1Buy.length, buy_hits: v1Hits, buy_hit_rate: v1HitRate,
+      buy_recovery_rate: v1Recovery, buy_investment: v1Invest, buy_return: v1Return,
+      tickets_6: byTicketCount(verifs, "v1", 6),
+      tickets_7: byTicketCount(verifs, "v1", 7),
+      tickets_8: byTicketCount(verifs, "v1", 8),
+    },
+    v2: {
+      buy_count: v2Buy.length, buy_hits: v2Hits, buy_hit_rate: v2HitRate,
+      buy_recovery_rate: v2Recovery, buy_investment: v2Invest, buy_return: v2Return,
+      tickets_6: byTicketCount(verifs, "v2", 6),
+      tickets_7: byTicketCount(verifs, "v2", 7),
+      tickets_8: byTicketCount(verifs, "v2", 8),
+      miss_reasons: missReasons,
+    },
+    comparison: {
+      hit_rate_diff: Math.round((v2HitRate - v1HitRate) * 10) / 10,
+      recovery_rate_diff: Math.round((v2Recovery - v1Recovery) * 10) / 10,
+      buy_count_diff: v2Buy.length - v1Buy.length,
+    },
+    records: verifs.slice(0, 100),
+  };
+}

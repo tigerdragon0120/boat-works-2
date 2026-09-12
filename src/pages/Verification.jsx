@@ -5,6 +5,7 @@ import {
   ArrowRight, BrainCircuit, Database, TicketCheck, RefreshCw, AlertTriangle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import V1V2Comparison from "@/components/verification/V1V2Comparison";
 
 export default function Verification() {
   const [summary, setSummary] = useState(null);
@@ -74,6 +75,8 @@ export default function Verification() {
           <Stat icon={Coins} label="BUY回収率" value={summary.buy_recovery_rate} unit="%" tone={summary.buy_recovery_rate >= 100 ? "text-emerald-600" : "text-rose-500"} sub={`投資 ¥${fmt(summary.buy_investment)} → 払戻 ¥${fmt(summary.buy_return)}`} />
         </div>
       </section>
+
+      <V1V2Comparison />
 
       <section className="bg-white rounded-2xl border border-slate-200 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3 mb-4">

@@ -1,0 +1,272 @@
+{
+  "name": "PredictionV2",
+  "type": "object",
+  "description": "Prediction Engine V2\u306e\u4e88\u60f3\u7d50\u679c\u3002V1(RacePrediction)\u3068\u306f\u5b8c\u5168\u72ec\u7acb\u3002\u904e\u53bb25%+\u76f4\u8fd135%+\u5f53\u65e540%\u306e3\u8ef8\u8a55\u4fa1\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ]
+    },
+    "prediction_version": {
+      "type": "string",
+      "default": "v2"
+    },
+    "computed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "data_confidence": {
+      "type": "number",
+      "description": "\u30c7\u30fc\u30bf\u4fe1\u983c\u5ea6 0-100"
+    },
+    "final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "judgment_reason": {
+      "type": "string"
+    },
+    "ticket_count": {
+      "type": "number",
+      "description": "\u8cb7\u3044\u76ee\u6570 6/7/8"
+    },
+    "selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "\u9078\u629e3\u9023\u5358\u914d\u5217"
+    },
+    "set_probability": {
+      "type": "number",
+      "description": "\u30bb\u30c3\u30c8\u7684\u4e2d\u78ba\u7387%"
+    },
+    "set_expected_recovery": {
+      "type": "number",
+      "description": "\u30bb\u30c3\u30c8\u671f\u5f85\u56de\u53ce\u7387%"
+    },
+    "synthetic_odds": {
+      "type": "number"
+    },
+    "min_payout": {
+      "type": "number"
+    },
+    "avg_payout": {
+      "type": "number"
+    },
+    "max_payout": {
+      "type": "number"
+    },
+    "best_ev_ticket": {
+      "type": "string"
+    },
+    "honmei_boat": {
+      "type": "number"
+    },
+    "taiko_boat": {
+      "type": "number"
+    },
+    "ana_boat": {
+      "type": "number"
+    },
+    "keshi_boat": {
+      "type": "number"
+    },
+    "top_trifecta": {
+      "type": "string"
+    },
+    "top_probability": {
+      "type": "number"
+    },
+    "top_odds": {
+      "type": "number"
+    },
+    "top_expected_value": {
+      "type": "number"
+    },
+    "first_ranking": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "second_ranking": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "third_ranking": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      }
+    },
+    "boat_scores": {
+      "type": "array",
+      "description": "6\u8247\u306eV2\u30b9\u30b3\u30a2",
+      "items": {
+        "type": "object",
+        "properties": {
+          "boat_number": {
+            "type": "number"
+          },
+          "past_score": {
+            "type": "number",
+            "description": "\u904e\u53bb\u8a55\u4fa1 0-100"
+          },
+          "recent_score": {
+            "type": "number",
+            "description": "\u76f4\u8fd1\u8a55\u4fa1 0-100"
+          },
+          "today_score": {
+            "type": "number",
+            "description": "\u5f53\u65e5\u8a55\u4fa1 0-100 (PRE=null)"
+          },
+          "pre_score": {
+            "type": "number",
+            "description": "PRE\u7dcf\u5408\u30b9\u30b3\u30a2 0-100"
+          },
+          "final_delta": {
+            "type": "number",
+            "description": "PRE\u2192FINAL\u5dee\u5206 (PRE=null)"
+          },
+          "final_score": {
+            "type": "number",
+            "description": "FINAL\u7dcf\u5408\u30b9\u30b3\u30a2 0-100"
+          },
+          "past_components": {
+            "type": "object",
+            "description": "\u904e\u53bb\u8a55\u4fa1\u306e\u5185\u8a33"
+          },
+          "recent_components": {
+            "type": "object",
+            "description": "\u76f4\u8fd1\u8a55\u4fa1\u306e\u5185\u8a33(WAKU10\u542b\u3080)"
+          },
+          "today_components": {
+            "type": "object",
+            "description": "\u5f53\u65e5\u8a55\u4fa1\u306e\u5185\u8a33(\u5c55\u793a\u7b49)"
+          },
+          "relative_ranks": {
+            "type": "object",
+            "description": "6\u8247\u5185\u9806\u4f4d"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "trifectas": {
+      "type": "array",
+      "description": "120\u901a\u308a\u306e3\u9023\u5358\u78ba\u7387(EV\u4ed8\u304d)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "combination": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "number"
+          },
+          "probability": {
+            "type": "number"
+          },
+          "actual_odds": {
+            "type": "number"
+          },
+          "expected_value": {
+            "type": "number"
+          },
+          "is_selected": {
+            "type": "boolean"
+          },
+          "ticket_rank": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "data_sources_used": {
+      "type": "object",
+      "description": "\u4f7f\u7528\u3057\u305f\u30c7\u30fc\u30bf\u30bd\u30fc\u30b9\u4e00\u89a7",
+      "properties": {
+        "national": {
+          "type": "boolean"
+        },
+        "local": {
+          "type": "boolean"
+        },
+        "waku10": {
+          "type": "boolean"
+        },
+        "section": {
+          "type": "boolean"
+        },
+        "motor": {
+          "type": "boolean"
+        },
+        "exhibition": {
+          "type": "boolean"
+        },
+        "entry": {
+          "type": "boolean"
+        },
+        "weather": {
+          "type": "boolean"
+        }
+      }
+    },
+    "v2_weights": {
+      "type": "object",
+      "description": "V2\u91cd\u307f\u914d\u5206",
+      "properties": {
+        "past": {
+          "type": "number"
+        },
+        "recent": {
+          "type": "number"
+        },
+        "today": {
+          "type": "number"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PENDING",
+        "COMPLETED",
+        "MISSING"
+      ],
+      "default": "COMPLETED"
+    }
+  },
+  "required": [
+    "race_id",
+    "stage",
+    "prediction_version"
+  ]
+}
