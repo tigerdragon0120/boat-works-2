@@ -235,7 +235,7 @@ export function computeBoatScores(entry, settings) {
       final_adjustments.push(`展示タイム ${entry.exhibition_time}${rankStr}`);
     }
     // 展示スコア
-    final_adjustments.push(`展示スコア${round1(exhibition_score)}(delta${exhibition_delta > 0 ? '+' : ''}${round1(exhibition_delta)})`);
+    final_adjustments.push(`展示スコア${round1(exhibition_score)} (補正${exhibition_delta > 0 ? '+' : ''}${round1(exhibition_delta)})`);
   }
 
   // 補助スコア
@@ -799,6 +799,10 @@ export function runPrediction(entries, settings, options = {}) {
         s.pre_first = pre.first_power;
         s.pre_second = pre.second_power;
         s.pre_third = pre.third_power;
+        // PRE→FINAL整合性ログ(先頭に挿入)
+        if (Array.isArray(s.final_adjustments)) {
+          s.final_adjustments.unshift(`1着力: PRE ${round1(pre.first_power)} → FINAL ${round1(s.first_power)} (補正${s.exhibition_delta > 0 ? '+' : ''}${round1(s.exhibition_delta)})`);
+        }
       }
     }
   }
