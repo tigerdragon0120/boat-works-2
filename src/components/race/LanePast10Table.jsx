@@ -89,8 +89,11 @@ export default function LanePast10Table({ entries, race }) {
         const reg = String(entry?.register_number || entry?.registration_number || "");
         const recent10 = r.past10.map((p) => {
           const { finish_order, finish_status } = normalizeWaku10Finish(p.finish);
+          // BOATCAST WAKU10形式: 進入コース欄が空欄=艇番と同じ(デフォルト進入)。
+          // BOATCAST本家準拠: 空欄時は艇番をデフォルト進入コースとして表示する。
+          const course = safeLaneNumber(p.course);
           return {
-            course: safeLaneNumber(p.course),
+            course: course != null ? course : r.lane,
             finish_order,
             finish_status,
             st: null,
