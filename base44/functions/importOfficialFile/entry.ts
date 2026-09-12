@@ -1,4 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
+import { waitUntil } from 'base44:runtime';
 import { upsertRace, upsertEntry, getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 
@@ -452,6 +453,11 @@ export default async function(req: Request) {
         skipped_count: result.skipped,
         error_count: result.errors,
       });
+
+      // 出走表取込後: 枠番過去10走の事前計算をバックグラウンド起動
+      if (import_type === 'race_card') {
+        waitUntil(base44.functions.invoke('precomputeLanePast10Stats', { mode: 'all' }).catch(() => {}));
+      }
 
       return Response.json({
         ok: true, import_type, ...result,

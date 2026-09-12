@@ -7,13 +7,21 @@ import { acquireLock, releaseLock, cleanupExpiredLocks } from "./concurrencyLock
 const VERSION = "v3";
 
 // 選手×枠番の直近10走集計は予想中に毎Race検索しない。60秒キャッシュで1回だけ読む。
-let laneRecentCache = { at: 0, map: null };
-async function getLaneRecentMap(client) {
+// raceId指定時はそのレース専用キャッシュを返す。未指定時は全件から最新を返す。
+const laneRecentCacheMap = new Map();
+async function getLaneRecentMap(client, raceId) {
   const now = Date.now();
-  if (laneRecentCache.map && now - laneRecentCache.at < 60000) return laneRecentCache.map;
-  const rows = await client.asServiceRole.entities.RacerLaneRecentStats.filter({}, '-updated_at', 5000).catch(() => []);
-  const map = new Map((rows || []).map((x) => [`${String(x.registration_number)}_${Number(x.lane)}`, x]));
-  laneRecentCache = { at: now, map };
+  const cacheKey = raceId || '__all__';
+  const cached = laneRecentCacheMap.get(cacheKey);
+  if (cached && now - cached.at < 60000) return cached.map;
+  const filter = raceId ? { race_id: raceId } : {};
+  const rows = await client.asServiceRole.entities.RacerLaneRecentStats.filter(filter, '-updated_at', 5000).catch(() => []);
+  const map = new Map();
+  for (const x of rows || []) {
+    const key = `${String(x.registration_number)}_${Number(x.lane)}`;
+    if (!map.has(key)) map.set(key, x); // 最新(先頭)を優先保持
+  }
+  laneRecentCacheMap.set(cacheKey, { at: now, map });
   return map;
 }
 
@@ -205,7 +213,7 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     const rolling = await client.asServiceRole.entities.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
     rollingByReg = new Map(rolling.map(r => [r.registration_number, r]));
   }
-  const laneRecentByKey = await getLaneRecentMap(client);
+  const laneRecentByKey = await getLaneRecentMap(client, race?.id);
   const entriesWithProfiles = entries.map(e => {
     const reg = String(e.registration_number || e.register_number || '').trim();
     const laneKey = `${reg}_${Number(e.boat_number)}`;

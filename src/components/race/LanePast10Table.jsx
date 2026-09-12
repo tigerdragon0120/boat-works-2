@@ -52,37 +52,92 @@ export default function LanePast10Table({ entries, race }) {
     [entries]
   );
 
+  // キャッシュ新鮮度しきい値: 1時間以内なら再計算スキップ
+  const STALE_THRESHOLD_MS = 60 * 60 * 1000;
+
   useEffect(() => {
     if (!reqKey) return;
     let cancelled = false;
-    const load = async () => {
-      setLoading(true);
+
+    const fetchFromServer = async () => {
+      const reqEntries = entries
+        .map((e) => ({
+          registration_number: String(e.register_number || e.registration_number || ""),
+          lane: Number(e.boat_number),
+        }))
+        .filter((x) => /^\d{4}$/.test(x.registration_number) && x.lane >= 1 && x.lane <= 6);
+      if (!reqEntries.length) return null;
       try {
-        const reqEntries = entries
-          .map((e) => ({
-            registration_number: String(e.register_number || e.registration_number || ""),
-            lane: Number(e.boat_number),
-          }))
-          .filter((x) => /^\d{4}$/.test(x.registration_number) && x.lane >= 1 && x.lane <= 6);
-        if (!reqEntries.length) { setStatsByKey({}); return; }
         const invokePromise = base44.functions.invoke("getLanePast10Stats", {
           entries: reqEntries,
           race_date: race?.race_date || null,
+          race_id: race?.id || null,
+          venue_code: race?.venue_code || null,
+          race_number: race?.race_number || null,
         });
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error("getLanePast10Stats timeout (90s)")), 90000)
         );
         const res = await Promise.race([invokePromise, timeoutPromise]);
-        if (!cancelled) setStatsByKey(res?.data?.by_key || {});
+        return res?.data?.by_key || null;
       } catch (e) {
         console.error("LanePast10 fetch error:", e);
-      } finally {
-        if (!cancelled) setLoading(false);
+        return null;
       }
     };
+
+    const load = async () => {
+      setLoading(true);
+
+      // Step 1: キャッシュ確認(RacerLaneRecentStats by race_id)
+      let cacheByKey = {};
+      if (race?.id) {
+        try {
+          const cached = await base44.entities.RacerLaneRecentStats.filter({ race_id: race.id }, 'lane', 10);
+          for (const c of cached || []) {
+            const reg = String(c.registration_number || '');
+            cacheByKey[`${reg}_${c.lane}`] = c;
+          }
+        } catch {}
+      }
+
+      // 全6艇のキャッシュが揃っているか確認
+      const allCached = entries.length > 0 && entries.every((e) => {
+        const reg = String(e.register_number || e.registration_number || '');
+        return cacheByKey[`${reg}_${e.boat_number}`];
+      });
+
+      if (allCached && !cancelled) {
+        // キャッシュ即表示
+        setStatsByKey(cacheByKey);
+        setLoading(false);
+
+        // 新鮮度チェック: 1時間超過ならバックグラウンド更新
+        const oldest = Math.min(
+          ...Object.values(cacheByKey).map((c) => new Date(c.updated_at || 0).getTime())
+        );
+        if (Date.now() - oldest > STALE_THRESHOLD_MS) {
+          const fresh = await fetchFromServer();
+          if (!cancelled && fresh) setStatsByKey(fresh);
+        }
+        return;
+      }
+
+      // Step 2: 部分キャッシュがあれば先表示
+      if (Object.keys(cacheByKey).length > 0 && !cancelled) {
+        setStatsByKey(cacheByKey);
+        setLoading(false);
+      }
+
+      // Step 3: サーバーから取得(フォールバック)
+      const fresh = await fetchFromServer();
+      if (!cancelled && fresh) setStatsByKey(fresh);
+      if (!cancelled) setLoading(false);
+    };
+
     load();
     return () => { cancelled = true; };
-  }, [reqKey, race?.race_date]);
+  }, [reqKey, race?.race_date, race?.id]);
 
   if (!entries.length) {
     return <div className="py-12 text-center text-slate-500 text-sm">出走表データがありません</div>;

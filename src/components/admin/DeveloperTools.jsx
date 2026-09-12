@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { getSettings, todayStr, generateAndSavePrediction, saveResultAndVerify, invokeSync } from "@/lib/predictionService";
-import { Settings as SettingsIcon, FlaskConical, Save, Plus, Code, ChevronDown, ChevronRight } from "lucide-react";
+import { Settings as SettingsIcon, FlaskConical, Save, Plus, Code, ChevronDown, ChevronRight, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function DeveloperTools() {
@@ -25,6 +25,9 @@ export default function DeveloperTools() {
       </Accordion>
       <Accordion title="サンプルレース登録(テスト用)" open={open === "seed"} onClick={() => setOpen(open === "seed" ? null : "seed")}>
         <SeedTab />
+      </Accordion>
+      <Accordion title="枠番過去10走 事前計算" open={open === "lane10"} onClick={() => setOpen(open === "lane10" ? null : "lane10")}>
+        <Lane10PrecomputeTab />
       </Accordion>
     </div>
   );
@@ -185,6 +188,58 @@ function SeedTab() {
       <button onClick={seed} disabled={busy} className="w-full h-10 rounded-xl bg-slate-900 text-white font-semibold text-sm flex items-center justify-center gap-1.5 disabled:opacity-50">
         <Plus className="w-4 h-4" /> {busy ? "生成中…" : "サンプル登録して予想実行"}
       </button>
+      {msg && <div className="text-xs text-sky-600 bg-sky-50 rounded-lg p-2">{msg}</div>}
+    </div>
+  );
+}
+
+function Lane10PrecomputeTab() {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [mode, setMode] = useState("all");
+
+  const run = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const res = await base44.functions.invoke("precomputeLanePast10Stats", { mode, force: false });
+      const d = res?.data || {};
+      setMsg(`完了: ${d.processed || 0}R処理 / ${d.skipped || 0}Rスキップ / 残り${d.remaining || 0}R${d.errors?.length ? ` / エラー${d.errors.length}件` : ""}`);
+    } catch (e) {
+      setMsg("エラー: " + (e?.message || e));
+    }
+    setBusy(false);
+  };
+
+  const forceRun = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const res = await base44.functions.invoke("precomputeLanePast10Stats", { mode, force: true });
+      const d = res?.data || {};
+      setMsg(`強制再計算完了: ${d.processed || 0}R処理 / ${d.skipped || 0}Rスキップ`);
+    } catch (e) {
+      setMsg("エラー: " + (e?.message || e));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-slate-500">出走表全レースの枠番過去10走を事前計算しキャッシュ保存します。タブ表示時に即表示されます。</p>
+      <Field label="対象">
+        <select value={mode} onChange={(e) => setMode(e.target.value)} className="w-full h-9 px-2 rounded-lg border border-slate-200 text-sm">
+          <option value="all">当日+翌日</option>
+          <option value="today">当日のみ</option>
+          <option value="tomorrow">翌日のみ</option>
+        </select>
+      </Field>
+      <div className="flex gap-2">
+        <button onClick={run} disabled={busy} className="flex-1 h-9 rounded-lg bg-sky-600 text-white text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50">
+          <Zap className="w-4 h-4" /> {busy ? "実行中…" : "事前計算実行"}
+        </button>
+        <button onClick={forceRun} disabled={busy} className="flex-1 h-9 rounded-lg bg-slate-900 text-white text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50">
+          {busy ? "実行中…" : "強制再計算"}
+        </button>
+      </div>
       {msg && <div className="text-xs text-sky-600 bg-sky-50 rounded-lg p-2">{msg}</div>}
     </div>
   );

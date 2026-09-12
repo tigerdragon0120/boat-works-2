@@ -1,6 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
+import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 import { upsertRace, upsertEntry, upsertResultAndVerify, runAndSavePrediction, getSettings } from '../../shared/predictionService.js';
+import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 
 const num = (v: any) => {
@@ -657,6 +659,60 @@ async function updateAutoUpdateStatus(base44: any, today: string, tomorrow: stri
 }
 
 // =====================================================
+// STEP 9: 枠番過去10走事前計算
+// =====================================================
+async function precomputeLanePast10(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
+  const sr = base44.asServiceRole.entities;
+  const startTime = Date.now();
+  const races = await withRateLimitRetry(() => sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []));
+  let processed = 0, skipped = 0;
+
+  for (const race of races) {
+    if (Date.now() - startTime > timeBudgetMs - 5000) {
+      logs.push(`事前計算: 時間予算到達 — 残り${races.length - processed - skipped}R`);
+      break;
+    }
+    if (race.status === 'finished' || race.status === 'cancelled') { skipped++; continue; }
+
+    // キャッシュ確認
+    try {
+      const cached = await withRateLimitRetry(() =>
+        sr.RacerLaneRecentStats.filter({ race_id: race.id }, '-updated_at', 6), 2
+      ).catch(() => []);
+      if (cached && cached.length >= 6) { skipped++; continue; }
+    } catch {}
+
+    // 6艇取得
+    const entries = await withRateLimitRetry(() =>
+      sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 3
+    ).catch(() => []);
+    if (!entries || entries.length < 6) { skipped++; continue; }
+
+    const reqEntries = entries
+      .map((e: any) => ({
+        registration_number: String(e.register_number || e.registration_number || ''),
+        lane: Number(e.boat_number),
+      }))
+      .filter((x: any) => /^\d{4}$/.test(x.registration_number) && x.lane >= 1 && x.lane <= 6);
+    if (reqEntries.length < 6) { skipped++; continue; }
+
+    try {
+      const raceContext = { race_id: race.id, venue_code: race.venue_code, race_number: race.race_number };
+      const { logs: calcLogs } = await computeLanePast10Stats(sr, reqEntries, race.race_date, raceContext);
+      for (const l of calcLogs) console.log(l);
+      processed++;
+      logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: 枠番過去10走事前計算完了`);
+    } catch (e: any) {
+      errors.push(`事前計算 ${race.venue_code} R${race.race_number}: ${e.message}`);
+    }
+    await sleep(500);
+  }
+
+  logs.push(`事前計算: ${processed}R処理 / ${skipped}Rスキップ`);
+  return { total: races.length, processed, skipped, errors };
+}
+
+// =====================================================
 // メイン: Autoモード
 // =====================================================
 async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudgetMs: number, logs: string[], errors: string[]) {
@@ -696,6 +752,11 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     const r = await fetchAndSaveRaceCards(base44, tomorrow, remaining, logs, errors);
     steps.push(`tomorrow_card: ${r.races}R/${r.entries}艇`);
     remaining -= (Date.now() - before);
+    // 翌日番組表取込後: 枠番過去10走事前計算をバックグラウンド起動
+    if (r.races > 0) {
+      waitUntil(base44.functions.invoke('precomputeLanePast10Stats', { mode: 'tomorrow' }).catch(() => {}));
+      logs.push(`AUTO: 枠番過去10走事前計算をバックグラウンド起動(翌日)`);
+    }
   }
 
   if (remaining > 10000 && tomorrowRaceCount > 0 && tomorrowPreCount < tomorrowRaceCount) {
@@ -739,6 +800,11 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     const r = await fetchAndSaveRaceCards(base44, today, remaining, logs, errors);
     steps.push(`today_card: +${r.races}R/+${r.entries}艇`);
     remaining -= (Date.now() - before);
+    // 当日番組表補完後: 枠番過去10走事前計算をバックグラウンド起動
+    if (r.entries > 0) {
+      waitUntil(base44.functions.invoke('precomputeLanePast10Stats', { mode: 'today' }).catch(() => {}));
+      logs.push(`AUTO: 枠番過去10走事前計算をバックグラウンド起動(当日)`);
+    }
   }
 
   return { steps, logs, errors };
@@ -791,6 +857,9 @@ export default async function(req: Request) {
         const todayStats = await checkCompleteness(base44, today, logs);
         const tomorrowStats = await checkCompleteness(base44, tomorrow, logs);
         result = { today: todayStats, tomorrow: tomorrowStats };
+        break;
+      case 'precompute_lane':
+        result = await precomputeLanePast10(base44, body.race_date || today, TIME_BUDGET, logs, errors);
         break;
       case 'auto':
       default:

@@ -1,4 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
+import { waitUntil } from 'base44:runtime';
 import { upsertRace, upsertEntry, getSettings, runAndSavePrediction, upsertResultAndVerify, upsertResultOnly } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 
@@ -358,6 +359,11 @@ export default async function(req: Request) {
         error_count: result.errors,
         error_message: result.errorDetails?.slice(0, 20).join('; ') || undefined,
       });
+
+      // Bファイル取込後: 枠番過去10走の事前計算をバックグラウンド起動
+      if (data_type === 'B' && parsed_data?.race_date) {
+        waitUntil(base44.functions.invoke('precomputeLanePast10Stats', { mode: 'all', race_date: parsed_data.race_date }).catch(() => {}));
+      }
 
       return Response.json({
         ok: result.errors === 0, data_type, ...result,
