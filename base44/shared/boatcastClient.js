@@ -24,6 +24,18 @@ const BOATCAST_DATA_TYPES = {
     ttl: 30 * 60 * 1000, // 30分(既存動作を維持)
     description: '枠番別過去10走',
   },
+  STR3: {
+    code: 'str3',
+    updatePolicy: 'PRE_RACE',
+    ttl: 60 * 60 * 1000, // 1時間
+    description: '選手基本情報+成績+節間成績(3連率含む)',
+  },
+  STR2: {
+    code: 'str2',
+    updatePolicy: 'PRE_RACE',
+    ttl: 60 * 60 * 1000, // 1時間
+    description: '選手基本情報+成績(3連率なし・STR3の下位互換)',
+  },
 };
 
 // 更新ポリシー別デフォルトTTL
@@ -70,6 +82,10 @@ function buildUrl(dataType, venueCode, raceDate, raceNumber) {
   switch (def.code) {
     case 'waku10':
       return `${BOATCAST_BASE}/${vc}/bc_j_waku10_${hd}_${vc}_${rn}.txt`;
+    case 'str3':
+      return `${BOATCAST_BASE}/${vc}/bc_j_str3_${hd}_${vc}_${rn}.txt`;
+    case 'str2':
+      return `${BOATCAST_BASE}/${vc}/bc_j_str2_${hd}_${vc}_${rn}.txt`;
     default:
       throw new Error(`URL builder not implemented for ${dataType}`);
   }
