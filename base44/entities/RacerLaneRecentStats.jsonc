@@ -12,7 +12,12 @@
       "maximum": 6
     },
     "sample_count": {
-      "type": "number"
+      "type": "number",
+      "description": "\u7d71\u8a08\u8a08\u7b97\u306b\u4f7f\u3063\u305f\u5b9f\u52b9\u30b5\u30f3\u30d7\u30eb\u6570(\u6709\u52b9\u7740\u9806\u3042\u308a)"
+    },
+    "total_lane_count": {
+      "type": "number",
+      "description": "\u540c\u67a0\u5168\u8d70\u6570(DQ\u7b49\u542b\u3080)"
     },
     "win_rate": {
       "type": "number",
@@ -35,6 +40,17 @@
       "items": {
         "type": "object"
       }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "error"
+      ],
+      "default": "ok"
+    },
+    "error": {
+      "type": "string"
     },
     "updated_at": {
       "type": "string",

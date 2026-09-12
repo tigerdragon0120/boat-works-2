@@ -158,8 +158,10 @@ export function computeBoatScores(entry, settings) {
   }
 
   // 現在の枠番と同じ枠で走った直近10走を補正に使う。
-  // 短期データなのでベース能力を上書きせず、サンプル数に応じて6〜15%だけ反映する。
+  // サンプル数に応じた重み付け(過小評価防止):
+  //   10走=100%, 7-9走=80%, 4-6走=60%, 1-3走=30%, 0走=評価対象外
   const laneSample = Number(laneRecent?.sample_count || 0);
+  const sampleWeight = laneSample >= 10 ? 1.0 : laneSample >= 7 ? 0.8 : laneSample >= 4 ? 0.6 : laneSample >= 1 ? 0.3 : 0;
   const laneWin = isValid(laneRecent?.win_rate) ? clamp(Number(laneRecent.win_rate), 0, 100) : null;
   const laneAvgSt = isValid(laneRecent?.avg_st) ? Number(laneRecent.avg_st) : null;
   const laneAvgStartOrder = isValid(laneRecent?.avg_start_order) ? Number(laneRecent.avg_start_order) : null;
@@ -168,8 +170,9 @@ export function computeBoatScores(entry, settings) {
   const laneParts = [[laneWin, 0.55], [laneStScore, 0.25], [laneOrderScore, 0.20]].filter(([v]) => v != null);
   const laneWeightSum = laneParts.reduce((s, [,w]) => s + w, 0);
   const laneRecentScore = laneWeightSum > 0 ? laneParts.reduce((s,[v,w]) => s + Number(v) * w, 0) / laneWeightSum : null;
-  if (laneSample >= 3 && laneRecentScore != null) {
-    const blend = laneSample >= 10 ? 0.15 : laneSample >= 5 ? 0.10 : 0.06;
+  if (sampleWeight > 0 && laneRecentScore != null) {
+    // 最大15%の補正をサンプル数重みでスケーリング
+    const blend = 0.15 * sampleWeight;
     first_power = clamp(first_power * (1 - blend) + laneRecentScore * blend, 5, 100);
     second_power = clamp(second_power * (1 - blend * 0.70) + laneRecentScore * (blend * 0.70), 5, 100);
     third_power = clamp(third_power * (1 - blend * 0.45) + laneRecentScore * (blend * 0.45), 5, 100);
@@ -195,9 +198,9 @@ export function computeBoatScores(entry, settings) {
     const parts = [stScore, fPenalty].filter((x) => x !== null);
     return parts.length ? round1(parts.reduce((a, b) => a + b, 0) / parts.length) : 50;
   })();
-  if (laneSample >= 3 && (laneStScore != null || laneOrderScore != null)) {
+  if (sampleWeight > 0 && (laneStScore != null || laneOrderScore != null)) {
     const laneStart = [laneStScore, laneOrderScore].filter(v => v != null).reduce((a,b)=>a+b,0) / [laneStScore, laneOrderScore].filter(v => v != null).length;
-    start_power = round1(clamp(start_power * 0.70 + laneStart * 0.30, 0, 100));
+    start_power = round1(clamp(start_power * (1 - 0.30 * sampleWeight) + laneStart * (0.30 * sampleWeight), 0, 100));
   }
   const motor_power = isValid(entry.motor_f2_rate) ? round1(clamp(entry.motor_f2_rate, 0, 100)) : 50;
   const exhibition_power = round1(exhibition_score);
@@ -240,12 +243,11 @@ export function computeBoatScores(entry, settings) {
   if (profile?.winning_style?.st_stability < 40) notes.push("ST不安定");
   if (profile && profile.total_samples < 5) notes.push("プロファイルデータ少");
   if (profileWin == null && officialWin != null) notes.push("公式成績ベース予想");
-  if (laneSample >= 3) {
-    if (laneWin != null) reasons.push(`${entry.boat_number}枠直近${laneSample}走 勝率${round1(laneWin)}%`);
+  if (sampleWeight > 0 && laneSample > 0) {
+    if (laneWin != null) reasons.push(`${entry.boat_number}枠直近${laneSample}走 1着率${round1(laneWin)}%`);
     if (laneAvgSt != null) reasons.push(`${entry.boat_number}枠平均ST ${Number(laneAvgSt).toFixed(3)}`);
-    if (laneAvgStartOrder != null) reasons.push(`${entry.boat_number}枠平均スタート順 ${round1(laneAvgStartOrder)}`);
-  } else if (laneRecent && laneSample > 0) {
-    notes.push(`${entry.boat_number}枠直近データ${laneSample}走のみ`);
+    if (laneAvgStartOrder != null) reasons.push(`${entry.boat_number}枠平均ST順 ${round1(laneAvgStartOrder)}`);
+    if (laneSample < 4) notes.push(`${entry.boat_number}枠直近${laneSample}走のみ(低サンプル)`);
   }
 
   if (trend) {
