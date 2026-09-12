@@ -163,19 +163,27 @@ export function computeBoatScores(entry, settings) {
   const laneSample = Number(laneRecent?.sample_count || 0);
   const sampleWeight = laneSample >= 10 ? 1.0 : laneSample >= 7 ? 0.8 : laneSample >= 4 ? 0.6 : laneSample >= 1 ? 0.3 : 0;
   const laneWin = isValid(laneRecent?.win_rate) ? clamp(Number(laneRecent.win_rate), 0, 100) : null;
+  const laneTop2 = isValid(laneRecent?.top2_rate) ? clamp(Number(laneRecent.top2_rate), 0, 100) : null;
+  const laneTop3 = isValid(laneRecent?.top3_rate) ? clamp(Number(laneRecent.top3_rate), 0, 100) : null;
   const laneAvgSt = isValid(laneRecent?.avg_st) ? Number(laneRecent.avg_st) : null;
   const laneAvgStartOrder = isValid(laneRecent?.avg_start_order) ? Number(laneRecent.avg_start_order) : null;
   const laneStScore = laneAvgSt != null ? stToScore(laneAvgSt) : null;
   const laneOrderScore = laneAvgStartOrder != null ? clamp(116 - laneAvgStartOrder * 16, 20, 100) : null;
-  const laneParts = [[laneWin, 0.55], [laneStScore, 0.25], [laneOrderScore, 0.20]].filter(([v]) => v != null);
-  const laneWeightSum = laneParts.reduce((s, [,w]) => s + w, 0);
-  const laneRecentScore = laneWeightSum > 0 ? laneParts.reduce((s,[v,w]) => s + Number(v) * w, 0) / laneWeightSum : null;
-  if (sampleWeight > 0 && laneRecentScore != null) {
+  // 1着率・2連対率・3連対率それぞれで独立スコア計算(予想エンジンv5)
+  const laneScoreFrom = (mainMetric) => {
+    const parts = [[mainMetric, 0.55], [laneStScore, 0.25], [laneOrderScore, 0.20]].filter(([v]) => v != null);
+    const ws = parts.reduce((s, [,w]) => s + w, 0);
+    return ws > 0 ? parts.reduce((s,[v,w]) => s + Number(v) * w, 0) / ws : null;
+  };
+  const laneRecentScore = laneScoreFrom(laneWin); // 互換用(1着率ベース)
+  const laneSecondScore = laneScoreFrom(laneTop2);
+  const laneThirdScore = laneScoreFrom(laneTop3);
+  if (sampleWeight > 0) {
     // 最大15%の補正をサンプル数重みでスケーリング
     const blend = 0.15 * sampleWeight;
-    first_power = clamp(first_power * (1 - blend) + laneRecentScore * blend, 5, 100);
-    second_power = clamp(second_power * (1 - blend * 0.70) + laneRecentScore * (blend * 0.70), 5, 100);
-    third_power = clamp(third_power * (1 - blend * 0.45) + laneRecentScore * (blend * 0.45), 5, 100);
+    if (laneRecentScore != null) first_power = clamp(first_power * (1 - blend) + laneRecentScore * blend, 5, 100);
+    if (laneSecondScore != null) second_power = clamp(second_power * (1 - blend * 0.70) + laneSecondScore * (blend * 0.70), 5, 100);
+    if (laneThirdScore != null) third_power = clamp(third_power * (1 - blend * 0.45) + laneThirdScore * (blend * 0.45), 5, 100);
   }
 
   // 枠番過去10走 追加指標(予想エンジンv5拡張)
@@ -277,6 +285,8 @@ export function computeBoatScores(entry, settings) {
   if (profileWin == null && officialWin != null) notes.push("公式成績ベース予想");
   if (sampleWeight > 0 && laneSample > 0) {
     if (laneWin != null) reasons.push(`${entry.boat_number}枠直近${laneSample}走 1着率${round1(laneWin)}%`);
+    if (laneTop2 != null) reasons.push(`同枠2連対率${round1(laneTop2)}%`);
+    if (laneTop3 != null) reasons.push(`同枠3連対率${round1(laneTop3)}%`);
     if (laneAvgSt != null) reasons.push(`${entry.boat_number}枠平均ST ${Number(laneAvgSt).toFixed(3)}`);
     if (laneAvgStartOrder != null) reasons.push(`${entry.boat_number}枠平均ST順 ${round1(laneAvgStartOrder)}`);
     if (laneSample < 4) notes.push(`${entry.boat_number}枠直近${laneSample}走のみ(低サンプル)`);
@@ -313,6 +323,8 @@ export function computeBoatScores(entry, settings) {
     start_skill: start_power,
     lane_recent_score: laneRecentScore != null ? round1(laneRecentScore) : null,
     lane_recent_win_rate: laneWin != null ? round1(laneWin) : null,
+    lane_recent_top2_rate: laneTop2 != null ? round1(laneTop2) : null,
+    lane_recent_top3_rate: laneTop3 != null ? round1(laneTop3) : null,
     lane_recent_avg_st: laneAvgSt,
     lane_recent_avg_start_order: laneAvgStartOrder != null ? round1(laneAvgStartOrder) : null,
     lane_recent_sample_count: laneSample,

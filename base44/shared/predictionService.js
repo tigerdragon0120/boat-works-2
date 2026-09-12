@@ -308,6 +308,8 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     course_strength: s.course_strength, start_skill: s.start_skill,
     lane_recent_score: s.lane_recent_score,
     lane_recent_win_rate: s.lane_recent_win_rate,
+    lane_recent_top2_rate: s.lane_recent_top2_rate,
+    lane_recent_top3_rate: s.lane_recent_top3_rate,
     lane_recent_avg_st: s.lane_recent_avg_st,
     lane_recent_avg_start_order: s.lane_recent_avg_start_order,
     lane_recent_sample_count: s.lane_recent_sample_count,

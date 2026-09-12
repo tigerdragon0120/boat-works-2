@@ -88,6 +88,14 @@
       "type": "number",
       "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd110\u8d701\u7740\u7387%"
     },
+    "lane_recent_top2_rate": {
+      "type": "number",
+      "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd110\u8d702\u9023\u5bfe\u7387%"
+    },
+    "lane_recent_top3_rate": {
+      "type": "number",
+      "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd110\u8d703\u9023\u5bfe\u7387%"
+    },
     "lane_recent_avg_st": {
       "type": "number",
       "description": "\u73fe\u5728\u67a0\u3068\u540c\u67a0\u306e\u76f4\u8fd110\u8d70\u5e73\u5747ST"
