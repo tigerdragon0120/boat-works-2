@@ -46,6 +46,7 @@ function isSpecial(h) {
 export default function LanePast10Table({ entries, race }) {
   const [statsByKey, setStatsByKey] = useState({});
   const [loading, setLoading] = useState(false);
+  const [dataSource, setDataSource] = useState("LOCAL");
 
   const reqKey = useMemo(
     () => entries.map((e) => `${e.register_number || e.registration_number}_${e.boat_number}`).join(","),
@@ -54,6 +55,55 @@ export default function LanePast10Table({ entries, race }) {
 
   // キャッシュ新鮮度しきい値: 1時間以内なら再計算スキップ
   const STALE_THRESHOLD_MS = 60 * 60 * 1000;
+
+  // 検証用: 若松3R(2026-09-12)のみBOATCASTデータを優先
+  const isTargetRace = (race) =>
+    race?.race_date === "2026-09-12" &&
+    String(race?.venue_code) === "20" &&
+    Number(race?.race_number) === 3;
+
+  const fetchFromBoatcast = async () => {
+    try {
+      const res = await base44.functions.invoke("fetchBoatcastWaku10", {
+        venue_code: String(race?.venue_code || ""),
+        race_date: race?.race_date || "",
+        race_number: Number(race?.race_number || 0),
+      });
+      const data = res?.data;
+      if (!data?.ok || !data?.racers) return null;
+
+      const statsByKey = {};
+      for (const r of data.racers) {
+        const entry = entries.find((e) => Number(e.boat_number) === r.lane);
+        const reg = String(entry?.register_number || entry?.registration_number || "");
+        const recent10 = r.past10.map((p) => ({
+          course: p.course ? Number(p.course) : Number(r.lane),
+          finish_order: p.finish === "欠" ? null : Number(p.finish),
+          finish_status: p.finish === "欠" ? "欠" : null,
+          st: null,
+          start_order: null,
+          is_disqualified: false,
+          is_absent: p.finish === "欠",
+        }));
+        statsByKey[`${reg}_${r.lane}`] = {
+          registration_number: reg,
+          lane: r.lane,
+          winning_rate: r.winRate,
+          avg_st: r.avgSt,
+          avg_start_order: r.stRank,
+          sample_count: r.past10.filter((p) => p.finish !== "欠").length,
+          total_lane_count: 10,
+          recent10,
+          profile: {},
+          status: "ok",
+        };
+      }
+      return statsByKey;
+    } catch (e) {
+      console.error("BOATCAST fetch error:", e);
+      return null;
+    }
+  };
 
   useEffect(() => {
     if (!reqKey) return;
@@ -88,6 +138,18 @@ export default function LanePast10Table({ entries, race }) {
 
     const load = async () => {
       setLoading(true);
+
+      // 検証用: 対象レース(若松3R)はBOATCASTデータを優先取得
+      if (isTargetRace(race)) {
+        const boatcastStats = await fetchFromBoatcast();
+        if (boatcastStats && !cancelled) {
+          setStatsByKey(boatcastStats);
+          setDataSource("BOATCAST");
+          setLoading(false);
+          return;
+        }
+      }
+      setDataSource("LOCAL");
 
       // Step 1: キャッシュ確認(RacerLaneRecentStats by race_id)
       let cacheByKey = {};
@@ -205,6 +267,11 @@ export default function LanePast10Table({ entries, race }) {
         </tbody>
       </table>
       {loading && <div className="px-3 py-1 text-[10px] text-blue-400">取得中...</div>}
+      <div className="px-3 py-0.5 text-right text-[9px]">
+        <span className={dataSource === "BOATCAST" ? "text-blue-400 font-bold" : "text-slate-600"}>
+          {dataSource}
+        </span>
+      </div>
     </div>
   );
 }
