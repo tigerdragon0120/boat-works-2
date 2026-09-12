@@ -8,6 +8,7 @@ const num = (v: any) => {
 };
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 
 async function retry<T>(fn: () => Promise<T>, max = 5): Promise<T> {
   let last: any;
@@ -29,7 +30,27 @@ export default async function (req: Request) {
     if (!user) return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
     const body = await req.json().catch(() => ({}));
     const requested = Array.isArray(body.entries) ? body.entries.slice(0, 6) : [];
+    const raceDate = body.race_date || null; // 当該レース日(YYYY-MM-DD)。これより前のレースのみ対象
     const sr = base44.asServiceRole.entities;
+
+    // RacerProfile一括取得(支部・年齢用)
+    let profileByReg = new Map<string, any>();
+    try {
+      const allProfiles = await retry(() => sr.RacerProfile.filter({}, '-updated_at', 5000), 3);
+      profileByReg = new Map(allProfiles.map((p: any) => [p.registration_number, p]));
+    } catch {}
+
+    // RacerTermStats一括取得(出身地用、最新termのみ保持)
+    let termByReg = new Map<string, any>();
+    try {
+      const allTerms = await retry(() => sr.RacerTermStats.filter({}, '-term_key', 5000), 3);
+      for (const t of allTerms) {
+        if (!termByReg.has(t.registration_number) || t.term_key > termByReg.get(t.registration_number).term_key) {
+          termByReg.set(t.registration_number, t);
+        }
+      }
+    } catch {}
+
     const by_key: any = {};
 
     for (const item of requested) {
@@ -43,18 +64,21 @@ export default async function (req: Request) {
           sr.RacerRaceHistory.filter({ registration_number: reg }, '-race_date', 500)
         );
 
-        // 枠番の正規化: Number(h.boat_number) === lane
-        // boat_numberは数値または文字列で保存されている可能性があるためNumber()で統一
+        // 枠番正規化: Number(h.boat_number) === lane
+        // 欠場(is_absent)は除外、失格(is_disqualified)は含めて特殊結果として表示
+        // 当該レースより前のレースのみ対象(未来・今回除外)
         const sameLane = (allHist || [])
           .filter((h: any) => {
             const bn = Number(h.boat_number);
-            return bn === lane && !h.is_absent && !h.is_disqualified;
+            if (bn !== lane) return false;
+            if (h.is_absent) return false;
+            if (raceDate && h.race_date >= raceDate) return false;
+            return true;
           })
-          .slice(0, 10);
+          .slice(0, 10); // -race_date順なので先頭10件が最新10走
 
-        console.log(`[LanePast10] reg=${reg} lane=${lane} total=${allHist.length} same_lane=${sameLane.length}`);
-
-        const recent10 = sameLane.map((h: any) => ({
+        // 古い順(10走前→前走)に並び替え
+        const recent10 = sameLane.slice().reverse().map((h: any) => ({
           id: h.id,
           race_date: h.race_date,
           venue_code: h.venue_code,
@@ -62,18 +86,51 @@ export default async function (req: Request) {
           boat_number: Number(h.boat_number),
           course: num(h.course),
           finish_order: num(h.finish_order),
+          finish_status: h.finish_status || null,
           st: num(h.st),
           start_order: num(h.start_order),
         }));
 
+        // 統計計算: 有効着順(1-6)のみ対象
         const finished = recent10.filter((h: any) => h.finish_order != null && h.finish_order >= 1 && h.finish_order <= 6);
         const stVals = recent10.map((h: any) => h.st).filter((v: any) => v != null);
         const soVals = recent10.map((h: any) => h.start_order).filter((v: any) => v != null);
 
-        // sample_count = 統計計算に使った実効サンプル数(finished.length)
-        //   1着率等の分母であり、UIの「走数」表示と予想ロジックの重み付けに使用
-        // total_lane_count = 同枠全走数(recent10.length, DQ等含む)
-        //   UIの「同枠0走」判定に使用
+        // === 追加指標(予想エンジンv5用) ===
+        // 直近3走の勢い: (全体平均着順 - 直近3走平均着順), 正=上向き
+        const recent3Finished = finished.slice(-3);
+        const recent3Avg = recent3Finished.length
+          ? recent3Finished.reduce((a: number, h: any) => a + h.finish_order, 0) / recent3Finished.length
+          : null;
+        const overallAvg = finished.length
+          ? finished.reduce((a: number, h: any) => a + h.finish_order, 0) / finished.length
+          : null;
+        const recent3Momentum = (recent3Avg != null && overallAvg != null) ? round1(overallAvg - recent3Avg) : null;
+
+        // 着順安定性: stddevが小さいほど安定
+        const finishStddev = finished.length >= 2
+          ? Math.sqrt(finished.reduce((s: number, h: any) => s + Math.pow(h.finish_order - overallAvg, 2), 0) / finished.length)
+          : null;
+        const finishStability = finishStddev != null ? round1(clamp(100 - finishStddev * 25, 0, 100)) : null;
+
+        // ST安定性: stddevが小さいほど安定
+        const stAvg = stVals.length ? stVals.reduce((a: number, b: number) => a + b, 0) / stVals.length : null;
+        const stStddev = stVals.length >= 2
+          ? Math.sqrt(stVals.reduce((s: number, v: number) => s + Math.pow(v - stAvg, 2), 0) / stVals.length)
+          : null;
+        const stStability = stStddev != null ? round1(clamp(100 - stStddev * 500, 0, 100)) : null;
+
+        // 枠番と実進入コースの差: 平均|boat_number - course|
+        const courseDiffs = recent10
+          .filter((h: any) => h.course != null)
+          .map((h: any) => Math.abs(h.boat_number - h.course));
+        const courseLaneDiff = courseDiffs.length
+          ? round1(courseDiffs.reduce((a: number, b: number) => a + b, 0) / courseDiffs.length)
+          : null;
+
+        // 特殊結果数(F/L/K/S等)
+        const specialCount = recent10.filter((h: any) => h.finish_status && h.finish_status !== '').length;
+
         const stats: any = {
           registration_number: reg,
           lane,
@@ -84,12 +141,27 @@ export default async function (req: Request) {
           top3_rate: finished.length ? round1(finished.filter((h: any) => h.finish_order <= 3).length / finished.length * 100) : null,
           avg_st: stVals.length ? round3(stVals.reduce((a: number, b: number) => a + b, 0) / stVals.length) : null,
           avg_start_order: soVals.length ? round1(soVals.reduce((a: number, b: number) => a + b, 0) / soVals.length) : null,
+          recent3_momentum: recent3Momentum,
+          finish_stability: finishStability,
+          st_stability: stStability,
+          course_lane_diff: courseLaneDiff,
+          special_count: specialCount,
           recent10,
           status: 'ok',
           updated_at: new Date().toISOString(),
         };
 
-        // RacerLaneRecentStatsへ保存(1回のDB呼び出し)
+        // プロフィール情報付与
+        const profile = profileByReg.get(reg);
+        const term = termByReg.get(reg);
+        stats.profile = {
+          branch_name: profile?.branch_name || term?.branch_name || null,
+          birthplace: term?.birthplace || null,
+          age: profile?.age || term?.age || null,
+          birth_date: profile?.birth_date || null,
+        };
+
+        // RacerLaneRecentStatsへ保存
         try {
           const old = await retry(() => sr.RacerLaneRecentStats.filter({ registration_number: reg, lane }, '-updated_at', 1), 2);
           if (old?.[0]) await sr.RacerLaneRecentStats.update(old[0].id, stats).catch(() => {});
@@ -97,18 +169,24 @@ export default async function (req: Request) {
         } catch {}
 
         by_key[`${reg}_${lane}`] = stats;
+        console.log(`[LanePast10] reg=${reg} lane=${lane} total=${allHist.length} same_lane=${sameLane.length} valid=${finished.length}`);
       } catch (e: any) {
-        // 個別エラー: エラー状態を返す(「—」ではなく「取得エラー」と表示するため)
         console.error(`[LanePast10] ERROR reg=${reg} lane=${lane}: ${e.message}`);
         by_key[`${reg}_${lane}`] = {
           registration_number: reg,
           lane,
           sample_count: 0,
+          total_lane_count: 0,
           win_rate: null,
           top2_rate: null,
           top3_rate: null,
           avg_st: null,
           avg_start_order: null,
+          recent3_momentum: null,
+          finish_stability: null,
+          st_stability: null,
+          course_lane_diff: null,
+          special_count: 0,
           recent10: [],
           status: 'error',
           error: e.message,

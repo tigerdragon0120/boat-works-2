@@ -35,6 +35,26 @@
     "avg_start_order": {
       "type": "number"
     },
+    "recent3_momentum": {
+      "type": "number",
+      "description": "\u76f4\u8fd13\u8d70\u306e\u52e2\u3044(\u6b63=\u4e0a\u5411\u304d)"
+    },
+    "finish_stability": {
+      "type": "number",
+      "description": "\u7740\u9806\u5b89\u5b9a\u60270-100"
+    },
+    "st_stability": {
+      "type": "number",
+      "description": "ST\u5b89\u5b9a\u60270-100"
+    },
+    "course_lane_diff": {
+      "type": "number",
+      "description": "\u67a0\u756a\u3068\u5b9f\u9032\u5165\u30b3\u30fc\u30b9\u306e\u5dee(\u5e73\u5747)"
+    },
+    "special_count": {
+      "type": "number",
+      "description": "\u7279\u6b8a\u7d50\u679c\u6570(F/L/K/S\u7b49)"
+    },
     "recent10": {
       "type": "array",
       "items": {

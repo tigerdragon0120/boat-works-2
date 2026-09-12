@@ -178,6 +178,27 @@ export function computeBoatScores(entry, settings) {
     third_power = clamp(third_power * (1 - blend * 0.45) + laneRecentScore * (blend * 0.45), 5, 100);
   }
 
+  // 枠番過去10走 追加指標(予想エンジンv5拡張)
+  // first_power/second_powerはここで補正、start_powerは定義後に補正
+  if (sampleWeight > 0 && laneRecent) {
+    if (laneRecent.recent3_momentum != null) {
+      const momAdj = laneRecent.recent3_momentum * 0.4 * sampleWeight;
+      first_power = clamp(first_power + momAdj, 5, 100);
+      second_power = clamp(second_power + momAdj * 0.7, 5, 100);
+    }
+    if (laneRecent.finish_stability != null) {
+      const stabAdj = (laneRecent.finish_stability - 50) * 0.04 * sampleWeight;
+      first_power = clamp(first_power + stabAdj, 5, 100);
+    }
+    if (laneRecent.course_lane_diff != null && laneRecent.course_lane_diff > 0.5) {
+      first_power = clamp(first_power - laneRecent.course_lane_diff * 0.8 * sampleWeight, 5, 100);
+    }
+    if (laneRecent.special_count > 0) {
+      const specPenalty = laneRecent.special_count * 1.2 * sampleWeight;
+      first_power = clamp(first_power - specPenalty, 5, 100);
+    }
+  }
+
   // 展示補正(FINALのみ)
   let exhibition_delta = 0;
   let exhibition_score = 50;
@@ -201,6 +222,17 @@ export function computeBoatScores(entry, settings) {
   if (sampleWeight > 0 && (laneStScore != null || laneOrderScore != null)) {
     const laneStart = [laneStScore, laneOrderScore].filter(v => v != null).reduce((a,b)=>a+b,0) / [laneStScore, laneOrderScore].filter(v => v != null).length;
     start_power = round1(clamp(start_power * (1 - 0.30 * sampleWeight) + laneStart * (0.30 * sampleWeight), 0, 100));
+  }
+  // 枠番過去10走 ST関連指標(start_power定義後に適用)
+  if (sampleWeight > 0 && laneRecent) {
+    if (laneRecent.st_stability != null) {
+      const stStabAdj = (laneRecent.st_stability - 50) * 0.03 * sampleWeight;
+      start_power = round1(clamp(start_power + stStabAdj, 0, 100));
+    }
+    if (laneRecent.special_count > 0) {
+      const specPenalty = laneRecent.special_count * 1.2 * sampleWeight;
+      start_power = round1(clamp(start_power - specPenalty, 0, 100));
+    }
   }
   const motor_power = isValid(entry.motor_f2_rate) ? round1(clamp(entry.motor_f2_rate, 0, 100)) : 50;
   const exhibition_power = round1(exhibition_score);
@@ -249,6 +281,15 @@ export function computeBoatScores(entry, settings) {
     if (laneAvgStartOrder != null) reasons.push(`${entry.boat_number}枠平均ST順 ${round1(laneAvgStartOrder)}`);
     if (laneSample < 4) notes.push(`${entry.boat_number}枠直近${laneSample}走のみ(低サンプル)`);
   }
+
+  // 枠番過去10走 追加指標の理由・注意点
+  if (laneRecent?.recent3_momentum > 0.5) reasons.push("同枠直近3走上向き");
+  if (laneRecent?.recent3_momentum < -0.5) notes.push("同枠直近3走下降");
+  if (laneRecent?.finish_stability >= 70) reasons.push("同枠着順安定");
+  if (laneRecent?.finish_stability < 30) notes.push("同枠着順バラツキ大");
+  if (laneRecent?.st_stability >= 70) reasons.push("同枠ST安定");
+  if (laneRecent?.special_count > 0) notes.push(`同枠${laneRecent.special_count}回特殊結果`);
+  if (laneRecent?.course_lane_diff > 0.5) notes.push("同枠進入変更多発");
 
   if (trend) {
     if (trend.recent_form_score != null && trend.recent_form_score >= 65) reasons.push(`調子上向き(${Math.round(trend.recent_form_score)})`);

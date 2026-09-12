@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useState } from "react";
 import { cn } from "@/lib/utils";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import StartTimingPanel from "@/components/race/StartTimingPanel";
-import { base44 } from "@/api/base44Client";
+import LanePast10Table from "@/components/race/LanePast10Table";
 
 
 const boatColors = {
@@ -77,7 +77,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-auto">
         {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} />}
-        {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} />}
+        {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />}
         {subTab === "直前情報" && <ExhibitionInfo entries={entries} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
         {subTab === "3連単" && <TrifectaView probRank={probRank} evRank={evRank} rankMode={rankMode} setRankMode={setRankMode} />}
@@ -130,39 +130,9 @@ function resolveRoleBoats(activePred, activeBoats = []) {
   return { honmei, taiko, ana };
 }
 
-function EntryGrid({ entries, filter, activeBoats, activePred }) {
-  const [past10ByReg, setPast10ByReg] = useState({});
-  const [past10Loading, setPast10Loading] = useState(false);
-
-  const regsKey = useMemo(() => entries.map((e) => e.register_number || e.registration_number || "").filter(Boolean).join(","), [entries]);
-
-  useEffect(() => {
-    if (filter !== "枠番過去10走" || !regsKey) return;
-    let cancelled = false;
-    const loadPast10 = async () => {
-      setPast10Loading(true);
-      try {
-        const pairs = await Promise.all(entries.map(async (e) => {
-          const reg = e.register_number || e.registration_number;
-          if (!reg) return ["", []];
-          return [`${String(reg)}_${Number(e.boat_number)}`, null];
-        }));
-        const reqEntries = entries.map((e) => ({
-          registration_number: String(e.register_number || e.registration_number || ""),
-          lane: Number(e.boat_number),
-        })).filter((x) => /^\d{4}$/.test(x.registration_number) && x.lane >= 1 && x.lane <= 6);
-        const res = await base44.functions.invoke("getLanePast10Stats", { entries: reqEntries });
-        if (!cancelled) setPast10ByReg(res?.data?.by_key || {});
-      } finally {
-        if (!cancelled) setPast10Loading(false);
-      }
-    };
-    loadPast10();
-    return () => { cancelled = true; };
-  }, [filter, regsKey]);
-
+function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
   if (!entries.length) return <Empty msg="出走表データがありません" />;
-  if (filter === "枠番過去10走") return <Past10Grid entries={entries} statsByKey={past10ByReg} loading={past10Loading} />;
+  if (filter === "枠番過去10走") return <LanePast10Table entries={entries} race={race} />;
   const roleOf = (n) => {
     if (activePred?.honmei_boat === n) return "本命";
     if (activePred?.taiko_boat === n) return "対抗";
@@ -208,101 +178,6 @@ function EntryGrid({ entries, filter, activeBoats, activePred }) {
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function Past10Grid({ entries, statsByKey, loading }) {
-  const slot = (e, h, idx) => {
-    if (!h) return <div key={idx} className="text-center text-slate-300">—</div>;
-    const frame = Number(h.boat_number || h.course || 0);
-    const finish = h.finish_order ?? "—";
-    const st = h.st != null ? Number(h.st).toFixed(2) : "—";
-    return (
-      <div key={h.id || idx} className="min-w-[52px] text-center leading-tight">
-        <div className="text-[9px] text-slate-500">{10 - idx}走</div>
-        <div className="mt-0.5 flex items-center justify-center gap-0.5">
-          <span className={cn("w-4 h-4 rounded-sm flex items-center justify-center text-[9px] font-black", boatColors[frame] || "bg-slate-200 text-slate-700")}>{frame || "-"}</span>
-          <span className="text-[10px] font-bold text-slate-900">{finish}</span>
-        </div>
-        <div className="text-[9px] text-slate-500 mt-0.5">ST {st}</div>
-        <div className="text-[9px] text-slate-400">ST順 {h.start_order ?? "—"}</div>
-      </div>
-    );
-  };
-
-  // 集計セル: サンプル数に応じて表示を変える
-  const statCell = (stats, field, suffix = "", fmt = (v) => v) => {
-    if (!stats || stats.status === "error") return <span className="text-rose-500 font-bold text-[10px]">取得エラー</span>;
-    if (!stats || stats.sample_count === 0) return <span className="text-slate-400 text-[10px]">0走</span>;
-    const v = stats?.[field];
-    return v != null ? `${fmt(v)}${suffix}` : "—";
-  };
-
-  return (
-    <div className="text-[11px] overflow-x-auto">
-      <div className="min-w-[1100px]">
-        {/* ヘッダー: 10走 ｜ 1着率 ｜ 2連対率 ｜ 3連対率 ｜ 平均ST ｜ ST順 ｜ 10走の中身 */}
-        <div className="grid grid-cols-[28px_150px_44px_52px_52px_52px_44px_repeat(10,1fr)] gap-1 px-2 py-1.5 bg-white border-b border-slate-200 text-slate-500 font-bold text-[10px] sticky top-0 z-10 items-center">
-          <div className="text-center">枠</div>
-          <div>選手名</div>
-          <div className="text-center">走数</div>
-          <div className="text-center">1着率</div>
-          <div className="text-center">2連対</div>
-          <div className="text-center">3連対</div>
-          <div className="text-center">平均ST</div>
-          <div className="text-center">ST順</div>
-          {[10,9,8,7,6,5,4,3,2,1].map((n) => <div key={n} className="text-center">{n}走</div>)}
-        </div>
-        {entries.map((e) => {
-          const reg = String(e.register_number || e.registration_number || "");
-          const stats = statsByKey[`${reg}_${Number(e.boat_number)}`] || null;
-          const hist = [...(stats?.recent10 || [])].reverse();
-          const isError = stats?.status === "error";
-          const totalLane = stats?.total_lane_count ?? stats?.sample_count ?? 0;
-          const isZero = stats && totalLane === 0 && !isError;
-          return (
-            <div key={e.boat_number} className={cn("grid grid-cols-[28px_150px_44px_52px_52px_52px_44px_repeat(10,1fr)] gap-1 px-2 py-2 border-b border-slate-200 items-center", rowTint[e.boat_number])}>
-              <div className="flex justify-center"><span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span></div>
-              <div className="min-w-0 flex items-center gap-1.5">
-                <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} />
-                <div className="min-w-0"><div className="font-bold text-slate-900 text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</div><div className="text-[9px] text-slate-500">登録{reg || "—"}</div></div>
-              </div>
-              {/* 走数 */}
-              <div className="text-center font-bold text-slate-700 text-[10px]">
-                {isError ? "—" : (stats?.sample_count != null ? `${stats.sample_count}走` : "—")}
-              </div>
-              {/* 1着率 */}
-              <div className="text-center font-black text-slate-900">
-                {isError ? <span className="text-rose-500 text-[10px]">取得エラー</span> : isZero ? <span className="text-slate-400 text-[10px]">同枠0走</span> : (stats?.win_rate != null ? `${stats.win_rate}%` : "—")}
-              </div>
-              {/* 2連対率 */}
-              <div className="text-center text-slate-700 font-bold">
-                {isError ? "—" : isZero ? "—" : (stats?.top2_rate != null ? `${stats.top2_rate}%` : "—")}
-              </div>
-              {/* 3連対率 */}
-              <div className="text-center text-slate-600 font-bold">
-                {isError ? "—" : isZero ? "—" : (stats?.top3_rate != null ? `${stats.top3_rate}%` : "—")}
-              </div>
-              {/* 平均ST */}
-              <div className="text-center font-mono font-bold text-slate-800">
-                {isError ? "—" : isZero ? "—" : (stats?.avg_st != null ? Number(stats.avg_st).toFixed(3) : "—")}
-              </div>
-              {/* ST順 */}
-              <div className="text-center font-bold text-slate-800">
-                {isError ? "—" : isZero ? "—" : (stats?.avg_start_order != null ? Number(stats.avg_start_order).toFixed(1) : "—")}
-              </div>
-              {/* 10走一覧 */}
-              {loading && !hist.length
-                ? Array.from({ length: 10 }).map((_, i) => <div key={i} className="text-center text-slate-300 animate-pulse">…</div>)
-                : isError || isZero
-                  ? Array.from({ length: 10 }).map((_, i) => <div key={i} className="text-center text-slate-300">—</div>)
-                  : Array.from({ length: 10 }).map((_, i) => slot(e, hist[i], i))}
-            </div>
-          );
-        })}
-      </div>
-      <div className="px-3 py-2 text-[10px] text-slate-400">現在の枠番と同じ枠で走った過去10走を表示。各マスは「枠番・着順・ST・ST順位」。左が10走前、右が前走。サンプル数が10走未満の場合は実際の走数を表示。</div>
     </div>
   );
 }
