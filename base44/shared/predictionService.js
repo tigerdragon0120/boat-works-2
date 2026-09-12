@@ -6,6 +6,17 @@ import { acquireLock, releaseLock, cleanupExpiredLocks } from "./concurrencyLock
 
 const VERSION = "v3";
 
+// 選手×枠番の直近10走集計は予想中に毎Race検索しない。60秒キャッシュで1回だけ読む。
+let laneRecentCache = { at: 0, map: null };
+async function getLaneRecentMap(client) {
+  const now = Date.now();
+  if (laneRecentCache.map && now - laneRecentCache.at < 60000) return laneRecentCache.map;
+  const rows = await client.asServiceRole.entities.RacerLaneRecentStats.filter({}, '-updated_at', 5000).catch(() => []);
+  const map = new Map((rows || []).map((x) => [`${String(x.registration_number)}_${Number(x.lane)}`, x]));
+  laneRecentCache = { at: now, map };
+  return map;
+}
+
 const DEFAULT_SETTINGS = {
   buy_ev_threshold: 150, strong_buy_ev_threshold: 200, watch_ev_threshold: 110,
   min_probability: 5, min_data_count: 5, min_confidence: 40, max_bets: 10,
@@ -194,9 +205,16 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     const rolling = await client.asServiceRole.entities.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
     rollingByReg = new Map(rolling.map(r => [r.registration_number, r]));
   }
+  const laneRecentByKey = await getLaneRecentMap(client);
   const entriesWithProfiles = entries.map(e => {
     const reg = String(e.registration_number || e.register_number || '').trim();
-    return { ...e, _profile: reg ? profileByReg.get(reg) || null : null, _rollingStats: reg ? rollingByReg.get(reg) || null : null };
+    const laneKey = `${reg}_${Number(e.boat_number)}`;
+    return {
+      ...e,
+      _profile: reg ? profileByReg.get(reg) || null : null,
+      _rollingStats: reg ? rollingByReg.get(reg) || null : null,
+      _laneRecent: reg ? laneRecentByKey.get(laneKey) || null : null,
+    };
   });
   // FINAL時: PRE予想を基準に展示補正のみ適用
   let preBoatScores = null;
