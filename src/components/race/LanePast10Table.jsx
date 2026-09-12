@@ -98,9 +98,7 @@ export default function LanePast10Table({ entries, race }) {
                 {i === 9 ? "前走" : `${10 - i}走`}
               </th>
             ))}
-            <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[42px]">1着率</th>
-            <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[42px]">2連対</th>
-            <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[42px]">3連対</th>
+            <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[42px]">勝率</th>
             <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[48px]">平均ST</th>
             <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[42px]">ST順</th>
           </tr>
@@ -132,9 +130,7 @@ export default function LanePast10Table({ entries, race }) {
                   {Array.from({ length: 10 }).map((_, i) => (
                     <CourseCell key={i} h={recent10[i]} loading={isLoading} isError={isError} />
                   ))}
-                  <StatCell rowSpan={2} value={stats?.win_rate != null ? `${stats.win_rate}%` : "—"} loading={isLoading} isError={isError} isNoData={isNoData} highlight />
-                  <StatCell rowSpan={2} value={stats?.top2_rate != null ? `${stats.top2_rate}%` : "—"} loading={isLoading} isError={isError} isNoData={isNoData} />
-                  <StatCell rowSpan={2} value={stats?.top3_rate != null ? `${stats.top3_rate}%` : "—"} loading={isLoading} isError={isError} isNoData={isNoData} />
+                  <StatCell rowSpan={2} value={stats?.winning_rate != null ? Number(stats.winning_rate).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} highlight />
                   <StatCell rowSpan={2} value={stats?.avg_st != null ? Number(stats.avg_st).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} mono />
                   <StatCell rowSpan={2} value={stats?.avg_start_order != null ? Number(stats.avg_start_order).toFixed(1) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} />
                 </tr>
