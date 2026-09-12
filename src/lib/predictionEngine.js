@@ -94,6 +94,7 @@ function computeOtherScore(profile, entry, metric) {
 export function computeBoatScores(entry, settings) {
   const profile = entry._profile;
   const rolling = entry._rollingStats;
+  const laneRecent = entry._laneRecent;
   const stage = settings?.stage || "PRE";
   const isFinal = stage === "FINAL";
 
@@ -146,6 +147,23 @@ export function computeBoatScores(entry, settings) {
   second_power = clamp(second_power * 0.78 + temporalBlend * 0.22, 5, 100);
   third_power = clamp(third_power * 0.82 + temporalBlend * 0.18, 5, 100);
 
+  // 現在枠と同じ枠で走った直近10走。短期データなのでサンプル数に応じて6〜15%だけ補正。
+  const laneSample = Number(laneRecent?.sample_count || 0);
+  const laneWin = isValid(laneRecent?.win_rate) ? clamp(Number(laneRecent.win_rate), 0, 100) : null;
+  const laneAvgSt = isValid(laneRecent?.avg_st) ? Number(laneRecent.avg_st) : null;
+  const laneAvgStartOrder = isValid(laneRecent?.avg_start_order) ? Number(laneRecent.avg_start_order) : null;
+  const laneStScore = laneAvgSt != null ? stToScore(laneAvgSt) : null;
+  const laneOrderScore = laneAvgStartOrder != null ? clamp(116 - laneAvgStartOrder * 16, 20, 100) : null;
+  const laneRecentScore = weightedAverage([
+    [laneWin, 0.55], [laneStScore, 0.25], [laneOrderScore, 0.20],
+  ], null);
+  if (laneSample >= 3 && laneRecentScore != null) {
+    const blend = laneSample >= 10 ? 0.15 : laneSample >= 5 ? 0.10 : 0.06;
+    first_power = clamp(first_power * (1 - blend) + laneRecentScore * blend, 5, 100);
+    second_power = clamp(second_power * (1 - blend * 0.70) + laneRecentScore * (blend * 0.70), 5, 100);
+    third_power = clamp(third_power * (1 - blend * 0.45) + laneRecentScore * (blend * 0.45), 5, 100);
+  }
+
   let exhibition_delta = 0;
   let exhibition_score = 50;
   if (isFinal) {
@@ -153,13 +171,18 @@ export function computeBoatScores(entry, settings) {
     exhibition_delta = (exhibition_score - 50) * 0.3;
   }
 
-  const start_power = (() => {
+  let start_power = (() => {
     const recentSt = profile?.recent_form?.recent_st || entry.avg_st;
     const stScore = stToScore(recentSt);
     const fPenalty = isValid(entry.f_count) ? clamp(100 - entry.f_count * 8, 0, 100) : null;
     const parts = [stScore, fPenalty].filter((x) => x !== null);
     return parts.length ? round1(parts.reduce((a, b) => a + b, 0) / parts.length) : 50;
   })();
+  if (laneSample >= 3 && (laneStScore != null || laneOrderScore != null)) {
+    const laneStartVals = [laneStScore, laneOrderScore].filter(v => v != null);
+    const laneStart = laneStartVals.reduce((a,b)=>a+b,0) / laneStartVals.length;
+    start_power = round1(clamp(start_power * 0.70 + laneStart * 0.30, 0, 100));
+  }
   const motor_power = isValid(entry.motor_f2_rate) ? round1(clamp(entry.motor_f2_rate, 0, 100)) : 50;
   const exhibition_power = round1(exhibition_score);
   const local_fit = (() => {
@@ -202,6 +225,13 @@ export function computeBoatScores(entry, settings) {
   if (profile?.winning_style?.st_stability < 40) notes.push("ST不安定");
   if (profile && profile.total_samples < 5) notes.push("プロファイルデータ少");
   if (profileWin == null && officialWin != null) notes.push("公式成績ベース予想");
+  if (laneSample >= 3) {
+    if (laneWin != null) reasons.push(`${entry.boat_number}枠直近${laneSample}走 勝率${round1(laneWin)}%`);
+    if (laneAvgSt != null) reasons.push(`${entry.boat_number}枠平均ST ${Number(laneAvgSt).toFixed(3)}`);
+    if (laneAvgStartOrder != null) reasons.push(`${entry.boat_number}枠平均スタート順 ${round1(laneAvgStartOrder)}`);
+  } else if (laneRecent && laneSample > 0) {
+    notes.push(`${entry.boat_number}枠直近データ${laneSample}走のみ`);
+  }
 
   return {
     boat_number: entry.boat_number,
@@ -211,6 +241,11 @@ export function computeBoatScores(entry, settings) {
     total_power,
     start_power, motor_power, exhibition_power, local_fit, section_form, ana_potential,
     course_strength: round1(courseStrength),
+    lane_recent_score: laneRecentScore != null ? round1(laneRecentScore) : null,
+    lane_recent_win_rate: laneWin != null ? round1(laneWin) : null,
+    lane_recent_avg_st: laneAvgSt,
+    lane_recent_avg_start_order: laneAvgStartOrder != null ? round1(laneAvgStartOrder) : null,
+    lane_recent_sample_count: laneSample,
     recent_form_score: recentFormScore,
     st_trend_score: stTrendScore,
     class_trend_score: classTrendScore,
@@ -225,6 +260,7 @@ export function computeBoatScores(entry, settings) {
       exhibition: exhibition_power,
       motor: motor_power,
       start: start_power,
+      lane_recent: laneRecentScore != null ? round1(laneRecentScore) : 50,
       temporal_blend: round1(temporalBlend),
     },
     exhibition_delta: round1(exhibition_delta),
