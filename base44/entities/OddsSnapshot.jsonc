@@ -19,6 +19,14 @@
     "captured_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "BOATCAST",
+        "LOCAL"
+      ],
+      "description": "\u30aa\u30c3\u30ba\u53d6\u5f97\u5143(BOATCAST=OD3\u512a\u5148\u53d6\u5f97, LOCAL=boatrace.jp\u516c\u5f0f)"
     }
   },
   "required": [

@@ -1,11 +1,12 @@
 // サーバー側 同期+予想サービス。バックエンド関数から呼ばれる。
 // client は createClientFromRequest(req) または asServiceRole。
-import { runPrediction, judgeTrifecta } from "./predictionEngine.js";
+import { runPrediction, judgeTrifecta, computeSetMetrics, judgePrediction } from "./predictionEngine.js";
 import { buildRaceKey, parseRaceKey, mapRace, mapEntry, mapResult } from "./raceKey.js";
 import { acquireLock, releaseLock, cleanupExpiredLocks } from "./concurrencyLock.js";
 import { fetchBoatcastText } from "./boatcastClient.js";
 import { normalizeTkz, normalizeStartExhibition, normalizeExhibitionData } from "./boatcastNormalizer.js";
 import { mergeExhibition } from "./exhibitionMerger.js";
+import { resolveProductionOdds, shouldFetchOdds } from "./oddsResolver.js";
 
 const VERSION = "v3";
 
@@ -314,16 +315,14 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     }
   }
 
-  // FINAL時: 対象Raceの最新OddsSnapshotを取得し、実オッズを最優先で使用
+  // FINAL時: 本番オッズを取得(BOATCAST OD3第一優先、LOCAL OddsSnapshot fallback)
   let effectiveOddsMap = oddsMap || {};
   if (stage === "FINAL") {
     try {
-      const snapshots = await client.asServiceRole.entities.OddsSnapshot.filter(
-        { race_id: race.id }, "-captured_at", 1
-      );
-      if (snapshots?.[0]?.odds_map && typeof snapshots[0].odds_map === "object") {
-        // OddsSnapshotの実オッズを最優先、引数のoddsMapで補完
-        effectiveOddsMap = { ...oddsMap, ...snapshots[0].odds_map };
+      const resolved = await resolveProductionOdds(race, client);
+      if (resolved.odds_map && Object.keys(resolved.odds_map).length > 0) {
+        // BOATCAST優先オッズを最優先、引数のoddsMapで補完
+        effectiveOddsMap = { ...oddsMap, ...resolved.odds_map };
       }
     } catch {}
   }
@@ -455,6 +454,133 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   await client.asServiceRole.entities.Race.update(race.id, raceUpdate);
 
   return { predictionId, result };
+}
+
+// ============================================================
+// 締切5分前の最終オッズ更新+期待値再計算
+// FINAL予想自体(確率・買い目・ランキング)は変更せず、
+// オッズ・期待値・BUY/WATCH/SKIP判定のみ更新する。
+//
+// 優先順位: 1. BOATCAST OD3  2. LOCAL OddsSnapshot  3. 欠損
+// STALE/欠損時は安全側(WATCH/SKIP)へ倒す。
+// ============================================================
+export async function refreshFinalOdds(client, race, settings) {
+  const sr = client.asServiceRole.entities;
+
+  // 1. 本番オッズ解決(BOATCAST優先 / LOCAL fallback)
+  const resolved = await resolveProductionOdds(race, client);
+
+  // 2. 既存FINAL予想取得
+  const preds = await sr.RacePrediction.filter(
+    { race_id: race.id, stage: "FINAL", prediction_version: VERSION, status: "COMPLETED" },
+    "-computed_at", 1
+  ).catch(() => []);
+  const pred = preds?.[0];
+  if (!pred) {
+    return { refreshed: false, reason: "no FINAL prediction", resolved };
+  }
+
+  // 3. オッズ欠損/STALE時: 安全側へ倒す(古いオッズでBUYしない)
+  if (!resolved.source || resolved.is_stale) {
+    const safeJudgment = resolved.source ? "WATCH" : "SKIP";
+    const safeReason = resolved.source
+      ? `オッズ鮮度不足(${resolved.source} age=${resolved.age_seconds}s STALE)`
+      : "オッズ取得失敗(BOATCAST+LOCAL)";
+    await sr.RacePrediction.update(pred.id, {
+      final_judgment: safeJudgment,
+      judgment_reason: safeReason,
+    }).catch(() => {});
+    return {
+      refreshed: false,
+      reason: safeReason,
+      source: resolved.source,
+      is_stale: resolved.is_stale,
+      age_seconds: resolved.age_seconds,
+      final_judgment: safeJudgment,
+    };
+  }
+
+  // 4. BOATCAST oddsをOddsSnapshotへ保存(重複防止)
+  if (resolved.source === "BOATCAST") {
+    const existing = await sr.OddsSnapshot.filter(
+      { race_id: race.id, stage: "FINAL", source: "BOATCAST" },
+      "-captured_at", 5
+    ).catch(() => []);
+    const isDuplicate = existing?.some(s =>
+      Math.abs(new Date(s.captured_at).getTime() - new Date(resolved.fetched_at).getTime()) < 60000
+    );
+    if (!isDuplicate) {
+      await sr.OddsSnapshot.create({
+        race_id: race.id,
+        stage: "FINAL",
+        odds_map: resolved.odds_map,
+        captured_at: resolved.fetched_at,
+        source: "BOATCAST",
+      }).catch(() => {});
+    }
+  }
+
+  // 5. 全TrifectaPrediction(120通り)へオッズ・期待値反映
+  const allTrifectas = await sr.TrifectaPrediction.filter(
+    { prediction_id: pred.id }, "rank", 120
+  ).catch(() => []);
+  const oddsMap = resolved.odds_map;
+  const oddsUpdates = allTrifectas.map(t => {
+    const actualOdds = oddsMap[t.combination] || null;
+    const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
+    const { judgment, basis } = judgeTrifecta(
+      { ...t, expected_value: ev },
+      { settings, dataConfidence: pred.data_confidence, stage: "FINAL" }
+    );
+    return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev, judgment, basis };
+  });
+  if (oddsUpdates.length) await sr.TrifectaPrediction.bulkUpdate(oddsUpdates).catch(() => {});
+
+  // 6. セット期待値再計算(選定買い目のみ)
+  const selectedTrifectas = allTrifectas.filter(t => t.is_selected);
+  const selectedTickets = selectedTrifectas.map(t => ({
+    combination: t.combination,
+    probability: t.probability,
+  }));
+  const setMetrics = computeSetMetrics(selectedTickets, oddsMap, settings);
+
+  // 7. BUY/WATCH/SKIP再判定
+  const dataConfidence = pred.data_confidence || 0;
+  const scenario = pred.race_scenario || {};
+  const { judgment, reason } = judgePrediction(setMetrics, dataConfidence, scenario, settings, "FINAL");
+
+  // 8. RacePrediction更新(確率・買い目は変更せず、オッズ系のみ)
+  const topOdds = pred.top_trifecta ? (oddsMap[pred.top_trifecta] || null) : null;
+  await sr.RacePrediction.update(pred.id, {
+    set_probability: setMetrics?.set_probability,
+    set_expected_recovery: setMetrics?.set_expected_recovery,
+    synthetic_odds: setMetrics?.synthetic_odds,
+    min_payout: setMetrics?.min_payout,
+    avg_payout: setMetrics?.avg_payout,
+    max_payout: setMetrics?.max_payout,
+    best_ev_ticket: setMetrics?.best_ev_ticket,
+    worst_efficiency_ticket: setMetrics?.worst_efficiency_ticket,
+    final_judgment: judgment,
+    judgment_reason: reason,
+    top_odds: topOdds,
+  }).catch(() => {});
+
+  return {
+    refreshed: true,
+    source: resolved.source,
+    subtype: resolved.subtype || null,
+    fetched_at: resolved.fetched_at,
+    age_seconds: resolved.age_seconds,
+    is_stale: resolved.is_stale,
+    integrity: resolved.integrity,
+    odds_count: Object.keys(oddsMap).length,
+    selected_count: selectedTickets.length,
+    set_metrics: setMetrics,
+    final_judgment: judgment,
+    judgment_reason: reason,
+    top_odds: topOdds,
+    http_access_count: resolved.http_access_count,
+  };
 }
 
 // 結果upsert + 照合(サーバー側)

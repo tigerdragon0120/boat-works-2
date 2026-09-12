@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
-import { upsertRace, upsertEntry, upsertResultAndVerify, runAndSavePrediction, getSettings } from '../../shared/predictionService.js';
+import { upsertRace, upsertEntry, upsertResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds } from '../../shared/predictionService.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 
@@ -573,6 +573,17 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
+        }
+        // BOATCAST OD3で最終オッズ更新+期待値再計算(FINAL予想自体は変更しない)
+        try {
+          const refreshResult = await refreshFinalOdds(base44, race, settings);
+          if (refreshResult.refreshed) {
+            logs.push(`${venueName} R${raceNumber}: OD3更新(${refreshResult.source} age=${refreshResult.age_seconds}s integrity=${refreshResult.integrity?.status}) → ${refreshResult.final_judgment}`);
+          } else if (refreshResult.source) {
+            logs.push(`${venueName} R${raceNumber}: OD3更新スキップ(${refreshResult.reason})`);
+          }
+        } catch (e: any) {
+          errors.push(`${venueName} R${raceNumber}: OD3更新失敗 ${e.message}`);
         }
       }
     } else {
