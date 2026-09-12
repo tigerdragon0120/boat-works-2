@@ -36,6 +36,12 @@ const BOATCAST_DATA_TYPES = {
     ttl: 60 * 60 * 1000, // 1時間
     description: '選手基本情報+成績(3連率なし・STR3の下位互換)',
   },
+  TOKUTEN_HAYAMI: {
+    code: 'tokuten_hayami',
+    updatePolicy: 'PRE_RACE',
+    ttl: 60 * 60 * 1000, // 1時間
+    description: '得点率早見(現在得点率・順位・着順別得点率シナリオ)',
+  },
 };
 
 // 更新ポリシー別デフォルトTTL
@@ -86,6 +92,8 @@ function buildUrl(dataType, venueCode, raceDate, raceNumber) {
       return `${BOATCAST_BASE}/${vc}/bc_j_str3_${hd}_${vc}_${rn}.txt`;
     case 'str2':
       return `${BOATCAST_BASE}/${vc}/bc_j_str2_${hd}_${vc}_${rn}.txt`;
+    case 'tokuten_hayami':
+      return `${BOATCAST_BASE}/${vc}/bc_j_tokuten_hayami_${hd}_${vc}_${rn}.txt`;
     default:
       throw new Error(`URL builder not implemented for ${dataType}`);
   }

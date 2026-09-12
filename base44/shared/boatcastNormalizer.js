@@ -166,3 +166,93 @@ export function normalizeStr3(text, metadata) {
     racers,
   };
 }
+
+// ============================================================
+// tokuten_hayamiテキストを解析・BW2標準形式へ正規化
+//
+// tokuten_hayamiフィールド構成(0-indexed):
+//  0: 枠番
+//  1: 級別
+//  2: 登録番号
+//  3: 選手名
+//  4: フラグ(00/01)
+//  5: 現在得点率
+//  6: 現在順位
+//  7: 不明(出走回数ではない・着順別得点率から逆算可能)
+//  8,10,12,14,16,18: 1着〜6着時の得点率
+//  9,11,13,15,17: 不明(着順別の何らかのカウント)
+//  19: (空)
+//  20: 最新節間レース番号
+//
+// ※total_points, race_countは元データに直接存在しないためnull
+// ※semifinal_border_rank, semifinal_statusも元データに不存在のためnull
+// ============================================================
+export function normalizeTokutenHayami(text, metadata) {
+  const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
+  const racerLines = lines.filter(l => /^\d\t/.test(l));
+
+  const racers = racerLines.map((line) => {
+    const parts = line.split('\t');
+    const lane = parseInt(parts[0]);
+    const playerClass = parseStr(parts[1]);
+    const reg = parseStr(parts[2]);
+    const name = normalizeName(parts[3]);
+    const flag = parseStr(parts[4]);
+    const pointRate = parseNum(parts[5]);
+    const rank = parseNum(parts[6]);
+    const unknownField7 = parseNum(parts[7]);
+
+    const finish1stRate = parseNum(parts[8]);
+    const finish1stCount = parseNum(parts[9]);
+    const finish2ndRate = parseNum(parts[10]);
+    const finish2ndCount = parseNum(parts[11]);
+    const finish3rdRate = parseNum(parts[12]);
+    const finish3rdCount = parseNum(parts[13]);
+    const finish4thRate = parseNum(parts[14]);
+    const finish4thCount = parseNum(parts[15]);
+    const finish5thRate = parseNum(parts[16]);
+    const finish5thCount = parseNum(parts[17]);
+    const finish6thRate = parseNum(parts[18]);
+    const finish6thCount = parseNum(parts[19]);
+    const latestSectionRace = parseStr(parts[20]);
+
+    return {
+      lane,
+      registration_number: reg,
+      player_name: name,
+      player_class: playerClass,
+      point_rate: pointRate,
+      rank,
+      total_points: null, // 元データに直接不存在
+      race_count: null, // 元データに直接不存在(field[7]は別値)
+      semifinal_border_rank: null,
+      semifinal_status: null,
+      finish_scenarios: {
+        first: finish1stRate,
+        second: finish2ndRate,
+        third: finish3rdRate,
+        fourth: finish4thRate,
+        fifth: finish5thRate,
+        sixth: finish6thRate,
+      },
+      // 補助情報(元データの意味不明フィールドも保持)
+      _raw_flag: flag,
+      _raw_field7: unknownField7,
+      _raw_finish_counts: {
+        first: finish1stCount,
+        second: finish2ndCount,
+        third: finish3rdCount,
+        fourth: finish4thCount,
+        fifth: finish5thCount,
+        sixth: finish6thCount,
+      },
+      _raw_latest_section_race: latestSectionRace,
+    };
+  });
+
+  return {
+    source: 'BOATCAST',
+    metadata,
+    racers,
+  };
+}
