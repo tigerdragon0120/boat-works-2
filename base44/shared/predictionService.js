@@ -591,7 +591,7 @@ export async function refreshFinalOdds(client, race, settings) {
 // 既存LOCAL結果がある場合はCONFLICTチェック+BOATCAST優先で上書き。
 // ============================================================
 export async function upsertBoatcastResultAndVerify(client, race, boatcastResult) {
-  if (!boatcastResult?.ok || !boatcastResult.result?.result_trifecta) {
+  if (boatcastResult?.source !== 'BOATCAST' || !boatcastResult.result?.result_trifecta) {
     return { saved: null, verification: null, skipped: true, reason: boatcastResult?.reason || 'no_result' };
   }
 
@@ -673,8 +673,9 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
     else histCreates.push(histDoc);
   }
 
-  if (histCreates.length) await sr.RacerRaceHistory.bulkCreate(histCreates).catch(() => {});
-  if (histUpdates.length) await sr.RacerRaceHistory.bulkUpdate(histUpdates).catch(() => {});
+  console.log(`[HIST_DEBUG] race=${race.id} boats=${result.boats?.length} entries=${raceEntries.length} creates=${histCreates.length} updates=${histUpdates.length}`);
+  if (histCreates.length) await sr.RacerRaceHistory.bulkCreate(histCreates).catch((e) => console.log(`[HIST_CREATE_ERROR] ${e.message}`));
+  if (histUpdates.length) await sr.RacerRaceHistory.bulkUpdate(histUpdates).catch((e) => console.log(`[HIST_UPDATE_ERROR] ${e.message}`));
 
   // 天候情報でRace更新(保護付き)
   if (result.conditions) {

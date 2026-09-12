@@ -12,7 +12,9 @@ function toHalfWidth(s) {
 
 function parseNum(v) {
   if (v == null) return null;
-  const n = parseFloat(toHalfWidth(String(v).trim()));
+  // カンマ付き数値("4,400"等)を正しく解析するためカンマを除去
+  const cleaned = toHalfWidth(String(v).trim()).replace(/,/g, '');
+  const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : null;
 }
 
