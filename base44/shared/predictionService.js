@@ -656,6 +656,8 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
     const reg = String(re?.registration_number || re?.register_number || '').trim();
     if (!reg || !/^\d{4}$/.test(reg)) continue;
 
+    // race_timeはRacerRaceHistoryスキーマが数値(秒)を要求するため、
+    // BOATCASTの文字列表現("1'51\"2"等)は変換せずスキップする
     const histDoc = {
       registration_number: reg,
       race_date: race.race_date,
@@ -666,16 +668,14 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
       finish_order: boat.finish_order ?? undefined,
       st: boat.st ?? undefined,
       winning_method: boat.winning_method || undefined,
-      race_time: boat.race_time || undefined,
     };
     const old = histByReg.get(reg);
     if (old) histUpdates.push({ id: old.id, ...histDoc });
     else histCreates.push(histDoc);
   }
 
-  console.log(`[HIST_DEBUG] race=${race.id} boats=${result.boats?.length} entries=${raceEntries.length} creates=${histCreates.length} updates=${histUpdates.length}`);
-  if (histCreates.length) await sr.RacerRaceHistory.bulkCreate(histCreates).catch((e) => console.log(`[HIST_CREATE_ERROR] ${e.message}`));
-  if (histUpdates.length) await sr.RacerRaceHistory.bulkUpdate(histUpdates).catch((e) => console.log(`[HIST_UPDATE_ERROR] ${e.message}`));
+  if (histCreates.length) await sr.RacerRaceHistory.bulkCreate(histCreates).catch(() => {});
+  if (histUpdates.length) await sr.RacerRaceHistory.bulkUpdate(histUpdates).catch(() => {});
 
   // 天候情報でRace更新(保護付き)
   if (result.conditions) {
