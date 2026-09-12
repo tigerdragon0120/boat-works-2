@@ -72,9 +72,16 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
   const profileByReg = new Map(profiles.map(p => [p.registration_number, p]));
   const rolling = await base44.entities.RacerRollingStats.list('-calculated_at', 5000).catch(() => []);
   const rollingByReg = new Map(rolling.map(r => [r.registration_number, r]));
+  const laneRecent = await base44.entities.RacerLaneRecentStats.list('-updated_at', 5000).catch(() => []);
+  const laneRecentByKey = new Map(laneRecent.map(x => [`${String(x.registration_number)}_${Number(x.lane)}`, x]));
   const entriesWithProfiles = entries.map(e => {
     const reg = String(e.registration_number || e.register_number || '').trim();
-    return { ...e, _profile: reg ? profileByReg.get(reg) || null : null, _rollingStats: reg ? rollingByReg.get(reg) || null : null };
+    return {
+      ...e,
+      _profile: reg ? profileByReg.get(reg) || null : null,
+      _rollingStats: reg ? rollingByReg.get(reg) || null : null,
+      _laneRecent: reg ? laneRecentByKey.get(`${reg}_${Number(e.boat_number)}`) || null : null,
+    };
   });
 
   // FINAL時: PRE予想を基準に展示補正を適用
@@ -160,6 +167,11 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
     ana_potential: s.ana_potential,
     course_strength: s.course_strength,
     start_skill: s.start_skill,
+    lane_recent_score: s.lane_recent_score,
+    lane_recent_win_rate: s.lane_recent_win_rate,
+    lane_recent_avg_st: s.lane_recent_avg_st,
+    lane_recent_avg_start_order: s.lane_recent_avg_start_order,
+    lane_recent_sample_count: s.lane_recent_sample_count,
     recent_form_score: s.recent_form_score,
     st_trend_score: s.st_trend_score,
     class_trend_score: s.class_trend_score,
@@ -222,6 +234,11 @@ export async function generateAndSavePrediction(race, entries, settings, stage, 
         class_trend_score: s.class_trend_score,
         performance_trend: s.performance_trend,
         racer_power_score: s.racer_power_score,
+        lane_recent_score: s.lane_recent_score,
+        lane_recent_win_rate: s.lane_recent_win_rate,
+        lane_recent_avg_st: s.lane_recent_avg_st,
+        lane_recent_avg_start_order: s.lane_recent_avg_start_order,
+        lane_recent_sample_count: s.lane_recent_sample_count,
       })),
       trifectas_top: result.trifectas.slice(0, maxBets).map((t) => ({
         c: t.combination, p: t.probability,
