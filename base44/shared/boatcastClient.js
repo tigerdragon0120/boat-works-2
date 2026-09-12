@@ -9,6 +9,7 @@
 // ============================================================
 
 const BOATCAST_BASE = 'https://race.boatcast.jp/hp_txt';
+const BOATCAST_TXT_BASE = 'https://race.boatcast.jp/txt';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 const FETCH_TIMEOUT_MS = 10000;
 const MAX_RETRIES = 3;
@@ -53,6 +54,20 @@ const BOATCAST_DATA_TYPES = {
     updatePolicy: 'LIVE',
     ttl: 5 * 60 * 1000, // 5分(LIVE)
     description: 'スタート展示(進入コース・展示ST・ST・F flag)',
+  },
+  KAKUTEI_OD3: {
+    code: 'kakutei_od3',
+    updatePolicy: 'FINAL',
+    ttl: Infinity, // 確定後は不変
+    description: '3連単確定オッズ(レース確定後)',
+    basePath: 'txt', // /hp_txt ではなく /txt
+  },
+  SMT_OD3: {
+    code: 'smt_od3',
+    updatePolicy: 'LIVE',
+    ttl: 60 * 1000, // 1分(リアルタイム)
+    description: '3連単リアルタイムオッズ(締切前)',
+    basePath: 'txt',
   },
 };
 
@@ -110,6 +125,10 @@ function buildUrl(dataType, venueCode, raceDate, raceNumber) {
       return `${BOATCAST_BASE}/${vc}/bc_j_tkz_${hd}_${vc}_${rn}.txt`;
     case 'stt':
       return `${BOATCAST_BASE}/${vc}/bc_j_stt_${hd}_${vc}_${rn}.txt`;
+    case 'kakutei_od3':
+      return `${BOATCAST_TXT_BASE}/${vc}/bc_kakutei_od3_${hd}_${vc}_${rn}.txt`;
+    case 'smt_od3':
+      return `${BOATCAST_TXT_BASE}/${vc}/bc_smt_od3_${hd}_${vc}_${rn}.txt`;
     default:
       throw new Error(`URL builder not implemented for ${dataType}`);
   }

@@ -3,7 +3,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 const FETCH_TIMEOUT_MS = 10000;
 
-async function fetchOnce(url) {
+async function fetchOnce(url: string) {
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT },
@@ -11,54 +11,40 @@ async function fetchOnce(url) {
     });
     if (res.status === 200) {
       const text = await res.text();
-      return { ok: true, status: 200, text };
+      return { ok: true as const, status: 200, text, url };
     }
-    return { ok: false, status: res.status, error: `HTTP ${res.status}` };
-  } catch (e) {
-    return { ok: false, status: null, error: e.message };
+    return { ok: false as const, status: res.status, error: `HTTP ${res.status}`, url };
+  } catch (e: any) {
+    return { ok: false as const, status: null, error: e.message, url };
   }
 }
 
-// BOATCAST 3連単オッズを正規化
-// データ形式:
-//   Line 0: "data=" (ヘッダー)
-//   Line 1: ステータスコード ("1"=available, "0"/"2"=waiting, "3"=cancelled)
-//   Lines 2-7: 各艇(1-6)の行
-//     フィールド: [選手名, odds1...odds20, withdrawal_flag1...5]
-//
-// oddsの順序(1着=艇iの場合):
-//   2着=2: 3着=3,4,5,6
-//   2着=3: 3着=2,4,5,6
-//   2着=4: 3着=2,3,5,6
-//   2着=5: 3着=2,3,4,6
-//   2着=6: 3着=2,3,4,5
-function normalizeOd3(text, metadata) {
+// BOATCAST 3連単オッズ正規化
+// 各艇行: [選手名, odds×20, 欠場フラグ×5]
+// odds順序: 2着=2→3着=3,4,5,6 / 2着=3→3着=2,4,5,6 / ...
+function normalizeOd3(text: string, metadata: any) {
   const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
   if (lines.length < 7) return { ok: false, error: `insufficient lines: ${lines.length}` };
 
   const status = lines[0].trim();
   const racerLines = lines.slice(1, 7);
+  const racerNames: string[] = [];
+  const odds: any[] = [];
 
-  const odds = [];
   for (let first = 1; first <= 6; first++) {
     const parts = racerLines[first - 1].split('\t');
-    const racerName = parts[0]?.trim() || '';
-    // parts[1]〜parts[20] = 20通りのオッズ
-    // parts[21]〜parts[25] = 欠場フラグ
+    racerNames.push(parts[0]?.trim() || '');
     const withdrawalFlags = parts.slice(21, 26).map(f => f === '1');
 
-    let idx = 1; // parts[1]から開始
+    let idx = 1;
     for (let second = 1; second <= 6; second++) {
       if (second === first) continue;
       for (let third = 1; third <= 6; third++) {
         if (third === first || third === second) continue;
         const oddsVal = parseFloat(parts[idx]);
-        const combination = `${first}-${second}-${third}`;
         odds.push({
-          combination,
-          first,
-          second,
-          third,
+          combination: `${first}-${second}-${third}`,
+          first, second, third,
           odds: Number.isFinite(oddsVal) && oddsVal > 0 ? oddsVal : null,
           is_withdraw: withdrawalFlags[second - 1] || withdrawalFlags[third - 1],
         });
@@ -67,17 +53,28 @@ function normalizeOd3(text, metadata) {
     }
   }
 
+  const combos = odds.map(o => o.combination);
+  const uniqueCombos = new Set(combos);
+  const dupCount = combos.length - uniqueCombos.size;
+
   return {
-    ok: true,
+    ok: true as const,
     race_date: metadata?.race_date || null,
     venue_code: metadata?.venue_code || null,
     race_number: metadata?.race_number || null,
-    odds_type: 'TRIFECTA',
     status,
+    racer_names: racerNames,
     odds,
-    source: 'BOATCAST',
     fetched_at: new Date().toISOString(),
     count: odds.length,
+    integrity: {
+      total: odds.length,
+      unique: uniqueCombos.size,
+      duplicates: dupCount,
+      null_odds: odds.filter(o => o.odds == null).length,
+      withdraw: odds.filter(o => o.is_withdraw).length,
+      all_valid: dupCount === 0 && odds.length === 120,
+    },
   };
 }
 
@@ -89,59 +86,121 @@ export default async function(req: Request) {
     if (user.role !== 'admin') return Response.json({ error: 'Forbidden: admin only' }, { status: 403 });
 
     const body = await req.json().catch(() => ({}));
+    const raceId = body.race_id;
+    const raceNumber = Number(body.race_number || 10);
     const venueCode = String(body.venue_code || '20').padStart(2, '0');
     const raceDate = String(body.race_date || '2026-09-12').replace(/-/g, '');
-    const raceNumber = Number(body.race_number || 10);
     const rn = String(raceNumber).padStart(2, '0');
 
+    if (!raceId) return Response.json({ error: 'race_id required' }, { status: 400 });
+
     let httpCount = 0;
-    const results = {};
 
-    // bc_kakutei_od3 = 確定オッズ, bc_smt_od3 = リアルタイム
-    const candidates = [
-      { label: 'kakutei_od3', url: `https://race.boatcast.jp/txt/${venueCode}/bc_kakutei_od3_${raceDate}_${venueCode}_${rn}.txt` },
-      { label: 'smt_od3', url: `https://race.boatcast.jp/txt/${venueCode}/bc_smt_od3_${raceDate}_${venueCode}_${rn}.txt` },
-    ];
-
-    for (const c of candidates) {
+    // 1. BOATCAST確定オッズ取得(失敗時リアルタイムにフォールバック)
+    const kakuteiUrl = `https://race.boatcast.jp/txt/${venueCode}/bc_kakutei_od3_${raceDate}_${venueCode}_${rn}.txt`;
+    httpCount++;
+    let bcRes = await fetchOnce(kakuteiUrl);
+    let bcSource = 'kakutei_od3';
+    if (!bcRes.ok) {
+      const smtUrl = `https://race.boatcast.jp/txt/${venueCode}/bc_smt_od3_${raceDate}_${venueCode}_${rn}.txt`;
       httpCount++;
-      const res = await fetchOnce(c.url);
-      if (res.ok) {
-        const normalized = normalizeOd3(res.text, {
-          race_date: body.race_date || '2026-09-12',
-          venue_code: venueCode,
-          race_number: raceNumber,
-        });
-        results[c.label] = {
-          url: c.url,
-          status: 200,
-          raw_length: res.text.length,
-          raw_first_line: res.text.split('\n')[0],
-          normalized: normalized.ok ? {
-            odds_type: normalized.odds_type,
-            status: normalized.status,
-            count: normalized.count,
-            fetched_at: normalized.fetched_at,
-            first_5: normalized.odds.slice(0, 5),
-            last_5: normalized.odds.slice(-5),
-            sample_combos: ['1-2-3','1-3-4','2-1-3','3-1-2','4-5-6','6-5-4'].map(k =>
-              normalized.odds.find(o => o.combination === k)
-            ),
-          } : { error: normalized.error },
-        };
-      } else {
-        results[c.label] = { url: c.url, status: res.status, error: res.error };
-      }
-      await new Promise(r => setTimeout(r, 300));
+      bcRes = await fetchOnce(smtUrl);
+      bcSource = 'smt_od3';
     }
+    if (!bcRes.ok) {
+      return Response.json({ error: 'BOATCAST odds fetch failed', detail: bcRes, http_access_count: httpCount }, { status: 500 });
+    }
+
+    const bcNorm = normalizeOd3(bcRes.text, {
+      race_date: body.race_date || '2026-09-12',
+      venue_code: venueCode,
+      race_number: raceNumber,
+    });
+    if (!bcNorm.ok) return Response.json({ error: 'normalize failed', detail: bcNorm.error }, { status: 500 });
+
+    // 2. LOCAL OddsSnapshot取得
+    const sr = base44.asServiceRole.entities;
+    const snaps = await sr.OddsSnapshot.filter({ race_id: raceId }, '-captured_at', 1).catch(() => []);
+    const localSnap = snaps?.[0];
+    const localOddsMap: Record<string, number> = localSnap?.odds_map || {};
+
+    // 3. LOCAL出走表(レーサー名確認)
+    const entries = await sr.RaceEntry.filter({ race_id: raceId }, 'boat_number', 6).catch(() => []);
+    const localRacerNames = entries.map(e => (e.player_name || e.racer_name || '').split('/')[0].trim());
+
+    // 4. 全件比較
+    const bcOddsMap: Record<string, number> = {};
+    for (const o of bcNorm.odds) bcOddsMap[o.combination] = o.odds;
+
+    const allCombos = new Set([...Object.keys(bcOddsMap), ...Object.keys(localOddsMap)]);
+    let match = 0, nearMatch = 0, mismatch = 0, bcOnly = 0, localOnly = 0;
+    const comparisons: any[] = [];
+    let maxDiff = { combo: '', diff: 0, bc: 0, local: 0 };
+
+    for (const combo of allCombos) {
+      const bcO = bcOddsMap[combo];
+      const localO = localOddsMap[combo];
+      if (bcO != null && localO != null) {
+        const diff = Math.abs(bcO - localO);
+        const relDiff = diff / Math.max(bcO, localO);
+        let category: string;
+        if (diff === 0) { match++; category = 'MATCH'; }
+        else if (relDiff <= 0.05) { nearMatch++; category = 'NEAR'; }
+        else { mismatch++; category = 'MISMATCH'; }
+        comparisons.push({ combo, bc: bcO, local: localO, diff: Math.round(diff * 10) / 10, rel: Math.round(relDiff * 1000) / 10, category });
+        if (diff > maxDiff.diff) maxDiff = { combo, diff, bc: bcO, local: localO };
+      } else if (bcO != null) { bcOnly++; }
+      else { localOnly++; }
+    }
+
+    // 5. 選定買い目の照合
+    const preds = await sr.RacePrediction.filter({ race_id: raceId, stage: 'FINAL' }, '-computed_at', 1).catch(() => []);
+    const pred = preds?.[0];
+    const ticketComparison: any[] = [];
+    if (pred?.id) {
+      const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: pred.id, is_selected: true }, 'ticket_rank', 10).catch(() => []);
+      for (const t of trifectas) {
+        const bcO = bcOddsMap[t.combination];
+        const localO = localOddsMap[t.combination];
+        ticketComparison.push({
+          rank: t.ticket_rank, combo: t.combination, prob: t.probability,
+          bc_odds: bcO, local_odds: localO,
+          diff: bcO && localO ? Math.round((bcO - localO) * 10) / 10 : null,
+          ev_local: localO ? Math.round(t.probability * localO * 10) / 10 : null,
+          ev_bc: bcO ? Math.round(t.probability * bcO * 10) / 10 : null,
+        });
+      }
+    }
+
+    // レーサー名照合
+    const racerNameMatch = bcNorm.racer_names.map((bcName, i) => {
+      const localName = localRacerNames[i] || '';
+      const bcClean = bcName.replace(/\s/g, '');
+      const localClean = localName.replace(/\s/g, '');
+      return { boat: i + 1, boatcast: bcName, local: localName, match: bcClean.includes(localClean) || localClean.includes(bcClean) };
+    });
 
     return Response.json({
       ok: true,
-      venue_code: venueCode,
-      race_date: raceDate,
-      race_number: raceNumber,
       http_access_count: httpCount,
-      results,
+      race_info: { race_id: raceId, race_number: raceNumber, venue_code: venueCode, race_date: body.race_date || '2026-09-12' },
+      boatcast: {
+        source: bcSource, url: bcRes.url, status: bcNorm.status, fetched_at: bcNorm.fetched_at,
+        count: bcNorm.count, racer_names: bcNorm.racer_names, integrity: bcNorm.integrity,
+      },
+      local: {
+        captured_at: localSnap?.captured_at || null,
+        count: Object.keys(localOddsMap).length,
+        racer_names: localRacerNames,
+      },
+      comparison: {
+        match, near_match: nearMatch, mismatch, boatcast_only: bcOnly, local_only: localOnly,
+        max_diff: maxDiff,
+        samples: comparisons.sort((a, b) => (a.bc || 9999) - (b.bc || 9999))
+          .filter((_, i) => i < 5 || (i >= 55 && i < 60) || i >= 115).slice(0, 20),
+      },
+      ticket_comparison: ticketComparison,
+      racer_name_match: racerNameMatch,
     });
   } catch (error: any) {
     return Response.json({ error: error.message, stack: error.stack }, { status: 500 });

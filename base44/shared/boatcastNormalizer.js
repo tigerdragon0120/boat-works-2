@@ -404,3 +404,71 @@ export function normalizeTokutenHayami(text, metadata) {
     racers,
   };
 }
+
+// ============================================================
+// od3テキストを解析・BW2標準形式へ正規化
+//
+// od3フィールド構成(艇ごと1行):
+//  0: 選手名(全角スペース含む)
+//  1-20: 3連単オッズ(20通り)
+//    順序: 2着=2→3着=3,4,5,6 / 2着=3→3着=2,4,5,6 / ...
+//  21-25: 欠場フラグ(1=欠場, 0=出走)
+//
+// 先頭行: ステータスコード("1"=available, "0"/"2"=waiting, "3"=cancelled)
+// ============================================================
+export function normalizeOd3(text, metadata) {
+  const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
+  if (lines.length < 7) return { ok: false, error: `insufficient lines: ${lines.length}` };
+
+  const status = lines[0].trim();
+  const racerLines = lines.slice(1, 7);
+  const racerNames = [];
+  const odds = [];
+
+  for (let first = 1; first <= 6; first++) {
+    const parts = racerLines[first - 1].split('\t');
+    racerNames.push(parts[0]?.trim() || '');
+    const withdrawalFlags = parts.slice(21, 26).map(f => f === '1');
+
+    let idx = 1;
+    for (let second = 1; second <= 6; second++) {
+      if (second === first) continue;
+      for (let third = 1; third <= 6; third++) {
+        if (third === first || third === second) continue;
+        const oddsVal = parseNum(parts[idx]);
+        odds.push({
+          combination: `${first}-${second}-${third}`,
+          first, second, third,
+          odds: oddsVal != null && oddsVal > 0 ? oddsVal : null,
+          is_withdraw: withdrawalFlags[second - 1] || withdrawalFlags[third - 1],
+        });
+        idx++;
+      }
+    }
+  }
+
+  const combos = odds.map(o => o.combination);
+  const uniqueCombos = new Set(combos);
+
+  return {
+    ok: true,
+    source: 'BOATCAST',
+    race_date: metadata?.race_date || null,
+    venue_code: metadata?.venue_code || null,
+    race_number: metadata?.race_number || null,
+    odds_type: 'TRIFECTA',
+    status,
+    racer_names: racerNames,
+    odds,
+    fetched_at: metadata?.fetched_at || new Date().toISOString(),
+    count: odds.length,
+    integrity: {
+      total: odds.length,
+      unique: uniqueCombos.size,
+      duplicates: odds.length - uniqueCombos.size,
+      null_odds: odds.filter(o => o.odds == null).length,
+      withdraw: odds.filter(o => o.is_withdraw).length,
+      all_valid: (odds.length - uniqueCombos.size) === 0 && odds.length === 120,
+    },
+  };
+}
