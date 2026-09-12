@@ -1,0 +1,48 @@
+{
+  "name": "RacerLaneRecentStats",
+  "type": "object",
+  "description": "\u9078\u624b\u00d7\u67a0\u756a\u3054\u3068\u306e\u76f4\u8fd110\u8d70\u96c6\u8a08\u3002\u4e88\u60f3\u30ed\u30b8\u30c3\u30af\u3068UI\u3067\u4f7f\u7528\u3002",
+  "properties": {
+    "registration_number": {
+      "type": "string"
+    },
+    "lane": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 6
+    },
+    "sample_count": {
+      "type": "number"
+    },
+    "win_rate": {
+      "type": "number",
+      "description": "1\u7740\u7387%"
+    },
+    "top2_rate": {
+      "type": "number"
+    },
+    "top3_rate": {
+      "type": "number"
+    },
+    "avg_st": {
+      "type": "number"
+    },
+    "avg_start_order": {
+      "type": "number"
+    },
+    "recent10": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "registration_number",
+    "lane"
+  ]
+}

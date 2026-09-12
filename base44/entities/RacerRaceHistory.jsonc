@@ -32,6 +32,10 @@
       "type": "number",
       "description": "\u30b9\u30bf\u30fc\u30c8\u30bf\u30a4\u30df\u30f3\u30b0"
     },
+    "start_order": {
+      "type": "number",
+      "description": "\u305d\u306e\u30ec\u30fc\u30b96\u8247\u4e2d\u306e\u30b9\u30bf\u30fc\u30c8\u9806(1\u304c\u6700\u901f)"
+    },
     "winning_method": {
       "type": "string",
       "description": "\u6c7a\u307e\u308a\u624b"
