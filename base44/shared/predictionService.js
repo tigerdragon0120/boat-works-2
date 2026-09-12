@@ -3,8 +3,48 @@
 import { runPrediction, judgeTrifecta } from "./predictionEngine.js";
 import { buildRaceKey, parseRaceKey, mapRace, mapEntry, mapResult } from "./raceKey.js";
 import { acquireLock, releaseLock, cleanupExpiredLocks } from "./concurrencyLock.js";
+import { fetchBoatcastText } from "./boatcastClient.js";
+import { normalizeTkz, normalizeStartExhibition, normalizeExhibitionData } from "./boatcastNormalizer.js";
+import { mergeExhibition } from "./exhibitionMerger.js";
 
 const VERSION = "v3";
+
+// ============================================================
+// BOATCAST直前情報取得(TKZ + STT)
+// FINAL予想の前に呼ばれ、LOCAL展示データとマージされる
+// 取得失敗時はnullを返し、LOCAL fallbackに任せる
+// ============================================================
+async function fetchBoatcastExhibition(race) {
+  try {
+    const venueCode = String(race?.venue_code || '').padStart(2, '0');
+    const raceDate = String(race?.race_date || '').replace(/-/g, '');
+    const raceNumber = Number(race?.race_number || 0);
+    if (!venueCode || !raceDate || !raceNumber) return null;
+
+    const [tkzResult, sttResult] = await Promise.all([
+      fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType: 'TKZ' }),
+      fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType: 'STT' }),
+    ]);
+
+    if (!tkzResult.ok && !sttResult.ok) return null;
+
+    let tkzNormalized = null;
+    let sttNormalized = null;
+    if (tkzResult.ok) tkzNormalized = normalizeTkz(tkzResult.text, tkzResult.metadata);
+    if (sttResult.ok) sttNormalized = normalizeStartExhibition(sttResult.text, sttResult.metadata);
+
+    const metadata = {
+      race_date: race.race_date,
+      venue_code: venueCode,
+      race_number: raceNumber,
+      fetched_at: new Date().toISOString(),
+    };
+    return normalizeExhibitionData(tkzNormalized, sttNormalized, metadata);
+  } catch (e) {
+    console.error('fetchBoatcastExhibition error:', e.message);
+    return null;
+  }
+}
 
 // 選手×枠番の直近10走集計は予想中に毎Race検索しない。60秒キャッシュで1回だけ読む。
 // raceId指定時はそのレース専用キャッシュを返す。未指定時は全件から最新を返す。
@@ -214,7 +254,7 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     rollingByReg = new Map(rolling.map(r => [r.registration_number, r]));
   }
   const laneRecentByKey = await getLaneRecentMap(client, race?.id);
-  const entriesWithProfiles = entries.map(e => {
+  let entriesWithProfiles = entries.map(e => {
     const reg = String(e.registration_number || e.register_number || '').trim();
     const laneKey = `${reg}_${Number(e.boat_number)}`;
     return {
@@ -224,6 +264,47 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
       _laneRecent: reg ? laneRecentByKey.get(laneKey) || null : null,
     };
   });
+
+  // ============================================================
+  // FINAL時: BOATCAST直前情報取得 + LOCAL展示データとマージ
+  // 優先順位: 1. BOATCAST  2. LOCAL  3. 欠損
+  // 展示READY判定: 有効艇すべてに exhibition_time + exhibition_st + exhibition_course がある
+  // PARTIAL/WAITING時はFINAL予想を生成しない
+  // ============================================================
+  let exhibitionStatus = null;
+  if (stage === "FINAL") {
+    // 重複防止: 既にFINAL確定済みの場合はNO_OP
+    const existingFinal = await client.asServiceRole.entities.RacePrediction.filter(
+      { race_id: race.id, stage: "FINAL", prediction_version: VERSION, status: "COMPLETED" }, "-computed_at", 1
+    ).catch(() => []);
+    if (existingFinal?.[0]) {
+      return { predictionId: existingFinal[0].id, result: null, skipped: true, reason: "FINAL_ALREADY_COMPLETED" };
+    }
+
+    // BOATCAST直前情報取得
+    const boatcastExhibition = await fetchBoatcastExhibition(race);
+
+    // LOCAL展示データとマージ(BOATCAST優先 / LOCAL fallback)
+    const mergeResult = mergeExhibition(boatcastExhibition, entriesWithProfiles, race);
+    exhibitionStatus = mergeResult.exhibition_status;
+
+    // 展示READY判定: PARTIAL/WAITING時はFINAL生成スキップ
+    if (mergeResult.exhibition_status !== "READY") {
+      console.log(`[FINAL_SKIP] race=${race.id} key=${race.race_key} exhibition_status=${mergeResult.exhibition_status} ready=${mergeResult.ready_count}/${mergeResult.active_count}`);
+      return {
+        predictionId: null, result: null, skipped: true,
+        reason: `EXHIBITION_NOT_READY:${mergeResult.exhibition_status}`,
+        exhibition_status: mergeResult.exhibition_status,
+        ready_count: mergeResult.ready_count,
+        active_count: mergeResult.active_count,
+      };
+    }
+
+    // マージ済みエントリで予想実行
+    entriesWithProfiles = mergeResult.entries;
+    console.log(`[FINAL_READY] race=${race.id} key=${race.race_key} status=${mergeResult.exhibition_status} boatcast=${mergeResult.boatcast_available}`);
+  }
+
   // FINAL時: PRE予想を基準に展示補正のみ適用
   let preBoatScores = null;
   if (stage === "FINAL") {
@@ -247,7 +328,7 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     } catch {}
   }
 
-  const result = runPrediction(entriesWithProfiles, cfg, { oddsMap: effectiveOddsMap, preBoatScores });
+  const result = runPrediction(entriesWithProfiles, cfg, { oddsMap: effectiveOddsMap, preBoatScores, exhibitionStatus });
 
   // FINAL時: 選択買い目の実オッズマッピングエラーチェック
   if (stage === "FINAL" && result.set_metrics?.odds_mapping_error) {
@@ -326,6 +407,8 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     racer_power_score: s.racer_power_score,
     pre_score: s.pre_first, final_score: stage === "FINAL" ? s.first_power : null, delta: s.exhibition_delta,
     reasons: s.reasons, notes: s.notes,
+    final_adjustments: s.final_adjustments || null,
+    exhibition_sources: s.exhibition_sources || null,
   }));
   if (boatDocs.length) await client.asServiceRole.entities.BoatPrediction.bulkCreate(boatDocs);
 
@@ -537,8 +620,8 @@ export async function syncAndPredict(client, payload, opts = {}) {
       if (complete && raceData.exhibition_ready && !opts.skip_predictions) {
         addVenue(raceData.venue_code, "exhibition");
         try {
-          await runAndSavePrediction(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {}, profileByReg, rollingByReg);
-          summary.final_generated++; addVenue(raceData.venue_code, "final");
+          const finResult = await runAndSavePrediction(client, race, entryDocs, settings, "FINAL", oddsByRace[raceData.race_key] || {}, profileByReg, rollingByReg);
+          if (!finResult?.skipped) { summary.final_generated++; addVenue(raceData.venue_code, "final"); }
         } catch (e) { summary.errors.push({ race_key: raceData.race_key, message: "FINAL予想失敗: " + e.message }); addVenue(raceData.venue_code, "errors"); }
       }
 

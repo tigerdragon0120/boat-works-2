@@ -61,22 +61,24 @@ function blendedPeriodScore(profile, rolling, metric) {
   return ps != null ? ps : rs;
 }
 
-function getCourseScore(profile, entry, metric) {
-  if (!profile || !entry.boat_number) return null;
-  const cs = profile.course_stats?.[String(entry.boat_number)];
+function getCourseScore(profile, entry, metric, courseOverride) {
+  if (!profile) return null;
+  const course = courseOverride || entry.boat_number;
+  if (!course) return null;
+  const cs = profile.course_stats?.[String(course)];
   if (!cs || cs.sample_size < 3) return null;
   return cs[metric] != null ? clamp(cs[metric], 0, 100) : null;
 }
 
-function getKimariteScore(profile, boatNumber) {
+function getKimariteScore(profile, course) {
   if (!profile?.winning_methods) return null;
   const wm = profile.winning_methods;
   if (wm.total_wins < 2) return null;
-  if (boatNumber === 1) return wm.escape_rate;
-  if (boatNumber === 2) return wm.sashi_rate;
-  if (boatNumber === 3) return wm.makuri_rate;
-  if (boatNumber === 4) return wm.makuri_sashi_rate;
-  if (boatNumber === 5 || boatNumber === 6) return wm.nuki_rate;
+  if (course === 1) return wm.escape_rate;
+  if (course === 2) return wm.sashi_rate;
+  if (course === 3) return wm.makuri_rate;
+  if (course === 4) return wm.makuri_sashi_rate;
+  if (course === 5 || course === 6) return wm.nuki_rate;
   return null;
 }
 
@@ -92,6 +94,7 @@ function computeExhibitionScore(entry) {
   if (isValid(entry.exhibition_time)) parts.push(clamp(50 + (1.4 - entry.exhibition_time) * 100, 5, 100));
   if (isValid(entry.exhibition_rank)) parts.push(clamp(110 - entry.exhibition_rank * 15, 0, 100));
   if (isValid(entry.exhibition_st)) parts.push(stToScore(entry.exhibition_st, 0.1));
+  if (isValid(entry.exhibition_st_rank)) parts.push(clamp(110 - entry.exhibition_st_rank * 15, 0, 100));
   return parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : 50;
 }
 
@@ -102,13 +105,14 @@ const weightedAverage = (pairs, fallback = 50) => {
   return denom > 0 ? valid.reduce((a, [s, w]) => a + s * w, 0) / denom : fallback;
 };
 
-function computeOtherScore(profile, entry, metric) {
-  const courseScore = getCourseScore(profile, entry, metric);
+function computeOtherScore(profile, entry, metric, isFinal) {
+  const courseOverride = isFinal && isValid(entry.exhibition_course) ? entry.exhibition_course : null;
+  const courseScore = getCourseScore(profile, entry, metric, courseOverride);
   const recentMetric = metric === 'win_rate' ? 'recent_win_rate' : 'recent_top3_rate';
   const recentForm = profile?.recent_form?.[recentMetric];
   const recentSt = profile?.recent_form?.recent_st || entry.avg_st;
   const stScore = stToScore(recentSt);
-  const kimariteScore = getKimariteScore(profile, entry.boat_number);
+  const kimariteScore = getKimariteScore(profile, courseOverride || entry.boat_number);
   const venueScore = getVenueScore(profile, entry, metric);
   const sectionScore = isValid(entry.section_points) ? clamp(entry.section_points * 2, 0, 100) : null;
   const motorScore = isValid(entry.motor_f2_rate) ? clamp(entry.motor_f2_rate, 0, 100) : null;
@@ -134,9 +138,9 @@ export function computeBoatScores(entry, settings) {
   const officialF2 = entry.national_f2_rate != null ? clamp(entry.national_f2_rate, 0, 100) : null;
   const officialF3 = entry.national_f3_rate != null ? clamp(entry.national_f3_rate, 0, 100) : null;
 
-  const otherFirst = computeOtherScore(profile, entry, 'win_rate');
-  const otherSecond = computeOtherScore(profile, entry, 'top2_rate');
-  const otherThird = computeOtherScore(profile, entry, 'top3_rate');
+  const otherFirst = computeOtherScore(profile, entry, 'win_rate', isFinal);
+  const otherSecond = computeOtherScore(profile, entry, 'top2_rate', isFinal);
+  const otherThird = computeOtherScore(profile, entry, 'top3_rate', isFinal);
 
   const computePower = (profileScore, officialScore, otherScore) => {
     if (profileScore != null) return clamp(profileScore * 0.90 + (otherScore || 50) * 0.10, 5, 100);
@@ -210,13 +214,28 @@ export function computeBoatScores(entry, settings) {
   // 展示補正(FINALのみ)
   let exhibition_delta = 0;
   let exhibition_score = 50;
+  const final_adjustments = [];
   if (isFinal) {
     exhibition_score = computeExhibitionScore(entry);
     exhibition_delta = (exhibition_score - 50) * 0.3;
     // 進入変更検出: 展示進入が枠番と異なる場合
     if (isValid(entry.exhibition_course) && entry.exhibition_course !== entry.boat_number) {
-      exhibition_delta += (entry.exhibition_course < entry.boat_number ? 3 : -3);
+      const courseDelta = entry.exhibition_course < entry.boat_number ? 3 : -3;
+      exhibition_delta += courseDelta;
+      final_adjustments.push(`進入変更(${entry.boat_number}→${entry.exhibition_course}): ${courseDelta > 0 ? '+' : ''}${courseDelta}`);
     }
+    // 展示ST
+    if (isValid(entry.exhibition_st)) {
+      const stRankStr = entry.exhibition_st_rank ? `(${entry.exhibition_st_rank}位)` : '';
+      final_adjustments.push(`展示ST ${entry.exhibition_st}${stRankStr}`);
+    }
+    // 展示タイム
+    if (isValid(entry.exhibition_time)) {
+      const rankStr = entry.exhibition_rank ? `(${entry.exhibition_rank}位)` : '';
+      final_adjustments.push(`展示タイム ${entry.exhibition_time}${rankStr}`);
+    }
+    // 展示スコア
+    final_adjustments.push(`展示スコア${round1(exhibition_score)}(delta${exhibition_delta > 0 ? '+' : ''}${round1(exhibition_delta)})`);
   }
 
   // 補助スコア
@@ -251,8 +270,9 @@ export function computeBoatScores(entry, settings) {
   const section_form = isValid(entry.section_points) ? round1(clamp(entry.section_points * 2, 0, 100)) : 50;
   const ana_potential = round1(clamp(exhibition_power * 0.4 + section_form * 0.3 + (100 - first_power) * 0.3, 0, 100));
   const total_power = round1((first_power + second_power + third_power) / 3);
+  const effectiveCourse = isFinal && isValid(entry.exhibition_course) ? entry.exhibition_course : null;
   const course_strength = (() => {
-    const cs = getCourseScore(profile, entry, 'win_rate');
+    const cs = getCourseScore(profile, entry, 'win_rate', effectiveCourse);
     return cs != null ? round1(cs) : null;
   })();
 
@@ -335,6 +355,9 @@ export function computeBoatScores(entry, settings) {
     racer_power_score: trend?.racer_power_score != null ? Math.round(trend.racer_power_score) : null,
     exhibition_delta: round1(exhibition_delta),
     reasons, notes,
+    final_adjustments: isFinal ? final_adjustments : null,
+    exhibition_sources: entry._exhibition_sources || null,
+    exhibition_st_rank: entry.exhibition_st_rank ?? null,
     dataCount: Math.max(profile?.total_samples || 0, rolling?.stats_all?.race_count || 0),
     _absent: !!entry.is_absent,
   };
@@ -830,6 +853,7 @@ export function runPrediction(entries, settings, options = {}) {
     top_odds: topOdds,
     first_ranking: firstRanking, second_ranking: secondRanking, third_ranking: thirdRanking,
     exhibition_ready: activeScores.some(s => s.exhibition_delta !== 0),
+    exhibition_status: options.exhibitionStatus || null,
     // 新: 買い目・判定
     ticket_selection: ticketSelection,
     set_metrics: setMetrics,

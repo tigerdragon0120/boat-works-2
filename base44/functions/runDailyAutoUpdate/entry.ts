@@ -564,9 +564,13 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
       const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
       if (entries.length >= 6) {
         try {
-          await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          finalGenerated++;
-          logs.push(`${venueName} R${raceNumber}: 実オッズ${oddsCount}件反映+FINAL予想生成`);
+          const finResult = await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          if (finResult?.skipped) {
+            logs.push(`${venueName} R${raceNumber}: FINALスキップ(${finResult.reason || 'exhibition_not_ready'})`);
+          } else {
+            finalGenerated++;
+            logs.push(`${venueName} R${raceNumber}: 実オッズ${oddsCount}件反映+FINAL予想生成`);
+          }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
         }
