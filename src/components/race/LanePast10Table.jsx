@@ -65,10 +65,14 @@ export default function LanePast10Table({ entries, race }) {
           }))
           .filter((x) => /^\d{4}$/.test(x.registration_number) && x.lane >= 1 && x.lane <= 6);
         if (!reqEntries.length) { setStatsByKey({}); return; }
-        const res = await base44.functions.invoke("getLanePast10Stats", {
+        const invokePromise = base44.functions.invoke("getLanePast10Stats", {
           entries: reqEntries,
           race_date: race?.race_date || null,
         });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("getLanePast10Stats timeout (90s)")), 90000)
+        );
+        const res = await Promise.race([invokePromise, timeoutPromise]);
         if (!cancelled) setStatsByKey(res?.data?.by_key || {});
       } catch (e) {
         console.error("LanePast10 fetch error:", e);

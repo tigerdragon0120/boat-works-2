@@ -98,6 +98,7 @@ export default async function (req: Request) {
     // Phase 1: 全選手のRacerRaceHistory取得 + 全レース日収集
     // =====================================================
     const histByReg = new Map<string, any[]>();
+    const recent10ByReg = new Map<string, any[]>();
     const allDates = new Set<string>();
 
     for (const item of requested) {
@@ -110,12 +111,24 @@ export default async function (req: Request) {
           sr.RacerRaceHistory.filter({ registration_number: reg }, '-race_date', 500)
         );
         histByReg.set(reg, allHist || []);
-        for (const h of allHist) {
+        // recent10候補のみから日付を収集(全履歴から収集すると日付が多すぎてRace取得で429が多発する)
+        const sameLaneCandidates = (allHist || [])
+          .filter((h: any) => {
+            const bn = Number(h.boat_number);
+            if (bn !== lane) return false;
+            if (h.is_absent) return false;
+            if (raceDate && h.race_date >= raceDate) return false;
+            return true;
+          })
+          .slice(0, 10);
+        recent10ByReg.set(reg, sameLaneCandidates);
+        for (const h of sameLaneCandidates) {
           if (h.race_date) allDates.add(h.race_date);
         }
       } catch (e: any) {
         console.error(`[LanePast10] hist fetch error reg=${reg}: ${e.message}`);
         histByReg.set(reg, []);
+        recent10ByReg.set(reg, []);
       }
       await sleep(80);
     }
@@ -149,19 +162,7 @@ export default async function (req: Request) {
 
       try {
         const allHist = histByReg.get(reg) || [];
-
-        // 枠番正規化: Number(h.boat_number) === lane
-        // 欠場(is_absent)は除外、失格(is_disqualified)は含めて特殊結果として表示
-        // 当該レースより前のレースのみ対象(未来・今回除外)
-        const sameLane = (allHist || [])
-          .filter((h: any) => {
-            const bn = Number(h.boat_number);
-            if (bn !== lane) return false;
-            if (h.is_absent) return false;
-            if (raceDate && h.race_date >= raceDate) return false;
-            return true;
-          })
-          .slice(0, 10); // -race_date順なので先頭10件が最新10走
+        const sameLane = recent10ByReg.get(reg) || [];
 
         // 古い順(10走前→前走)に並び替え + Race情報マージ + 着順点計算
         const recent10 = sameLane.slice().reverse().map((h: any) => {
@@ -287,7 +288,11 @@ export default async function (req: Request) {
           console.log(`==================================================\n`);
         }
 
-        console.log(`[LanePast10] reg=${reg} lane=${lane} total=${allHist.length} same_lane=${sameLane.length} valid=${finished.length} winning_rate=${winningRate}`);
+        console.log(
+          `[LanePast10] reg=${reg} lane=${lane} | RacerRaceHistory=${allHist.length} | 同枠=${sameLane.length} | recent10=${recent10.length} | ` +
+          `着順点合計=${totalPoints} | 勝率=${winningRate != null ? winningRate.toFixed(2) : '—'} | ` +
+          `avg_st=${stats.avg_st ?? '—'} | avg_start_order=${stats.avg_start_order ?? '—'}`
+        );
       } catch (e: any) {
         console.error(`[LanePast10] ERROR reg=${reg} lane=${lane}: ${e.message}`);
         by_key[`${reg}_${lane}`] = {
