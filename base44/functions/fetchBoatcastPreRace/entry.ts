@@ -80,6 +80,12 @@ export default async function (req: Request) {
         { field: 'avg_st', bc: bcRacer.avg_st, local: localEntry?.avg_st ?? null },
         { field: 'f_flag', bc: bcRacer.f_flag, local: localEntry?.f_count != null ? (localEntry.f_count > 0 ? 'F' : ' ') : null },
         { field: 'l_flag', bc: bcRacer.l_flag, local: localEntry?.l_count != null ? (localEntry.l_count > 0 ? 'L' : ' ') : null },
+        { field: 'motor_number', bc: bcRacer.motor_number, local: localEntry?.motor_number ?? null },
+        { field: 'motor_2rate', bc: bcRacer.motor_2rate, local: localEntry?.motor_f2_rate ?? localEntry?.motor_2rate ?? null },
+        { field: 'motor_3rate', bc: bcRacer.motor_3rate, local: localEntry?.motor_f3_rate ?? localEntry?.motor_3rate ?? null },
+        { field: 'boat_number', bc: bcRacer.boat_number, local: localEntry?.boat_number_id ?? null },
+        { field: 'boat_2rate', bc: bcRacer.boat_2rate, local: localEntry?.boat_f2_rate ?? localEntry?.boat_2rate ?? null },
+        { field: 'boat_3rate', bc: bcRacer.boat_3rate, local: localEntry?.boat_f3_rate ?? localEntry?.boat_3rate ?? null },
       ];
 
       const fieldResults: any = {};

@@ -59,14 +59,24 @@ function parseCourse(s) {
 //  9: 平均ST
 // 10-12: 全国 勝率, 2連率, 3連率
 // 13-15: 当地 勝率, 2連率, 3連率
-// 16-19: 前期 F数, 出走数, 2連率, 3連率
-// 20-23: 当期 F数, 出走数, 2連率, 3連率
+// 16-19: モーター ?(常0), 番号, 2連率, 3連率
+// 20-23: ボート ?(常0), 番号, 2連率, 3連率
 // 24: 最新節間レース番号
 // 25+: 節間成績 (raceNum,boatNum,finish,ST,course)
+//
+// ※公式boatrace.jpヘッダー構造と照合済み:
+//   モーター列 = "No 2連率 3連率" → [17]=番号, [18]=2連率, [19]=3連率
+//   ボート列 = "No 2連率 3連率" → [21]=番号, [22]=2連率, [23]=3連率
+//   [16],[20]の"0"は公式サイトに表示なし(モーター/ボートF数の可能性)
 // ============================================================
 export function normalizeStr3(text, metadata) {
   const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
-  const racerLines = lines.slice(1); // "1\t7" ヘッダーをスキップ
+  // "1\t7" ヘッダー行を解析(シリーズ何日目か、シリーズ日数の可能性)
+  const headerLine = lines[0] || '';
+  const headerParts = headerLine.split('\t');
+  const seriesDay = parseNum(headerParts[0]);
+  const seriesTotalDays = parseNum(headerParts[1]);
+  const racerLines = lines.slice(1);
 
   const racers = racerLines.map((line, idx) => {
     const parts = line.split('\t');
@@ -90,14 +100,14 @@ export function normalizeStr3(text, metadata) {
     const local2Rate = parseNum(parts[14]);
     const local3Rate = parseNum(parts[15]);
 
-    const prevFCount = parseNum(parts[16]);
-    const prevRaceCount = parseNum(parts[17]);
-    const prev2Rate = parseNum(parts[18]);
-    const prev3Rate = parseNum(parts[19]);
-    const currFCount = parseNum(parts[20]);
-    const currRaceCount = parseNum(parts[21]);
-    const curr2Rate = parseNum(parts[22]);
-    const curr3Rate = parseNum(parts[23]);
+    const motorUnknown = parseNum(parts[16]); // 常に0(公式非表示)
+    const motorNumber = parseNum(parts[17]);
+    const motor2Rate = parseNum(parts[18]);
+    const motor3Rate = parseNum(parts[19]);
+    const boatUnknown = parseNum(parts[20]); // 常に0(公式非表示)
+    const boatNumber = parseNum(parts[21]);
+    const boat2Rate = parseNum(parts[22]);
+    const boat3Rate = parseNum(parts[23]);
 
     const latestSectionRace = parseStr(parts[24]);
 
@@ -137,14 +147,12 @@ export function normalizeStr3(text, metadata) {
       local_win_rate: localWinRate,
       local_2rate: local2Rate,
       local_3rate: local3Rate,
-      prev_f_count: prevFCount,
-      prev_race_count: prevRaceCount,
-      prev_2rate: prev2Rate,
-      prev_3rate: prev3Rate,
-      curr_f_count: currFCount,
-      curr_race_count: currRaceCount,
-      curr_2rate: curr2Rate,
-      curr_3rate: curr3Rate,
+      motor_number: motorNumber,
+      motor_2rate: motor2Rate,
+      motor_3rate: motor3Rate,
+      boat_number: boatNumber,
+      boat_2rate: boat2Rate,
+      boat_3rate: boat3Rate,
       latest_section_race: latestSectionRace,
       section_races: sectionRaces,
     };
@@ -153,6 +161,8 @@ export function normalizeStr3(text, metadata) {
   return {
     source: 'BOATCAST',
     metadata,
+    series_day: seriesDay,
+    series_total_days: seriesTotalDays,
     racers,
   };
 }
