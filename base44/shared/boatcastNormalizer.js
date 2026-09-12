@@ -168,6 +168,154 @@ export function normalizeStr3(text, metadata) {
 }
 
 // ============================================================
+// tkzテキストを解析・BW2標準形式へ正規化
+//
+// tkzフィールド構成(0-indexed):
+//  0: 選手名(全角スペース含む)
+//  1: 展示タイム(秒)  例: 6.82  "-.--"=未確定
+//  2: フラグ(0/1)  意味不明
+//  3: コード(000/010等)  意味不明
+//  4: 体重(kg)  例: 52.0
+//  5: フラグ(0/1)  意味不明(調整体重関連の可能性)
+//  6: チルト  例: "- 0.5", "+ 0.0"
+//  7+: 節間成績等(任意)
+//
+// 最終行: スタート展示ST
+//  "1\t.05\tF\t2\t.04\tF\t3\t.08\t\t4\t.03\tF\t5\t.07\tF\t6\t.01\tF"
+//  → 艇番, ST, F flag の繰り返し
+// ============================================================
+export function normalizeTkz(text, metadata) {
+  const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
+  const racerLines = lines.filter(l => !/^\d\s*$/.test(l) && !/^\d\t\.\d/.test(l));
+  const stLine = lines.find(l => /^\d\t\.\d/.test(l));
+
+  const racers = racerLines.map((line, idx) => {
+    const parts = line.split('\t');
+    return {
+      lane: idx + 1,
+      racer_name: parseStr(parts[0])?.replace(/[\s\u3000]+/g, ' ').trim() || null,
+      exhibition_time: parseNum(parts[1]),
+      _raw_flag2: parseStr(parts[2]),
+      _raw_code3: parseStr(parts[3]),
+      weight: parseNum(parts[4]),
+      _raw_flag5: parseStr(parts[5]),
+      tilt: parseStr(parts[6])?.trim() || null,
+      _raw_rest: parts.slice(7).filter(p => p && p.trim()),
+    };
+  });
+
+  let start_exhibition_st = [];
+  if (stLine) {
+    const stParts = stLine.split('\t');
+    for (let i = 0; i < stParts.length; i += 3) {
+      const lane = parseInt(stParts[i]);
+      if (!Number.isFinite(lane)) continue;
+      start_exhibition_st.push({
+        lane,
+        st: parseNum(stParts[i + 1]),
+        f_flag: parseStr(stParts[i + 2]) || null,
+      });
+    }
+  }
+
+  return {
+    source: 'BOATCAST',
+    metadata,
+    racers,
+    start_exhibition_st,
+  };
+}
+
+// ============================================================
+// sttテキストを解析・BW2標準形式へ正規化
+//
+// sttフィールド構成(0-indexed):
+//  0: 艇番(1-6)
+//  1: 進入コース(1-6)  ※艇番と異なる場合あり(進入変更)
+//  2: 選手名
+//  3: 展示ST(展示走行時)  例: .15
+//  4: ST(スタート展示時)  例: .05
+//  5: F flag  "F" or ""
+//  6: 不明(3.5等)  意味不明
+// ============================================================
+export function normalizeStartExhibition(text, metadata) {
+  const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
+  const racerLines = lines.filter(l => /^\d\t\d/.test(l));
+
+  const racers = racerLines.map(line => {
+    const parts = line.split('\t');
+    return {
+      lane: parseInt(parts[0]),
+      course: parseInt(parts[1]),
+      racer_name: parseStr(parts[2])?.replace(/[\s\u3000]+/g, ' ').trim() || null,
+      exhibition_st: parseNum(parts[3]),
+      st: parseNum(parts[4]),
+      f_flag: parseStr(parts[5]) || null,
+      _raw_field6: parseNum(parts[6]),
+    };
+  });
+
+  return {
+    source: 'BOATCAST',
+    metadata,
+    racers,
+  };
+}
+
+// ============================================================
+// tkz + stt を統合して標準直前情報を生成
+// ============================================================
+export function normalizeExhibitionData(tkzResult, sttResult, metadata) {
+  const tkz = tkzResult?.racers || [];
+  const stt = sttResult?.racers || [];
+  const tkzSt = tkzResult?.start_exhibition_st || [];
+
+  // ST順位計算(CALCULATED)
+  // BOATCASTに完成済みST順がないため、stt.stから計算
+  const validSts = stt.filter(s => s.st != null && s.f_flag !== 'F');
+  const sortedBySt = [...validSts].sort((a, b) => a.st - b.st);
+  const stRankMap = {};
+  sortedBySt.forEach((s, idx) => { stRankMap[s.lane] = idx + 1; });
+
+  const racers = tkz.map(tkzRacer => {
+    const sttRacer = stt.find(s => s.lane === tkzRacer.lane);
+    const stData = tkzSt.find(s => s.lane === tkzRacer.lane);
+    return {
+      lane: tkzRacer.lane,
+      racer_name: tkzRacer.racer_name,
+      exhibition_time: tkzRacer.exhibition_time,
+      exhibition_course: sttRacer?.course ?? null,
+      exhibition_st: sttRacer?.exhibition_st ?? null,
+      st: sttRacer?.st ?? stData?.st ?? null,
+      exhibition_start_rank: stRankMap[tkzRacer.lane] ?? null,
+      exhibition_start_rank_source: stRankMap[tkzRacer.lane] ? 'CALCULATED' : null,
+      weight: tkzRacer.weight,
+      adjustment_weight: null,
+      tilt: tkzRacer.tilt,
+      f_flag: sttRacer?.f_flag ?? stData?.f_flag ?? null,
+    };
+  });
+
+  const validCount = racers.filter(r =>
+    r.exhibition_time != null && r.exhibition_course != null
+  ).length;
+  let status = 'WAITING';
+  if (validCount === 6) status = 'COMPLETE';
+  else if (validCount > 0) status = 'PARTIAL';
+
+  return {
+    race_date: metadata?.race_date || null,
+    venue_code: metadata?.venue_code || null,
+    race_number: metadata?.race_number || null,
+    racers,
+    conditions: null,
+    status,
+    source: 'BOATCAST',
+    fetched_at: metadata?.fetched_at || new Date().toISOString(),
+  };
+}
+
+// ============================================================
 // tokuten_hayamiテキストを解析・BW2標準形式へ正規化
 //
 // tokuten_hayamiフィールド構成(0-indexed):
