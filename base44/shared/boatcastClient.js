@@ -69,6 +69,20 @@ const BOATCAST_DATA_TYPES = {
     description: '3連単リアルタイムオッズ(締切前)',
     basePath: 'txt',
   },
+  RS1: {
+    code: 'rs1',
+    updatePolicy: 'FINAL',
+    ttl: Infinity, // 確定後は不変
+    description: 'レース結果(着順・ST・進入・決まり手・天候)',
+    basePath: 'txt',
+  },
+  RS2: {
+    code: 'rs2',
+    updatePolicy: 'FINAL',
+    ttl: Infinity, // 確定後は不変
+    description: '払戻データ(3連単・3連複・2連単・2連複・拡連複)',
+    basePath: 'txt',
+  },
 };
 
 // 更新ポリシー別デフォルトTTL
@@ -129,6 +143,10 @@ function buildUrl(dataType, venueCode, raceDate, raceNumber) {
       return `${BOATCAST_TXT_BASE}/${vc}/bc_kakutei_od3_${hd}_${vc}_${rn}.txt`;
     case 'smt_od3':
       return `${BOATCAST_TXT_BASE}/${vc}/bc_smt_od3_${hd}_${vc}_${rn}.txt`;
+    case 'rs1':
+      return `${BOATCAST_TXT_BASE}/${vc}/bc_rs1_${hd}_${vc}_${rn}.txt`;
+    case 'rs2':
+      return `${BOATCAST_TXT_BASE}/${vc}/bc_rs2_${hd}_${vc}_${rn}.txt`;
     default:
       throw new Error(`URL builder not implemented for ${dataType}`);
   }

@@ -406,6 +406,244 @@ export function normalizeTokutenHayami(text, metadata) {
 }
 
 // ============================================================
+// rs1テキストを解析・BW2標準形式へ正規化(レース結果)
+//
+// rs1フィールド構成:
+//  Line 0: "data="
+//  Line 1: ステータス("1"=available)
+//  Line 2-7: 着順データ(6艇分)
+//    [0]: 着順(全角数字)
+//    [1]: 艇番(1-6)
+//    [2]: 選手名
+//    [3]: レースタイム(1'51"2等, 未完走時は空)
+//  Line 8-13: STデータ(6艇分)
+//    [0]: 艇番
+//    [1]: ST(.08等)
+//    [2]: F flag("F" or "")
+//    [3]: 決まり手(1着艇のみ, "逃げ"等)
+//  Line 14: 進入コース(艇番順に6値)
+//  Line 15: 天候・風・波
+//    [0]: 天候
+//    [1]: 風速
+//    [2]: 波高
+//    [3]: 風向
+// ============================================================
+export function normalizeRs1(text, metadata) {
+  const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
+  if (lines.length < 7) return { ok: false, error: `insufficient lines: ${lines.length}` };
+
+  const status = lines[0].trim();
+  if (status !== '1') return { ok: false, error: `not available: status=${status}`, status };
+
+  const finishLines = lines.slice(1, 7);
+  const stLines = lines.slice(7, 13);
+  const courseLine = lines[13] || '';
+  const conditionLine = lines[14] || '';
+
+  // 着順データ解析
+  const results = finishLines.map((line, idx) => {
+    const parts = line.split('\t');
+    const finishOrder = idx + 1; // 1着から順に並んでいる
+    const boatNumber = parseNum(parts[1]);
+    const racerName = parseStr(parts[2])?.replace(/[\s\u3000]+/g, ' ').trim() || null;
+    const raceTime = parseStr(parts[3]) || null;
+    return {
+      finish_order: finishOrder,
+      boat_number: boatNumber,
+      racer_name: racerName,
+      race_time: raceTime,
+    };
+  });
+
+  // STデータ解析
+  const stData = stLines.map(line => {
+    const parts = line.split('\t');
+    return {
+      boat_number: parseNum(parts[0]),
+      st: parseSt(parts[1]),
+      f_flag: parseStr(parts[2]) || null,
+      winning_method: parseStr(parts[3])?.replace(/[\s\u3000]+/g, '') || null,
+    };
+  });
+
+  // 進入コース解析(艇番順に6値)
+  const courseParts = courseLine.split('\t').map(p => parseNum(p));
+  const courseMap = {};
+  for (let i = 0; i < 6; i++) {
+    if (courseParts[i] != null) courseMap[i + 1] = courseParts[i];
+  }
+
+  // 天候情報
+  const condParts = conditionLine.split('\t');
+  const conditions = {
+    weather: parseStr(condParts[0]),
+    wind_speed: parseNum(condParts[1]),
+    wave_height: parseNum(condParts[2]),
+    wind_dir: parseStr(condParts[3]),
+  };
+
+  // 結果統合(艇番ごと)
+  const boats = results.map(r => {
+    const st = stData.find(s => s.boat_number === r.boat_number);
+    return {
+      boat_number: r.boat_number,
+      finish_order: r.finish_order,
+      racer_name: r.racer_name,
+      race_time: r.race_time,
+      st: st?.st ?? null,
+      f_flag: st?.f_flag ?? null,
+      course: courseMap[r.boat_number] ?? null,
+      winning_method: r.finish_order === 1 ? st?.winning_method : null,
+      result_status: 'NORMAL',
+    };
+  });
+
+  // 3連単確定(1-2-3着の艇番)
+  const top3 = boats.filter(b => b.finish_order >= 1 && b.finish_order <= 3).sort((a, b) => a.finish_order - b.finish_order);
+  const trifecta = top3.length === 3 ? `${top3[0].boat_number}-${top3[1].boat_number}-${top3[2].boat_number}` : null;
+
+  return {
+    ok: true,
+    source: 'BOATCAST',
+    race_date: metadata?.race_date || null,
+    venue_code: metadata?.venue_code || null,
+    race_number: metadata?.race_number || null,
+    status: 'RESULT_FINAL',
+    trifecta,
+    boats,
+    winning_method: boats.find(b => b.finish_order === 1)?.winning_method || null,
+    conditions,
+    fetched_at: metadata?.fetched_at || new Date().toISOString(),
+  };
+}
+
+// ============================================================
+// rs2テキストを解析・BW2標準形式へ正規化(払戻データ)
+//
+// rs2フィールド構成:
+//  Line 0: "data="
+//  Line 1: ステータス("1\t0" 等, 1=available)
+//  Line 2+: 払戻データ
+//    2連単: "1\t-\t2\t1,280\t円\t7" (艇1-艇2, 払戻, 単位, 人気)
+//    2連複: "1\t=\t2\t800\t円\t4"
+//    3連単: "1\t2\t4\t4,400\t円\t21" (3数値, 1行目)
+//    3連複: "1\t2\t4\t1,290\t円\t8" (3数値, 2行目)
+//    拡連複: "1\t=\t2\t290\t円\t6" (=区切り, 3行目以降)
+// ============================================================
+export function normalizeRs2(text, metadata) {
+  const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
+  if (lines.length < 2) return { ok: false, error: `insufficient lines: ${lines.length}` };
+
+  const statusParts = lines[0].split('\t');
+  const status = statusParts[0]?.trim();
+  if (status !== '1') return { ok: false, error: `not available: status=${status}`, status };
+
+  const payoutLines = lines.slice(1);
+  const payouts = {
+    trifecta: null,      // 3連単
+    trifecta_quinella: null, // 3連複
+    exacta: null,        // 2連単
+    quinella: null,      // 2連複
+    wide: [],            // 拡連複
+  };
+
+  let threeNumCount = 0; // 3数値行のカウント(1回目=3連単, 2回目=3連複)
+  let equalCount = 0;    // =区切り行のカウント(1回目=2連複, 2回目以降=拡連複)
+
+  for (const line of payoutLines) {
+    const parts = line.split('\t');
+    const hasDash = parts.includes('-');
+    const hasEqual = parts.includes('=');
+
+    if (hasDash) {
+      // 2連単: "1 - 2 1280 円 7"
+      const b1 = parseNum(parts[0]);
+      const b2 = parseNum(parts[2]);
+      const payout = parseNum(parts[3]);
+      const popularity = parseNum(parts[5]);
+      if (b1 && b2 && payout) {
+        payouts.exacta = { combination: `${b1}-${b2}`, payout, popularity };
+      }
+    } else if (hasEqual) {
+      // 2連複 or 拡連複
+      equalCount++;
+      const b1 = parseNum(parts[0]);
+      const b2 = parseNum(parts[2]);
+      const payout = parseNum(parts[3]);
+      const popularity = parseNum(parts[5]);
+      if (b1 && b2 && payout) {
+        if (equalCount === 1) {
+          payouts.quinella = { combination: `${b1}=${b2}`, payout, popularity };
+        } else {
+          payouts.wide.push({ combination: `${b1}=${b2}`, payout, popularity });
+        }
+      }
+    } else {
+      // 3連単 or 3連複(3数値行)
+      threeNumCount++;
+      const b1 = parseNum(parts[0]);
+      const b2 = parseNum(parts[1]);
+      const b3 = parseNum(parts[2]);
+      const payout = parseNum(parts[3]);
+      const popularity = parseNum(parts[5]);
+      if (b1 && b2 && b3 && payout) {
+        if (threeNumCount === 1) {
+          // 3連単
+          payouts.trifecta = { combination: `${b1}-${b2}-${b3}`, payout, popularity };
+        } else {
+          // 3連複
+          payouts.trifecta_quinella = { combination: `${b1}=${b2}=${b3}`, payout, popularity };
+        }
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    source: 'BOATCAST',
+    race_date: metadata?.race_date || null,
+    venue_code: metadata?.venue_code || null,
+    race_number: metadata?.race_number || null,
+    status: 'RESULT_FINAL',
+    payouts,
+    fetched_at: metadata?.fetched_at || new Date().toISOString(),
+  };
+}
+
+// ============================================================
+// rs1 + rs2 を統合して標準レース結果を生成
+// ============================================================
+export function normalizeRaceResult(rs1Result, rs2Result, metadata) {
+  const rs1 = rs1Result?.ok ? rs1Result : null;
+  const rs2 = rs2Result?.ok ? rs2Result : null;
+
+  if (!rs1) return { ok: false, error: 'rs1 not available' };
+
+  const boats = rs1.boats || [];
+  const trifecta = rs1.trifecta;
+  const payout = rs2?.payouts?.trifecta?.payout || null;
+  const popularity = rs2?.payouts?.trifecta?.popularity || null;
+
+  return {
+    ok: true,
+    source: 'BOATCAST',
+    race_date: metadata?.race_date || rs1.race_date,
+    venue_code: metadata?.venue_code || rs1.venue_code,
+    race_number: metadata?.race_number || rs1.race_number,
+    status: 'RESULT_FINAL',
+    result_trifecta: trifecta,
+    finish_order: boats.map(b => b.boat_number),
+    boats,
+    winning_method: rs1.winning_method,
+    conditions: rs1.conditions,
+    payout,
+    popular_trifecta: popularity != null ? `${popularity}番人気` : null,
+    payouts: rs2?.payouts || null,
+    fetched_at: metadata?.fetched_at || new Date().toISOString(),
+  };
+}
+
+// ============================================================
 // od3テキストを解析・BW2標準形式へ正規化
 //
 // od3フィールド構成(艇ごと1行):
