@@ -56,12 +56,6 @@ export default function LanePast10Table({ entries, race }) {
   // キャッシュ新鮮度しきい値: 1時間以内なら再計算スキップ
   const STALE_THRESHOLD_MS = 60 * 60 * 1000;
 
-  // 検証用: 若松3R(2026-09-12)のみBOATCASTデータを優先
-  const isTargetRace = (race) =>
-    race?.race_date === "2026-09-12" &&
-    String(race?.venue_code) === "20" &&
-    Number(race?.race_number) === 3;
-
   const fetchFromBoatcast = async () => {
     try {
       const res = await base44.functions.invoke("fetchBoatcastWaku10", {
@@ -139,15 +133,13 @@ export default function LanePast10Table({ entries, race }) {
     const load = async () => {
       setLoading(true);
 
-      // 検証用: 対象レース(若松3R)はBOATCASTデータを優先取得
-      if (isTargetRace(race)) {
-        const boatcastStats = await fetchFromBoatcast();
-        if (boatcastStats && !cancelled) {
-          setStatsByKey(boatcastStats);
-          setDataSource("BOATCAST");
-          setLoading(false);
-          return;
-        }
+      // BOATCAST優先取得(全レース対象) — 失敗時のみLOCAL fallback
+      const boatcastStats = await fetchFromBoatcast();
+      if (boatcastStats && Object.keys(boatcastStats).length > 0 && !cancelled) {
+        setStatsByKey(boatcastStats);
+        setDataSource("BOATCAST");
+        setLoading(false);
+        return;
       }
       setDataSource("LOCAL");
 
