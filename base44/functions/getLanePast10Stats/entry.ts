@@ -150,10 +150,115 @@ export default async function (req: Request) {
     }
 
     // =====================================================
+    // Phase 2.5: ST順位計算(各レースの6艇STから順位算出)
+    // =====================================================
+    // Step 1: 既存のRacerRaceHistory(Phase 1で取得済み)からST順位を計算
+    // Step 2: 6艇揃わないレースのみ、date+venueごとにバッチ取得(5件同時)
+    // start_orderがDBに存在すればそれを優先、なければST値から算出
+    // 順位を出せないレースは平均ST順位の分母から除外
+    const stOrderByRace = new Map<string, Map<number, number>>(); // race_key -> (boat_number -> start_order)
+    {
+      // recent10のユニークレースキーを収集
+      const uniqueRaceKeys = new Set<string>();
+      for (const [, candidates] of recent10ByReg) {
+        for (const h of candidates) {
+          uniqueRaceKeys.add(`${h.race_date}_${h.venue_code}_${h.race_number}`);
+        }
+      }
+
+      // Step 1: 既存データからST順位を計算(追加クエリなし)
+      // histByRegの6選手全履歴からrace_key -> (boat_number -> record)を構築
+      const raceBoatsMap = new Map<string, Map<number, any>>();
+      for (const [, allHist] of histByReg) {
+        for (const h of allHist || []) {
+          const raceKey = `${h.race_date}_${h.venue_code}_${h.race_number}`;
+          if (!uniqueRaceKeys.has(raceKey)) continue;
+          if (!raceBoatsMap.has(raceKey)) raceBoatsMap.set(raceKey, new Map());
+          raceBoatsMap.get(raceKey)!.set(Number(h.boat_number), h);
+        }
+      }
+      const needFetch = new Set<string>();
+      for (const raceKey of uniqueRaceKeys) {
+        const boats = raceBoatsMap.get(raceKey);
+        if (boats && boats.size >= 1) {
+          const byBoat = new Map<number, any>();
+          for (const [, b] of boats) {
+            if (b.st != null && Number.isFinite(Number(b.st))) {
+              byBoat.set(Number(b.boat_number), b);
+            }
+          }
+          if (byBoat.size >= 1) {
+            const sorted = [...byBoat.values()].sort((a: any, b: any) => Number(a.st) - Number(b.st));
+            const orderMap = new Map<number, number>();
+            sorted.forEach((b: any, i: number) => {
+              orderMap.set(Number(b.boat_number), i + 1);
+            });
+            stOrderByRace.set(raceKey, orderMap);
+          }
+        } else {
+          needFetch.add(raceKey);
+        }
+      }
+      console.log(`[LanePast10] ST順位 Step1: 既存データで計算=${stOrderByRace.size} | 追加取得必要=${needFetch.size}`);
+
+      // Step 2: 追加取得が必要なレースのみ、date+venueごとにバッチ取得(5件同時)
+      if (needFetch.size > 0) {
+        // date+venueごとにグループ化
+        const needDateVenues = new Set<string>();
+        for (const raceKey of needFetch) {
+          const [date, venue] = raceKey.split('_');
+          needDateVenues.add(`${date}_${venue}`);
+        }
+        const dvList = [...needDateVenues];
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < dvList.length; i += BATCH_SIZE) {
+          const batch = dvList.slice(i, i + BATCH_SIZE);
+          const results = await Promise.allSettled(
+            batch.map(async (dv) => {
+              const [date, venue] = dv.split('_');
+              const allBoats: any[] = await retry(() =>
+                sr.RacerRaceHistory.filter({ race_date: date, venue_code: venue }, null, 500), 3
+              );
+              return { dv, allBoats };
+            })
+          );
+          for (const result of results) {
+            if (result.status !== 'fulfilled') continue;
+            const { allBoats } = result.value;
+            const byRace = new Map<string, any[]>();
+            for (const b of allBoats || []) {
+              const raceKey = `${b.race_date}_${b.venue_code}_${b.race_number}`;
+              if (!needFetch.has(raceKey)) continue;
+              if (!byRace.has(raceKey)) byRace.set(raceKey, []);
+              byRace.get(raceKey)!.push(b);
+            }
+            for (const [raceKey, boats] of byRace) {
+              const byBoat = new Map<number, any>();
+              for (const b of boats) {
+                if (b.st != null && Number.isFinite(Number(b.st))) {
+                  byBoat.set(Number(b.boat_number), b);
+                }
+              }
+              if (byBoat.size >= 1) {
+                const sorted = [...byBoat.values()].sort((a: any, b: any) => Number(a.st) - Number(b.st));
+                const orderMap = new Map<number, number>();
+                sorted.forEach((b: any, i: number) => {
+                  orderMap.set(Number(b.boat_number), i + 1);
+                });
+                stOrderByRace.set(raceKey, orderMap);
+              }
+            }
+          }
+          await sleep(50);
+        }
+      }
+      console.log(`[LanePast10] ST順位計算: unique races=${uniqueRaceKeys.size} | 計算済みレース数=${stOrderByRace.size}`);
+    }
+
+    // =====================================================
     // Phase 3: 各選手のrecent10処理 + 勝率計算
     // =====================================================
     const by_key: any = {};
-    let verificationLogged = false;
 
     for (const item of requested) {
       const reg = String(item.registration_number || '').trim();
@@ -168,6 +273,8 @@ export default async function (req: Request) {
         const recent10 = sameLane.slice().reverse().map((h: any) => {
           const raceKey = `${h.race_date}_${h.venue_code}_${h.race_number}`;
           const race = raceMap.get(raceKey) || {};
+          const stOrderMap = stOrderByRace.get(raceKey);
+          const calculatedStartOrder = stOrderMap?.get(Number(h.boat_number)) ?? null;
           const enriched = {
             id: h.id,
             race_date: h.race_date,
@@ -178,7 +285,7 @@ export default async function (req: Request) {
             finish_order: num(h.finish_order),
             finish_status: h.finish_status || null,
             st: num(h.st),
-            start_order: num(h.start_order),
+            start_order: num(h.start_order) ?? calculatedStartOrder,
             race_grade: race.grade || null,
             race_type: race.race_type || null,
             race_name: race.race_name || null,
@@ -270,21 +377,24 @@ export default async function (req: Request) {
         by_key[`${reg}_${lane}`] = stats;
 
         // =====================================================
-        // 検証ログ(最初の1選手のみ)
+        // 検証ログ(6選手全員)
         // =====================================================
-        if (!verificationLogged && recent10.length > 0) {
-          verificationLogged = true;
+        {
           console.log(`\n========== 勝率検証 reg=${reg} lane=${lane} ==========`);
           let pointSum = 0;
           for (const h of recent10) {
             console.log(
               `  ${h.race_date} | 会場${h.venue_code} | ${h.race_number}R | ` +
               `grade=${h.race_grade || '(null)'} | type=${h.race_type || '(null)'} | name=${h.race_name || '(null)'} | ` +
-              `着順=${h.finish_order != null ? h.finish_order : (h.finish_status || '(特殊)')} | 着順点=${h.finish_point}`
+              `着順=${h.finish_order != null ? h.finish_order : (h.finish_status || '(特殊)')} | 着順点=${h.finish_point} | ` +
+              `ST=${h.st != null ? Number(h.st).toFixed(2) : '—'} | ST順=${h.start_order ?? '—'}`
             );
             pointSum += h.finish_point || 0;
           }
-          console.log(`  --- 着順点合計=${pointSum} | 有効出走数=${validRaceCount} | 勝率=${winningRate != null ? winningRate.toFixed(2) : '—'} ---`);
+          console.log(
+            `  --- 着順点合計=${pointSum} | 有効出走数=${validRaceCount} | 勝率=${winningRate != null ? winningRate.toFixed(2) : '—'} | ` +
+            `平均ST=${stats.avg_st != null ? Number(stats.avg_st).toFixed(3) : '—'} | 平均ST順位=${stats.avg_start_order != null ? Number(stats.avg_start_order).toFixed(1) : '—'} ---`
+          );
           console.log(`==================================================\n`);
         }
 
