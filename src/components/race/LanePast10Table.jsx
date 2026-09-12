@@ -26,6 +26,7 @@ const boatBadgeBg = {
 function finishTextClass(finish, special) {
   if (special) return "text-rose-500";
   const n = Number(finish);
+  if (!Number.isFinite(n)) return "text-slate-400";
   if (n === 1) return "text-white font-black";
   if (n === 2 || n === 3) return "text-slate-200 font-bold";
   if (n >= 4) return "text-slate-500";
@@ -33,14 +34,30 @@ function finishTextClass(finish, special) {
 }
 
 function formatFinish(h) {
-  if (!h) return "";
+  if (!h) return "—";
   if (h.finish_status) return h.finish_status;
-  if (h.finish_order != null) return String(h.finish_order);
-  return "";
+  if (h.finish_order != null && Number.isFinite(h.finish_order)) return String(h.finish_order);
+  return "—";
 }
 
 function isSpecial(h) {
   return !!(h?.finish_status && h.finish_status !== "");
+}
+
+// WAKU10安全表示ユーティリティ — NaN/undefined/null/空文字の画面露出を防止
+// 数値1-6のみ有効、それ以外はnull(NaN防止)
+function safeLaneNumber(raw) {
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 6 ? n : null;
+}
+
+// 着順正規化: 数値(1-6)→finish_order、特殊結果(F/L/欠/沈/失/転/落/妨/不等)→finish_status、欠損→両方null
+function normalizeWaku10Finish(raw) {
+  if (raw == null || raw === "") return { finish_order: null, finish_status: null };
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 1 && n <= 6) return { finish_order: n, finish_status: null };
+  return { finish_order: null, finish_status: String(raw) };
 }
 
 export default function LanePast10Table({ entries, race }) {
@@ -70,15 +87,18 @@ export default function LanePast10Table({ entries, race }) {
       for (const r of data.racers) {
         const entry = entries.find((e) => Number(e.boat_number) === r.lane);
         const reg = String(entry?.register_number || entry?.registration_number || "");
-        const recent10 = r.past10.map((p) => ({
-          course: p.course ? Number(p.course) : Number(r.lane),
-          finish_order: p.finish === "欠" ? null : Number(p.finish),
-          finish_status: p.finish === "欠" ? "欠" : null,
-          st: null,
-          start_order: null,
-          is_disqualified: false,
-          is_absent: p.finish === "欠",
-        })).reverse();
+        const recent10 = r.past10.map((p) => {
+          const { finish_order, finish_status } = normalizeWaku10Finish(p.finish);
+          return {
+            course: safeLaneNumber(p.course),
+            finish_order,
+            finish_status,
+            st: null,
+            start_order: null,
+            is_disqualified: false,
+            is_absent: p.finish === "欠",
+          };
+        }).reverse();
         statsByKey[`${reg}_${r.lane}`] = {
           registration_number: reg,
           lane: r.lane,
@@ -243,9 +263,9 @@ export default function LanePast10Table({ entries, race }) {
                   {Array.from({ length: 10 }).map((_, i) => (
                     <CourseCell key={i} h={recent10[i]} loading={isLoading} isError={isError} />
                   ))}
-                  <StatCell rowSpan={2} value={stats?.winning_rate != null ? Number(stats.winning_rate).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} highlight />
-                  <StatCell rowSpan={2} value={stats?.avg_st != null ? Number(stats.avg_st).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} mono />
-                  <StatCell rowSpan={2} value={stats?.avg_start_order != null ? Number(stats.avg_start_order).toFixed(1) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} />
+                  <StatCell rowSpan={2} value={Number.isFinite(stats?.winning_rate) ? Number(stats.winning_rate).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} highlight />
+                  <StatCell rowSpan={2} value={Number.isFinite(stats?.avg_st) ? Number(stats.avg_st).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} mono />
+                  <StatCell rowSpan={2} value={Number.isFinite(stats?.avg_start_order) ? Number(stats.avg_start_order).toFixed(1) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} />
                 </tr>
                 {/* 下段: 着順 */}
                 <tr className="bg-slate-800/40">
@@ -297,7 +317,7 @@ function RacerInfo({ e, reg, profile, sampleCount }) {
 function CourseCell({ h, loading, isError }) {
   if (loading) return <td className="border border-slate-700 text-center text-slate-700 animate-pulse text-[10px] py-0.5">…</td>;
   if (isError || !h) return <td className="border border-slate-700 bg-slate-900/50 text-center text-slate-700 text-[10px] py-0.5">—</td>;
-  const course = h.course;
+  const course = Number.isFinite(h.course) ? h.course : null;
   return (
     <td className={cn("border border-slate-700 text-center font-black text-[11px] py-0.5", course != null ? (courseBg[course] || "bg-slate-700 text-slate-300") : "bg-slate-900/50 text-slate-700")}>
       {course != null ? course : "—"}
