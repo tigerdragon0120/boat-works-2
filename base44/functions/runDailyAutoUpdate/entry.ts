@@ -1,7 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
-import { upsertRace, upsertEntry, upsertResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds } from '../../shared/predictionService.js';
+import { upsertRace, upsertEntry, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds } from '../../shared/predictionService.js';
+import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 
@@ -244,7 +245,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
   const existingResults = await sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []);
   const raceIdsWithResult = new Set(existingResults.map((r: any) => r.race_id));
 
-  let fetched = 0, skipped = 0;
+  let fetched = 0, skipped = 0, boatcastCount = 0, localCount = 0;
   const now = Date.now();
 
   for (const race of races) {
@@ -264,85 +265,98 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
     const raceNumber = race.race_number;
     const venueName = race.venue_name || race.venue || VENUE_MAP[venueCode] || venueCode;
 
-    const url = buildUrl('raceresult', raceDate, venueCode, raceNumber);
-    const res = await fetchHtml(url);
-    if (!res.ok) {
-      // 結果未公開の可能性 → スキップ
-      continue;
-    }
-
-    const parsed = parseResult(res.html, raceDate, venueCode, venueName);
-    if (!parsed.ok || !parsed.data?.venues?.[0]?.results?.[0]) {
-      continue; // 結果未公開
-    }
-
-    const result = parsed.data.venues[0].results[0];
-    result.race_number = raceNumber;
-
+    // ============================================================
+    // BOATCAST優先で結果取得(着順・ST・進入・決まり手・天候・全券種払戻)
+    // 失敗時はLOCAL(boatrace.jp公式HTML)へフォールバック
+    // ============================================================
+    let resultSaved = false;
     try {
-      // RaceResult保存 + 検証
-      await upsertResultAndVerify(base44, race, {
-        result_trifecta: result.result_trifecta,
-        finish_order: result.finish_order || [],
-        payout: result.payout || 0,
-      });
-
-      // RacerRaceHistory蓄積
-      const raceEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
-      const entryByBoat = new Map(raceEntries.map((e: any) => [e.boat_number, e]));
-      const histCreates: any[] = [];
-      const histUpdates: any[] = [];
-
-      // 既存履歴確認
-      const existingHists = await sr.RacerRaceHistory.filter({ race_date: raceDate, venue_code: venueCode, race_number: raceNumber }, 'race_number', 10).catch(() => []);
-      const histByReg = new Map(existingHists.map((h: any) => [h.registration_number, h]));
-
-      for (const pe of result.entries || []) {
-        const bn = num(pe.boat_number);
-        if (!bn) continue;
-        const re = entryByBoat.get(bn);
-        const reg = str(re?.registration_number || re?.register_number || pe.registration_number);
-        if (!reg || !/^\d{4}$/.test(reg)) continue;
-
-        const histDoc: any = {
-          registration_number: reg,
-          race_date: raceDate,
-          venue_code: venueCode,
-          race_number: raceNumber,
-          boat_number: bn,
-          finish_order: num(pe.finish_order) || undefined,
-          st: num(pe.st) ?? undefined,
-          winning_method: str(pe.winning_method) || undefined,
-          race_time: str(pe.race_time) || undefined,
-        };
-        const old = histByReg.get(reg);
-        if (old) histUpdates.push({ id: old.id, ...histDoc });
-        else histCreates.push(histDoc);
+      const boatcastResult = await resolveRaceResult(race);
+      if (boatcastResult.source === 'BOATCAST' && boatcastResult.result?.result_trifecta) {
+        await upsertBoatcastResultAndVerify(base44, race, boatcastResult);
+        fetched++;
+        boatcastCount++;
+        resultSaved = true;
+        logs.push(`${venueName} R${raceNumber}: BOATCAST結果 ${boatcastResult.result.result_trifecta} ¥${boatcastResult.result.payout || 0} (${boatcastResult.result.popular_trifecta || '-'})`);
       }
-
-      if (histCreates.length) await sr.RacerRaceHistory.bulkCreate(histCreates).catch(() => {});
-      if (histUpdates.length) await sr.RacerRaceHistory.bulkUpdate(histUpdates).catch(() => {});
-
-      // 天候情報でRace更新(保護付き)
-      if (result.weather || result.wind_speed != null || result.water_temp != null) {
-        const raceUpdate: any = {};
-        if (result.weather) raceUpdate.weather = result.weather;
-        if (result.wind_speed != null) raceUpdate.wind_speed = result.wind_speed;
-        if (result.water_temp != null) raceUpdate.water_temp = result.water_temp;
-        if (result.air_temp != null) raceUpdate.air_temp = result.air_temp;
-        if (result.wave_height != null) raceUpdate.wave_height = result.wave_height;
-        await sr.Race.update(race.id, raceUpdate).catch(() => {});
-      }
-
-      fetched++;
-      logs.push(`${venueName} R${raceNumber}: 結果取得成功 ${result.result_trifecta} ¥${result.payout || 0}`);
     } catch (e: any) {
-      errors.push(`${venueName} R${raceNumber}: 結果保存失敗 ${e.message}`);
+      errors.push(`${venueName} R${raceNumber}: BOATCAST結果保存失敗 ${e.message}`);
     }
+
+    // BOATCAST失敗時はLOCAL fallback
+    if (!resultSaved) {
+      const url = buildUrl('raceresult', raceDate, venueCode, raceNumber);
+      const res = await fetchHtml(url);
+      if (!res.ok) continue;
+
+      const parsed = parseResult(res.html, raceDate, venueCode, venueName);
+      if (!parsed.ok || !parsed.data?.venues?.[0]?.results?.[0]) continue;
+
+      const result = parsed.data.venues[0].results[0];
+      result.race_number = raceNumber;
+
+      try {
+        await upsertResultAndVerify(base44, race, {
+          result_trifecta: result.result_trifecta,
+          finish_order: result.finish_order || [],
+          payout: result.payout || 0,
+        });
+
+        // RacerRaceHistory蓄積(LOCAL)
+        const raceEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+        const entryByBoat = new Map(raceEntries.map((e: any) => [e.boat_number, e]));
+        const histCreates: any[] = [];
+        const histUpdates: any[] = [];
+
+        const existingHists = await sr.RacerRaceHistory.filter({ race_date: raceDate, venue_code: venueCode, race_number: raceNumber }, 'race_number', 10).catch(() => []);
+        const histByReg = new Map(existingHists.map((h: any) => [h.registration_number, h]));
+
+        for (const pe of result.entries || []) {
+          const bn = num(pe.boat_number);
+          if (!bn) continue;
+          const re = entryByBoat.get(bn);
+          const reg = str(re?.registration_number || re?.register_number || pe.registration_number);
+          if (!reg || !/^\d{4}$/.test(reg)) continue;
+
+          const histDoc: any = {
+            registration_number: reg, race_date: raceDate, venue_code: venueCode, race_number: raceNumber,
+            boat_number: bn, finish_order: num(pe.finish_order) || undefined,
+            st: num(pe.st) ?? undefined, winning_method: str(pe.winning_method) || undefined,
+            race_time: str(pe.race_time) || undefined,
+          };
+          const old = histByReg.get(reg);
+          if (old) histUpdates.push({ id: old.id, ...histDoc });
+          else histCreates.push(histDoc);
+        }
+
+        if (histCreates.length) await sr.RacerRaceHistory.bulkCreate(histCreates).catch(() => {});
+        if (histUpdates.length) await sr.RacerRaceHistory.bulkUpdate(histUpdates).catch(() => {});
+
+        // 天候情報でRace更新
+        if (result.weather || result.wind_speed != null || result.water_temp != null) {
+          const raceUpdate: any = {};
+          if (result.weather) raceUpdate.weather = result.weather;
+          if (result.wind_speed != null) raceUpdate.wind_speed = result.wind_speed;
+          if (result.water_temp != null) raceUpdate.water_temp = result.water_temp;
+          if (result.air_temp != null) raceUpdate.air_temp = result.air_temp;
+          if (result.wave_height != null) raceUpdate.wave_height = result.wave_height;
+          await sr.Race.update(race.id, raceUpdate).catch(() => {});
+        }
+
+        fetched++;
+        localCount++;
+        resultSaved = true;
+        logs.push(`${venueName} R${raceNumber}: LOCAL結果 ${result.result_trifecta} ¥${result.payout || 0}`);
+      } catch (e: any) {
+        errors.push(`${venueName} R${raceNumber}: LOCAL結果保存失敗 ${e.message}`);
+      }
+    }
+
     await sleep(300);
   }
 
-  return { total: races.length, fetched, skipped, errors };
+  logs.push(`結果取得: BOATCAST=${boatcastCount}R LOCAL=${localCount}R`);
+  return { total: races.length, fetched, skipped, boatcast: boatcastCount, local: localCount, errors };
 }
 
 // =====================================================

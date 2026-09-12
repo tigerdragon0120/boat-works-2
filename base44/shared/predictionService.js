@@ -7,6 +7,7 @@ import { fetchBoatcastText } from "./boatcastClient.js";
 import { normalizeTkz, normalizeStartExhibition, normalizeExhibitionData } from "./boatcastNormalizer.js";
 import { mergeExhibition } from "./exhibitionMerger.js";
 import { resolveProductionOdds, shouldFetchOdds } from "./oddsResolver.js";
+import { resolveRaceResult, mergeResultProtect } from "./resultResolver.js";
 
 const VERSION = "v3";
 
@@ -583,6 +584,149 @@ export async function refreshFinalOdds(client, race, settings) {
   };
 }
 
+// ============================================================
+// BOATCAST結果upsert + 照合(サーバー側)
+// BOATCAST結果(着順・ST・進入・決まり手・天候・全券種払戻)を保存し、
+// PRE/FINAL予想との照合を行う。
+// 既存LOCAL結果がある場合はCONFLICTチェック+BOATCAST優先で上書き。
+// ============================================================
+export async function upsertBoatcastResultAndVerify(client, race, boatcastResult) {
+  if (!boatcastResult?.ok || !boatcastResult.result?.result_trifecta) {
+    return { saved: null, verification: null, skipped: true, reason: boatcastResult?.reason || 'no_result' };
+  }
+
+  const sr = client.asServiceRole.entities;
+  const result = boatcastResult.result;
+
+  // 既存RaceResult確認
+  const existing = await sr.RaceResult.filter({ race_id: race.id }, "-finished_at", 1).catch(() => []);
+  const existingResult = existing?.[0] || null;
+
+  // 保護付きマージ
+  const doc = {
+    race_id: race.id,
+    race_key: race.race_key,
+    result_trifecta: result.result_trifecta,
+    finish_order: result.finish_order || [],
+    payout: result.payout || 0,
+    popular_trifecta: result.popular_trifecta || null,
+    is_finished: true,
+    finished_at: new Date().toISOString(),
+    source: 'BOATCAST',
+    result_status: 'RESULT_FINAL',
+    boats: result.boats || null,
+    winning_method: result.winning_method || null,
+    conditions: result.conditions || null,
+    payouts: result.payouts || null,
+  };
+
+  // CONFLICT検出(既存LOCAL結果と異なる場合)
+  if (existingResult?.result_trifecta && existingResult.result_trifecta !== result.result_trifecta) {
+    doc.conflict_log = `BOATCAST(${result.result_trifecta}) vs LOCAL(${existingResult.result_trifecta}) — BOATCAST優先で上書き`;
+    console.log(`[RESULT_CONFLICT] race=${race.id} key=${race.race_key} ${doc.conflict_log}`);
+  }
+
+  let saved;
+  if (existingResult) {
+    const merged = mergeResultProtect(existingResult, doc);
+    saved = await sr.RaceResult.update(existingResult.id, merged);
+  } else {
+    saved = await sr.RaceResult.create(doc);
+  }
+
+  // Race状態更新
+  await sr.Race.update(race.id, { status: "finished" }).catch(() => {});
+
+  // RacerRaceHistory蓄積(BOATCAST boatsデータから)
+  const raceEntries = await sr.RaceEntry.filter({ race_id: race.id }, "boat_number", 6).catch(() => []);
+  const entryByBoat = new Map(raceEntries.map((e) => [e.boat_number, e]));
+  const histCreates = [];
+  const histUpdates = [];
+
+  const existingHists = await sr.RacerRaceHistory.filter(
+    { race_date: race.race_date, venue_code: race.venue_code, race_number: race.race_number },
+    "race_number", 10
+  ).catch(() => []);
+  const histByReg = new Map(existingHists.map((h) => [h.registration_number, h]));
+
+  for (const boat of result.boats || []) {
+    const bn = boat.boat_number;
+    if (!bn) continue;
+    const re = entryByBoat.get(bn);
+    const reg = String(re?.registration_number || re?.register_number || '').trim();
+    if (!reg || !/^\d{4}$/.test(reg)) continue;
+
+    const histDoc = {
+      registration_number: reg,
+      race_date: race.race_date,
+      venue_code: race.venue_code,
+      race_number: race.race_number,
+      boat_number: bn,
+      course: boat.course ?? undefined,
+      finish_order: boat.finish_order ?? undefined,
+      st: boat.st ?? undefined,
+      winning_method: boat.winning_method || undefined,
+      race_time: boat.race_time || undefined,
+    };
+    const old = histByReg.get(reg);
+    if (old) histUpdates.push({ id: old.id, ...histDoc });
+    else histCreates.push(histDoc);
+  }
+
+  if (histCreates.length) await sr.RacerRaceHistory.bulkCreate(histCreates).catch(() => {});
+  if (histUpdates.length) await sr.RacerRaceHistory.bulkUpdate(histUpdates).catch(() => {});
+
+  // 天候情報でRace更新(保護付き)
+  if (result.conditions) {
+    const raceUpdate = {};
+    if (result.conditions.weather) raceUpdate.weather = result.conditions.weather;
+    if (result.conditions.wind_speed != null) raceUpdate.wind_speed = result.conditions.wind_speed;
+    if (result.conditions.wave_height != null) raceUpdate.wave_height = result.conditions.wave_height;
+    if (result.conditions.wind_dir) raceUpdate.wind_dir = result.conditions.wind_dir;
+    if (Object.keys(raceUpdate).length) await sr.Race.update(race.id, raceUpdate).catch(() => {});
+  }
+
+  // 予想照合(PRE/FINAL)
+  const verification = await verifyPrediction(client, race, result);
+
+  return { saved, verification, skipped: false };
+}
+
+// 予想照合共通関数(PRE/FINAL予想 vs 実結果)
+async function verifyPrediction(client, race, resultData) {
+  const sr = client.asServiceRole.entities;
+  const pre = await sr.RacePrediction.filter({ race_id: race.id, stage: "PRE", prediction_version: VERSION }, "-computed_at", 1).catch(() => []);
+  const fin = await sr.RacePrediction.filter({ race_id: race.id, stage: "FINAL", prediction_version: VERSION }, "-computed_at", 1).catch(() => []);
+
+  const preHit = (pre?.[0]?.selected_trifectas || []).includes(resultData.result_trifecta) || pre?.[0]?.top_trifecta === resultData.result_trifecta;
+  const finalHit = (fin?.[0]?.selected_trifectas || []).includes(resultData.result_trifecta) || fin?.[0]?.top_trifecta === resultData.result_trifecta;
+
+  // 推奨買い目 = 選定6〜8点(is_selected=true)。BUY判定時のみ投資計上。
+  let recommendedHit = false, investment = 0;
+  if (fin?.[0]) {
+    const tri = await sr.TrifectaPrediction.filter({ prediction_id: fin[0].id, is_selected: true }, "ticket_rank", 8).catch(() => []);
+    investment = tri.length * 100;
+    recommendedHit = tri.some((t) => t.combination === resultData.result_trifecta);
+    if (fin[0].final_judgment !== "BUY") investment = 0;
+  }
+  const recovery = investment > 0 ? Math.round((recommendedHit ? (resultData.payout || 0) : 0) / investment * 100) : 0;
+
+  const verifDoc = {
+    race_id: race.id, race_key: race.race_key,
+    pre_prediction: pre?.[0]?.top_trifecta || "", final_prediction: fin?.[0]?.top_trifecta || "",
+    actual_result: resultData.result_trifecta, pre_hit: preHit, final_hit: finalHit, recommended_hit: recommendedHit,
+    final_judgment: fin?.[0]?.final_judgment || null,
+    ticket_count: fin?.[0]?.ticket_count || null,
+    selected_trifectas: fin?.[0]?.selected_trifectas || [],
+    payout: resultData.payout || 0, investment, recovery_rate: recovery, verified_at: new Date().toISOString(),
+  };
+  const existV = await sr.PredictionVerification.filter({ race_id: race.id }, "-verified_at", 1).catch(() => []);
+  let savedV;
+  if (existV?.[0]) savedV = await sr.PredictionVerification.update(existV[0].id, verifDoc);
+  else savedV = await sr.PredictionVerification.create(verifDoc);
+  return savedV;
+}
+
 // 結果upsert + 照合(サーバー側)
 export async function upsertResultOnly(client, race, resultData) {
   if (!resultData.result_trifecta) return null;
@@ -597,43 +741,21 @@ export async function upsertResultOnly(client, race, resultData) {
 
 export async function upsertResultAndVerify(client, race, resultData) {
   if (!resultData.result_trifecta) return null;
-  const existing = await client.asServiceRole.entities.RaceResult.filter({ race_id: race.id }, "-finished_at", 1);
-  const doc = { race_id: race.id, race_key: race.race_key, result_trifecta: resultData.result_trifecta, finish_order: resultData.finish_order, payout: resultData.payout || 0, is_finished: true, finished_at: new Date().toISOString() };
-  let saved;
-  if (existing && existing[0]) saved = await client.asServiceRole.entities.RaceResult.update(existing[0].id, doc);
-  else saved = await client.asServiceRole.entities.RaceResult.create(doc);
-  await client.asServiceRole.entities.Race.update(race.id, { status: "finished" });
-
-  const pre = await client.asServiceRole.entities.RacePrediction.filter({ race_id: race.id, stage: "PRE", prediction_version: VERSION }, "-computed_at", 1);
-  const fin = await client.asServiceRole.entities.RacePrediction.filter({ race_id: race.id, stage: "FINAL", prediction_version: VERSION }, "-computed_at", 1);
-  const preHit = (pre?.[0]?.selected_trifectas || []).includes(resultData.result_trifecta) || pre?.[0]?.top_trifecta === resultData.result_trifecta;
-  const finalHit = (fin?.[0]?.selected_trifectas || []).includes(resultData.result_trifecta) || fin?.[0]?.top_trifecta === resultData.result_trifecta;
-
-  // 推奨買い目 = 選定6〜8点(is_selected=true)。BUY判定時のみ投資計上。
-  let recommendedHit = false, investment = 0;
-  if (fin?.[0]) {
-    const tri = await client.asServiceRole.entities.TrifectaPrediction.filter({ prediction_id: fin[0].id, is_selected: true }, "ticket_rank", 8);
-    investment = tri.length * 100;
-    recommendedHit = tri.some((t) => t.combination === resultData.result_trifecta);
-    // BUY判定でない場合は投資0(買わない)
-    if (fin[0].final_judgment !== "BUY") investment = 0;
-  }
-  const recovery = investment > 0 ? Math.round((recommendedHit ? (resultData.payout || 0) : 0) / investment * 100) : 0;
-
-  const verifDoc = {
+  const sr = client.asServiceRole.entities;
+  const existing = await sr.RaceResult.filter({ race_id: race.id }, "-finished_at", 1);
+  const doc = {
     race_id: race.id, race_key: race.race_key,
-    pre_prediction: pre?.[0]?.top_trifecta || "", final_prediction: fin?.[0]?.top_trifecta || "",
-    actual_result: resultData.result_trifecta, pre_hit: preHit, final_hit: finalHit, recommended_hit: recommendedHit,
-    final_judgment: fin?.[0]?.final_judgment || null,
-    ticket_count: fin?.[0]?.ticket_count || null,
-    selected_trifectas: fin?.[0]?.selected_trifectas || [],
-    payout: resultData.payout || 0, investment, recovery_rate: recovery, verified_at: new Date().toISOString(),
+    result_trifecta: resultData.result_trifecta, finish_order: resultData.finish_order,
+    payout: resultData.payout || 0, is_finished: true, finished_at: new Date().toISOString(),
+    source: 'LOCAL', result_status: 'RESULT_FINAL',
   };
-  const existV = await client.asServiceRole.entities.PredictionVerification.filter({ race_id: race.id }, "-verified_at", 1);
-  let savedV;
-  if (existV?.[0]) savedV = await client.asServiceRole.entities.PredictionVerification.update(existV[0].id, verifDoc);
-  else savedV = await client.asServiceRole.entities.PredictionVerification.create(verifDoc);
-  return { result: saved, verification: savedV };
+  let saved;
+  if (existing && existing[0]) saved = await sr.RaceResult.update(existing[0].id, doc);
+  else saved = await sr.RaceResult.create(doc);
+  await sr.Race.update(race.id, { status: "finished" });
+
+  const verification = await verifyPrediction(client, race, resultData);
+  return { result: saved, verification };
 }
 
 // メイン: 同期+予想。payload = { races, entries, series, results, odds }

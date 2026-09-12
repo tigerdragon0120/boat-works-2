@@ -22,7 +22,7 @@
     },
     "popular_trifecta": {
       "type": "string",
-      "description": "1\u756a\u4eba\u6c173\u9023\u5358"
+      "description": "\u4eba\u6c17(\u4f8b 7\u756a\u4eba\u6c17)"
     },
     "is_finished": {
       "type": "boolean",
@@ -31,6 +31,165 @@
     "finished_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "BOATCAST",
+        "LOCAL",
+        "TXT"
+      ],
+      "description": "\u7d50\u679c\u53d6\u5f97\u5143"
+    },
+    "result_status": {
+      "type": "string",
+      "enum": [
+        "RESULT_WAITING",
+        "RESULT_PARTIAL",
+        "RESULT_FINAL"
+      ],
+      "description": "\u7d50\u679c\u78ba\u5b9a\u72b6\u614b"
+    },
+    "boats": {
+      "type": "array",
+      "description": "\u5168\u8247\u7d50\u679c\u8a73\u7d30(BOATCAST)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "boat_number": {
+            "type": "number"
+          },
+          "finish_order": {
+            "type": "number"
+          },
+          "racer_name": {
+            "type": "string"
+          },
+          "race_time": {
+            "type": "string"
+          },
+          "st": {
+            "type": "number"
+          },
+          "f_flag": {
+            "type": "string"
+          },
+          "course": {
+            "type": "number"
+          },
+          "winning_method": {
+            "type": "string"
+          },
+          "result_status": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "winning_method": {
+      "type": "string",
+      "description": "\u6c7a\u307e\u308a\u624b(\u9003\u3052/\u5dee\u3057/\u307e\u304f\u308a\u7b49)"
+    },
+    "conditions": {
+      "type": "object",
+      "description": "\u5929\u5019\u30fb\u98a8\u30fb\u6ce2",
+      "properties": {
+        "weather": {
+          "type": "string"
+        },
+        "wind_speed": {
+          "type": "number"
+        },
+        "wave_height": {
+          "type": "number"
+        },
+        "wind_dir": {
+          "type": "string"
+        }
+      }
+    },
+    "payouts": {
+      "type": "object",
+      "description": "\u5168\u5238\u7a2e\u6255\u623b(BOATCAST)",
+      "properties": {
+        "trifecta": {
+          "type": "object",
+          "properties": {
+            "combination": {
+              "type": "string"
+            },
+            "payout": {
+              "type": "number"
+            },
+            "popularity": {
+              "type": "number"
+            }
+          }
+        },
+        "trifecta_quinella": {
+          "type": "object",
+          "properties": {
+            "combination": {
+              "type": "string"
+            },
+            "payout": {
+              "type": "number"
+            },
+            "popularity": {
+              "type": "number"
+            }
+          }
+        },
+        "exacta": {
+          "type": "object",
+          "properties": {
+            "combination": {
+              "type": "string"
+            },
+            "payout": {
+              "type": "number"
+            },
+            "popularity": {
+              "type": "number"
+            }
+          }
+        },
+        "quinella": {
+          "type": "object",
+          "properties": {
+            "combination": {
+              "type": "string"
+            },
+            "payout": {
+              "type": "number"
+            },
+            "popularity": {
+              "type": "number"
+            }
+          }
+        },
+        "wide": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "combination": {
+                "type": "string"
+              },
+              "payout": {
+                "type": "number"
+              },
+              "popularity": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      }
+    },
+    "conflict_log": {
+      "type": "string",
+      "description": "BOATCAST\u3068LOCAL\u4e0d\u6574\u5408\u6642\u306e\u30ed\u30b0"
     }
   },
   "required": [
