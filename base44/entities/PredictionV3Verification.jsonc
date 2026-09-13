@@ -1,0 +1,205 @@
+{
+  "name": "PredictionV3Verification",
+  "type": "object",
+  "description": "V3 Candidate\u691c\u8a3c\u7d50\u679c\u3002V2\u3068\u540c\u6761\u4ef6\u3067\u8a55\u4fa1\u300217\u7a2e\u306e\u5916\u308c\u539f\u56e0 + \u52dd\u3061\u30d1\u30bf\u30fc\u30f3\u5206\u6790\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "actual_result": {
+      "type": "string"
+    },
+    "v2_pre_prediction": {
+      "type": "string"
+    },
+    "v2_final_prediction": {
+      "type": "string"
+    },
+    "v2_pre_hit": {
+      "type": "boolean"
+    },
+    "v2_final_hit": {
+      "type": "boolean"
+    },
+    "v2_recommended_hit": {
+      "type": "boolean"
+    },
+    "v2_final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "v2_ticket_count": {
+      "type": "number"
+    },
+    "v2_selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "v2_payout": {
+      "type": "number"
+    },
+    "v2_investment": {
+      "type": "number"
+    },
+    "v2_recovery_rate": {
+      "type": "number"
+    },
+    "v3_pre_prediction": {
+      "type": "string"
+    },
+    "v3_final_prediction": {
+      "type": "string"
+    },
+    "v3_pre_hit": {
+      "type": "boolean"
+    },
+    "v3_final_hit": {
+      "type": "boolean"
+    },
+    "v3_recommended_hit": {
+      "type": "boolean",
+      "description": "V3\u63a8\u5968\u8cb7\u3044\u76ee(6-8\u70b9)\u7684\u4e2d"
+    },
+    "v3_final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "v3_ticket_count": {
+      "type": "number"
+    },
+    "v3_selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "v3_payout": {
+      "type": "number"
+    },
+    "v3_investment": {
+      "type": "number"
+    },
+    "v3_recovery_rate": {
+      "type": "number"
+    },
+    "v3_race_type": {
+      "type": "string"
+    },
+    "v3_first_probability_gap": {
+      "type": "number"
+    },
+    "v3_first_confidence": {
+      "type": "number"
+    },
+    "v3_boat_scores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "boat_number": {
+            "type": "number"
+          },
+          "first_score": {
+            "type": "number"
+          },
+          "first_probability": {
+            "type": "number"
+          },
+          "final_score": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "miss_reason_primary": {
+      "type": "string",
+      "enum": [
+        "FIRST_WRONG",
+        "SECOND_WRONG",
+        "THIRD_WRONG",
+        "TICKET_NARROW",
+        "ENTRY_MISMATCH",
+        "EXHIBITION_OVERVALUED",
+        "EXHIBITION_UNDERVALUED",
+        "WAKU10_OVERVALUED",
+        "WAKU10_UNDERVALUED",
+        "MOTOR_OVERVALUED",
+        "MOTOR_UNDERVALUED",
+        "ST_MISREAD",
+        "INSIDE_OVERVALUED",
+        "OUTSIDE_UNDERRATED",
+        "ODDS_FILTER_ERROR",
+        "DATA_MISSING",
+        "OTHER"
+      ]
+    },
+    "miss_reason_secondary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "miss_analysis": {
+      "type": "object"
+    },
+    "win_pattern": {
+      "type": "string",
+      "enum": [
+        "INSIDE_CONFIDENCE",
+        "WAKU10_SIGNAL",
+        "EXHIBITION_SIGNAL",
+        "ST_SIGNAL",
+        "MOTOR_SIGNAL",
+        "ENTRY_SIGNAL",
+        "VALUE_ODDS",
+        "MULTI_FACTOR_CONFIRMATION",
+        null
+      ],
+      "description": "\u7684\u4e2d\u6642\u306e\u52dd\u3061\u30d1\u30bf\u30fc\u30f3(null=\u5916\u308c)"
+    },
+    "win_pattern_factors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "predicted_probability_band": {
+      "type": "string",
+      "description": "0-5,5-10,10-15,15-20,20-30,30+"
+    },
+    "calibration_data": {
+      "type": "object",
+      "description": "\u78ba\u7387\u6821\u6b63\u7528\u30c7\u30fc\u30bf"
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id"
+  ]
+}
