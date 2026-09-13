@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 import { upsertRace, upsertEntry, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds } from '../../shared/predictionService.js';
+import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
@@ -427,7 +428,44 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
 
   const remaining = Math.max(0, pending.length - generated);
   logs.push(`PRE予想: 今回${generated}R生成 / 残り${remaining}R`);
-  return { total: races.length, generated, skipped, remaining, rate_limited: rateLimited, errors };
+
+  // =====================================================
+  // V3 PREギャップ埋め: V1 PRE済み(has_pre=true)だがV3 PRE未生成のRace
+  // runAndSavePredictionはV1済みRaceをスキップするため、
+  // V3のみ個別生成する。V1/V2は上書きしない。
+  // =====================================================
+  let v3Generated = 0;
+  const v3Pending = races.filter((r: any) => r.has_pre === true);
+  if (v3Pending.length > 0) {
+    const v3Preds = await withRateLimitRetry(() => sr.PredictionV3.filter({ stage: 'PRE', prediction_version: 'v3' }, '-computed_at', 1000), 3).catch(() => []);
+    const v3DoneKeys = new Set<string>();
+    for (const p of v3Preds || []) {
+      if (p.race_key) v3DoneKeys.add(String(p.race_key));
+    }
+    const v3Missing = v3Pending.filter((r: any) => !v3DoneKeys.has(String(r.race_key)));
+    const v3Batch = v3Missing.slice(0, 5);
+
+    for (const race of v3Batch) {
+      if (Date.now() - startTime > timeBudgetMs - 5000) {
+        logs.push(`V3 PRE: 時間予算到達 — 次回へ継続`);
+        break;
+      }
+      try {
+        const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
+        if (entries.length < 6) continue;
+        await runAndSavePredictionV3(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+        v3Generated++;
+        logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V3 PRE生成`);
+      } catch (e: any) {
+        errors.push(`V3 PRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
+      }
+      await sleep(1500);
+    }
+    const v3Remaining = Math.max(0, v3Missing.length - v3Generated);
+    logs.push(`V3 PRE: 今回${v3Generated}R生成 / 残り${v3Remaining}R`);
+  }
+
+  return { total: races.length, generated, v3_generated: v3Generated, skipped, remaining, rate_limited: rateLimited, errors };
 }
 
 // =====================================================
