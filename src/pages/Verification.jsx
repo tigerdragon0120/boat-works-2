@@ -7,6 +7,7 @@ import {
 import { cn } from "@/lib/utils";
 import V1V2Comparison from "@/components/verification/V1V2Comparison";
 import V2V3Comparison from "@/components/verification/V2V3Comparison";
+import V3V4Comparison from "@/components/verification/V3V4Comparison";
 
 export default function Verification() {
   const [summary, setSummary] = useState(null);
@@ -88,6 +89,18 @@ export default function Verification() {
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
           <V2V3Comparison />
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-end justify-between gap-2 mb-2">
+          <div>
+            <div className="text-[10px] font-bold text-amber-500">V4 HIT CANDIDATE</div>
+            <h2 className="font-display font-black text-slate-900 text-lg">TARGET 30% HIT — V3 回収率型 vs V4 的中率型</h2>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <V3V4Comparison />
         </div>
       </section>
 

@@ -1,0 +1,115 @@
+{
+  "name": "PredictionV4Verification",
+  "type": "object",
+  "description": "V4 HIT Candidate\u691c\u8a3c\u7d50\u679c\u3002\u7684\u4e2d\u738730%\u3092\u76ee\u6a19\u3068\u3059\u308b\u3002\u8247\u756a\u5225\u672c\u547d\u5206\u5e03 + 5/6\u6291\u5236\u76e3\u8996\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "actual_result": {
+      "type": "string"
+    },
+    "actual_first_boat": {
+      "type": "number"
+    },
+    "v4_pre_prediction": {
+      "type": "string"
+    },
+    "v4_final_prediction": {
+      "type": "string"
+    },
+    "v4_pre_hit": {
+      "type": "boolean"
+    },
+    "v4_final_hit": {
+      "type": "boolean"
+    },
+    "v4_recommended_hit": {
+      "type": "boolean",
+      "description": "V4\u63a8\u5968\u8cb7\u3044\u76ee(6-8\u70b9)\u7684\u4e2d"
+    },
+    "v4_final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "v4_ticket_count": {
+      "type": "number"
+    },
+    "v4_selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "v4_payout": {
+      "type": "number"
+    },
+    "v4_investment": {
+      "type": "number"
+    },
+    "v4_recovery_rate": {
+      "type": "number"
+    },
+    "v4_first_boat": {
+      "type": "number",
+      "description": "V4\u4e88\u60f31\u7740\u8247\u756a"
+    },
+    "v4_fifty_six_honmei": {
+      "type": "boolean",
+      "description": "V4\u672c\u547d\u304c5/6\u53f7\u8247"
+    },
+    "v4_fifty_six_suppressed": {
+      "type": "boolean"
+    },
+    "miss_reason_primary": {
+      "type": "string",
+      "enum": [
+        "FIRST_WRONG",
+        "SECOND_WRONG",
+        "THIRD_WRONG",
+        "TICKET_NARROW",
+        "ST_MISREAD",
+        "FIFTY_SIX_OVERVALUED",
+        "INSIDE_UNDERVALUED",
+        "SECOND_CONDITIONAL_ERROR",
+        "OUTSIDE_UNDERRATED",
+        "DATA_MISSING",
+        "OTHER",
+        null
+      ]
+    },
+    "miss_reason_secondary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "miss_analysis": {
+      "type": "object"
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id"
+  ]
+}

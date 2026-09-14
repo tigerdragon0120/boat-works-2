@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
 import { runAndSavePredictionV2 } from '../../shared/predictionServiceV2.js';
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
+import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -61,10 +62,11 @@ export default async function(req: Request) {
     }
     const raceList = [...raceByKey.values()];
 
-    // V2/V3 PRE既存確認
-    const [v2Pres, v3Pres, profiles, rolling, settings] = await Promise.all([
+    // V2/V3/V4 PRE既存確認
+    const [v2Pres, v3Pres, v4Pres, profiles, rolling, settings] = await Promise.all([
       withRateLimitRetry(() => sr.PredictionV2.filter({ stage: 'PRE', prediction_version: 'v2' }, '-computed_at', 1000)),
       withRateLimitRetry(() => sr.PredictionV3.filter({ stage: 'PRE', prediction_version: 'v3' }, '-computed_at', 1000)),
+      withRateLimitRetry(() => sr.PredictionV4.filter({ stage: 'PRE', prediction_version: 'v4' }, '-computed_at', 1000)),
       sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []),
       sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []),
       getSettings(base44),
@@ -78,26 +80,33 @@ export default async function(req: Request) {
     for (const p of v3Pres || []) {
       if (p.race_key && String(p.race_key).startsWith(raceDate)) v3Keys.add(String(p.race_key));
     }
+    const v4Keys = new Set<string>();
+    for (const p of v4Pres || []) {
+      if (p.race_key && String(p.race_key).startsWith(raceDate)) v4Keys.add(String(p.race_key));
+    }
 
     const profileByReg = new Map((profiles || []).map((p: any) => [String(p.registration_number || ''), p]));
     const rollingByReg = new Map((rolling || []).map((r: any) => [String(r.registration_number || ''), r]));
 
-    // 3つのカテゴリに分類
-    const needV1V2V3: any[] = []; // V1未生成→runAndSavePrediction(V1+V2+V3)
+    // 4つのカテゴリに分類
+    const needV1V2V3: any[] = []; // V1未生成→runAndSavePrediction(V1+V2+V3+V4)
     const needV3Only: any[] = []; // V1+V2済み→V3のみ
     const needV2Only: any[] = []; // V1済みV2未生成→V2のみ
+    const needV4Only: any[] = []; // V1済みV4未生成→V4のみ
 
     for (const race of raceList) {
       const key = String(race.race_key);
       const hasV1 = race.has_pre === true;
       const hasV2 = v2Keys.has(key);
       const hasV3 = v3Keys.has(key);
+      const hasV4 = v4Keys.has(key);
 
       if (!hasV1) {
         needV1V2V3.push(race);
       } else {
         if (!hasV2) needV2Only.push(race);
         if (!hasV3) needV3Only.push(race);
+        if (!hasV4) needV4Only.push(race);
       }
     }
 
@@ -107,13 +116,17 @@ export default async function(req: Request) {
       v1_v2_v3_needed: needV1V2V3.length,
       v3_only_needed: needV3Only.length,
       v2_only_needed: needV2Only.length,
+      v4_only_needed: needV4Only.length,
       v2_already: v2Keys.size,
       v3_already: v3Keys.size,
+      v4_already: v4Keys.size,
       v1_generated: 0,
       v2_generated: 0,
       v3_generated: 0,
+      v4_generated: 0,
       v3_only_generated: 0,
       v2_only_generated: 0,
+      v4_only_generated: 0,
       skipped: 0,
       errors: 0,
       error_details: [] as string[],
@@ -151,6 +164,7 @@ export default async function(req: Request) {
         summary.v1_generated++;
         summary.v2_generated++;
         summary.v3_generated++;
+        summary.v4_generated++;
         addVenue(race.venue_code, true);
         await sleep(500);
       } catch (e: any) {
@@ -218,10 +232,39 @@ export default async function(req: Request) {
       }
     }
 
+    // =====================================================
+    // Phase 4: V1済み・V4未生成Race → V4 PREのみ生成
+    // =====================================================
+    const v4Batch = needV4Only.slice(0, batchSize);
+    for (const race of v4Batch) {
+      try {
+        const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_key: race.race_key }, 'boat_number', 20));
+        const byBoat = new Map<number, any>();
+        for (const e of entries || []) {
+          const bn = Number(e.boat_number);
+          if (bn >= 1 && bn <= 6 && !byBoat.has(bn)) byBoat.set(bn, e);
+        }
+        const six = [...byBoat.values()].sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
+        if (six.length !== 6) {
+          summary.skipped++;
+          continue;
+        }
+
+        await withRateLimitRetry(() => runAndSavePredictionV4(base44, race, six, settings, 'PRE', {}, profileByReg, rollingByReg));
+        summary.v4_only_generated++;
+        summary.v4_generated++;
+        await sleep(400);
+      } catch (e: any) {
+        summary.errors++;
+        summary.error_details.push(`${race.race_key}: V4 ${e?.message || e}`);
+      }
+    }
+
     summary.remaining_v1 = Math.max(0, needV1V2V3.length - v1Batch.length);
     summary.remaining_v3 = Math.max(0, needV3Only.length - v3Batch.length);
     summary.remaining_v2 = Math.max(0, needV2Only.length - v2Batch.length);
-    summary.completed = summary.remaining_v1 === 0 && summary.remaining_v3 === 0 && summary.remaining_v2 === 0 && summary.errors === 0;
+    summary.remaining_v4 = Math.max(0, needV4Only.length - v4Batch.length);
+    summary.completed = summary.remaining_v1 === 0 && summary.remaining_v3 === 0 && summary.remaining_v2 === 0 && summary.remaining_v4 === 0 && summary.errors === 0;
 
     return Response.json({ ok: true, ...summary });
   } catch (e: any) {

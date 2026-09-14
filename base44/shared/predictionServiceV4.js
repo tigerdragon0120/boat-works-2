@@ -1,0 +1,286 @@
+// ============================================================
+// Prediction Service V4 (サーバー側)
+// V4 HIT Candidate予想をDBへ保存。V1/V2/V3とは完全独立。
+// ============================================================
+import { runPredictionV4 } from "./predictionEngineV4.js";
+
+const V4_VERSION = "v4";
+
+// 既存V4予想取得(重複作成防止)
+async function getOrCreateV4Prediction(client, raceId, raceKey, stage) {
+  const list = await client.asServiceRole.entities.PredictionV4.filter(
+    { race_id: raceId, stage, prediction_version: V4_VERSION },
+    "-computed_at", 1
+  ).catch(() => []);
+  if (list && list[0]) return { id: list[0].id, existing: list[0] };
+  const created = await client.asServiceRole.entities.PredictionV4.create({
+    race_id: raceId, race_key: raceKey, stage, prediction_version: V4_VERSION, status: "PENDING",
+  }).catch(() => null);
+  return { id: created?.id, existing: null };
+}
+
+// V4予想を実行して保存
+export async function runAndSavePredictionV4(client, race, entries, settings, stage, oddsMap = {}, profileByReg = null, rollingByReg = null) {
+  try {
+    const sr = client.asServiceRole.entities;
+
+    // プロファイル・ローリング統計補完
+    if (!profileByReg) {
+      const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
+      profileByReg = new Map(profiles.map(p => [p.registration_number, p]));
+    }
+    if (!rollingByReg) {
+      const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
+      rollingByReg = new Map(rolling.map(r => [r.registration_number, r]));
+    }
+
+    // RacerLaneRecentStats取得
+    const laneRecentRows = await sr.RacerLaneRecentStats.filter(
+      { race_id: race.id }, '-updated_at', 5000
+    ).catch(() => []);
+    const laneRecentByKey = new Map();
+    for (const x of laneRecentRows || []) {
+      const key = `${String(x.registration_number)}_${Number(x.lane)}`;
+      if (!laneRecentByKey.has(key)) laneRecentByKey.set(key, x);
+    }
+
+    const entriesWithProfiles = entries.map(e => {
+      const reg = String(e.registration_number || e.register_number || '').trim();
+      const laneKey = `${reg}_${Number(e.boat_number)}`;
+      return {
+        ...e,
+        _profile: reg ? profileByReg.get(reg) || null : null,
+        _rollingStats: reg ? rollingByReg.get(reg) || null : null,
+        _laneRecent: reg ? laneRecentByKey.get(laneKey) || null : null,
+      };
+    });
+
+    // V4予想実行
+    const result = runPredictionV4(entriesWithProfiles, race, settings, {
+      stage, oddsMap,
+    });
+
+    // V4予想レコード保存
+    const { id: predictionId, existing } = await getOrCreateV4Prediction(client, race.id, race.race_key, stage);
+    if (!predictionId) {
+      console.error("[V4] Failed to create prediction record");
+      return { skipped: true, reason: "CREATE_FAILED" };
+    }
+
+    const record = {
+      race_id: race.id, race_key: race.race_key, stage, prediction_version: V4_VERSION,
+      computed_at: new Date().toISOString(),
+      data_confidence: result.data_confidence,
+      final_judgment: result.final_judgment,
+      judgment_reason: result.judgment_reason,
+      ticket_count: result.ticket_count,
+      ticket_strategy: result.ticket_strategy,
+      selected_trifectas: result.selected_trifectas,
+      set_probability: result.set_metrics?.set_probability,
+      set_expected_recovery: result.set_metrics?.set_expected_recovery,
+      synthetic_odds: result.set_metrics?.synthetic_odds,
+      min_payout: result.set_metrics?.min_payout,
+      avg_payout: result.set_metrics?.avg_payout,
+      max_payout: result.set_metrics?.max_payout,
+      best_ev_ticket: result.set_metrics?.best_ev_ticket,
+      honmei_boat: result.honmei_boat, taiko_boat: result.taiko_boat,
+      ana_boat: result.ana_boat, keshi_boat: result.keshi_boat,
+      top_trifecta: result.top_trifecta, top_probability: result.top_probability,
+      top_odds: result.top_odds, top_expected_value: result.top_expected_value,
+      first_ranking: result.first_ranking, second_ranking: result.second_ranking,
+      third_ranking: result.third_ranking,
+      first_probability_gap: result.first_probability_gap,
+      first_confidence: result.first_confidence,
+      lane_prior_applied: result.lane_prior_applied,
+      fifty_six_suppressed: result.fifty_six_suppressed,
+      fifty_six_suppression_reason: result.fifty_six_suppression_reason,
+      fifty_six_conditions: result.fifty_six_conditions,
+      boat_scores: result.boatScores.map(b => ({
+        boat_number: b.boat_number,
+        past_score: b.past_score, recent_score: b.recent_score, today_score: b.today_score,
+        pre_score: b.pre_score, final_score: b.final_score,
+        first_score: b.first_score, first_probability: b.first_probability,
+        first_probability_raw: b.first_probability_raw,
+        second_score: b.second_score, third_score: b.third_score,
+        lane_prior: b.lane_prior, suppression_applied: b.suppression_applied,
+        st_overvaluation_fix: b.st_overvaluation_fix,
+        reasons: b.reasons, notes: b.notes,
+      })),
+      trifectas: result.trifectas.map(t => ({
+        combination: t.combination, rank: t.rank, race_probability: t.probability,
+        actual_odds: t.actual_odds, expected_value: t.expected_value,
+        is_selected: t.is_selected, ticket_rank: t.ticket_rank,
+      })),
+      v4_weights: result.v4_weights,
+      status: "COMPLETED",
+    };
+
+    await sr.PredictionV4.update(predictionId, record).catch(e => {
+      console.error("[V4] Failed to save prediction:", e.message);
+    });
+
+    return { predictionId, result, skipped: false };
+  } catch (e) {
+    console.error(`[V4] runAndSavePredictionV4 error race=${race?.id} stage=${stage}:`, e.message);
+    return { skipped: true, reason: "V4_ERROR", error: e.message };
+  }
+}
+
+// ============================================================
+// V4検証(結果確定後)
+// ============================================================
+export async function verifyV4Prediction(client, race, resultData) {
+  try {
+    const sr = client.asServiceRole.entities;
+    const resultTrifecta = resultData.result_trifecta;
+    if (!resultTrifecta) return null;
+
+    const resultParts = resultTrifecta.split("-").map(Number);
+    const actualFirst = resultParts[0];
+
+    // V4予想取得
+    const v4Final = await sr.PredictionV4.filter(
+      { race_id: race.id, stage: "FINAL", prediction_version: "v4" }, "-computed_at", 1
+    ).catch(() => []);
+    const v4Pre = await sr.PredictionV4.filter(
+      { race_id: race.id, stage: "PRE", prediction_version: "v4" }, "-computed_at", 1
+    ).catch(() => []);
+
+    const v4PrePred = v4Pre?.[0];
+    const v4FinalPred = v4Final?.[0];
+
+    // 的中判定
+    const v4PreHit = (v4PrePred?.selected_trifectas || []).includes(resultTrifecta) || v4PrePred?.top_trifecta === resultTrifecta;
+    const v4FinalHit = (v4FinalPred?.selected_trifectas || []).includes(resultTrifecta) || v4FinalPred?.top_trifecta === resultTrifecta;
+    let v4RecommendedHit = false, v4Investment = 0;
+    if (v4FinalPred) {
+      v4RecommendedHit = (v4FinalPred.selected_trifectas || []).includes(resultTrifecta);
+      if (v4FinalPred.final_judgment === "BUY") v4Investment = (v4FinalPred.ticket_count || 6) * 100;
+    }
+    const v4Payout = v4RecommendedHit ? (resultData.payout || 0) : 0;
+    const v4Recovery = v4Investment > 0 ? Math.round(v4Payout / v4Investment * 100) : 0;
+
+    // 外れ原因分類
+    const missAnalysis = v4FinalPred ? analyzeV4Miss(v4FinalPred, resultTrifecta) : { primary: null, secondary: [], details: {} };
+
+    const verifDoc = {
+      race_id: race.id, race_key: race.race_key,
+      race_date: race.race_date, venue_code: race.venue_code, race_number: race.race_number,
+      actual_result: resultTrifecta,
+      actual_first_boat: actualFirst,
+      v4_pre_prediction: v4PrePred?.top_trifecta || "",
+      v4_final_prediction: v4FinalPred?.top_trifecta || "",
+      v4_pre_hit: v4PreHit, v4_final_hit: v4FinalHit, v4_recommended_hit: v4RecommendedHit,
+      v4_final_judgment: v4FinalPred?.final_judgment || null,
+      v4_ticket_count: v4FinalPred?.ticket_count || null,
+      v4_selected_trifectas: v4FinalPred?.selected_trifectas || [],
+      v4_payout: v4Payout, v4_investment: v4Investment, v4_recovery_rate: v4Recovery,
+      v4_first_boat: v4FinalPred?.honmei_boat || v4PrePred?.honmei_boat || null,
+      v4_fifty_six_honmei: (v4FinalPred?.honmei_boat || v4PrePred?.honmei_boat) >= 5,
+      v4_fifty_six_suppressed: v4FinalPred?.fifty_six_suppressed || false,
+      miss_reason_primary: missAnalysis.primary,
+      miss_reason_secondary: missAnalysis.secondary,
+      miss_analysis: missAnalysis.details,
+      verified_at: new Date().toISOString(),
+    };
+
+    // upsert
+    const existing = await sr.PredictionV4Verification.filter({ race_id: race.id }, "-verified_at", 1).catch(() => []);
+    let saved;
+    if (existing?.[0]) saved = await sr.PredictionV4Verification.update(existing[0].id, verifDoc);
+    else saved = await sr.PredictionV4Verification.create(verifDoc);
+
+    return saved;
+  } catch (e) {
+    console.error(`[V4] verifyV4Prediction error race=${race?.id}:`, e.message);
+    return null;
+  }
+}
+
+// ============================================================
+// 外れ原因分類
+// ============================================================
+function analyzeV4Miss(v4FinalPred, resultTrifecta) {
+  if (!v4FinalPred || !resultTrifecta) return { primary: "OTHER", secondary: [], details: {} };
+
+  const selected = v4FinalPred.selected_trifectas || [];
+  if (selected.includes(resultTrifecta)) {
+    return { primary: null, secondary: [], details: { hit: true } };
+  }
+
+  const resultParts = resultTrifecta.split("-").map(Number);
+  const [actual1st, actual2nd, actual3rd] = resultParts;
+  const predicted1st = v4FinalPred.honmei_boat;
+  const firstRanking = v4FinalPred.first_ranking || [];
+  const secondRanking = v4FinalPred.second_ranking || [];
+  const thirdRanking = v4FinalPred.third_ranking || [];
+  const predicted2nd = secondRanking[0];
+  const predicted3rd = thirdRanking[0];
+
+  const reasons = [];
+  let primary = "OTHER";
+
+  // 1着候補外れ
+  if (predicted1st != null && actual1st !== predicted1st) {
+    reasons.push("FIRST_WRONG");
+    primary = "FIRST_WRONG";
+    // 5/6号艇過大評価
+    if (predicted1st >= 5) {
+      reasons.push("FIFTY_SIX_OVERVALUED");
+      primary = "FIFTY_SIX_OVERVALUED";
+    }
+    // ST見誤り
+    const boatScores = v4FinalPred.boat_scores || [];
+    const topBoat = boatScores.find(b => b.boat_number === predicted1st);
+    if (topBoat?.st_overvaluation_fix) {
+      reasons.push("ST_MISREAD");
+      if (primary === "FIRST_WRONG") primary = "ST_MISREAD";
+    }
+    // イン過小評価(実際の1着が1号艇)
+    if (actual1st === 1 && predicted1st >= 3) {
+      reasons.push("INSIDE_UNDERVALUED");
+      if (primary === "FIRST_WRONG") primary = "INSIDE_UNDERVALUED";
+    }
+    // 外枠過小評価
+    if (actual1st >= 4 && predicted1st <= 2) {
+      reasons.push("OUTSIDE_UNDERRATED");
+    }
+  }
+
+  // 2着候補外れ
+  if (predicted2nd != null && actual2nd !== predicted2nd && !reasons.includes("FIRST_WRONG")) {
+    reasons.push("SECOND_WRONG");
+    if (primary === "OTHER") primary = "SECOND_WRONG";
+  }
+
+  // 3着候補外れ
+  if (predicted3rd != null && actual3rd !== predicted3rd && !reasons.includes("FIRST_WRONG")) {
+    reasons.push("THIRD_WRONG");
+    if (primary === "OTHER") primary = "THIRD_WRONG";
+  }
+
+  // 買い目絞り込み外れ
+  if (!selected.includes(resultTrifecta) && reasons.length === 0) {
+    reasons.push("TICKET_NARROW");
+    primary = "TICKET_NARROW";
+  }
+
+  // データ不足
+  if (v4FinalPred.data_confidence < 30) {
+    reasons.push("DATA_MISSING");
+    if (primary === "OTHER") primary = "DATA_MISSING";
+  }
+
+  const secondary = reasons.filter(r => r !== primary);
+
+  return {
+    primary,
+    secondary,
+    details: {
+      predicted_1st: predicted1st, actual_1st: actual1st,
+      predicted_2nd: predicted2nd, actual_2nd: actual2nd,
+      predicted_3rd: predicted3rd, actual_3rd: actual3rd,
+      fifty_six_suppressed: v4FinalPred.fifty_six_suppressed,
+    },
+  };
+}
