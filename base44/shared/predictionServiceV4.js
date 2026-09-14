@@ -138,13 +138,23 @@ export async function verifyV4Prediction(client, race, resultData) {
     const resultParts = resultTrifecta.split("-").map(Number);
     const actualFirst = resultParts[0];
 
-    // V4予想取得
-    const v4Final = await sr.PredictionV4.filter(
+    // V4予想取得(race_id優先、空ならrace_keyでフォールバック)
+    let v4Final = await sr.PredictionV4.filter(
       { race_id: race.id, stage: "FINAL", prediction_version: "v4" }, "-computed_at", 1
     ).catch(() => []);
-    const v4Pre = await sr.PredictionV4.filter(
+    if (!v4Final?.length && race.race_key) {
+      v4Final = await sr.PredictionV4.filter(
+        { race_key: race.race_key, stage: "FINAL", prediction_version: "v4" }, "-computed_at", 1
+      ).catch(() => []);
+    }
+    let v4Pre = await sr.PredictionV4.filter(
       { race_id: race.id, stage: "PRE", prediction_version: "v4" }, "-computed_at", 1
     ).catch(() => []);
+    if (!v4Pre?.length && race.race_key) {
+      v4Pre = await sr.PredictionV4.filter(
+        { race_key: race.race_key, stage: "PRE", prediction_version: "v4" }, "-computed_at", 1
+      ).catch(() => []);
+    }
 
     const v4PrePred = v4Pre?.[0];
     const v4FinalPred = v4Final?.[0];
