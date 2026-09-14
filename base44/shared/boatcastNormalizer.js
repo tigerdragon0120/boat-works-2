@@ -232,13 +232,17 @@ export function normalizeTkz(text, metadata) {
 // sttテキストを解析・BW2標準形式へ正規化
 //
 // sttフィールド構成(0-indexed):
-//  0: 艇番(1-6)
-//  1: 進入コース(1-6)  ※艇番と異なる場合あり(進入変更)
+//  0: 進入コース(1-6)  ※艇番と異なる場合あり(進入変更)
+//  1: 艇番(1-6)
 //  2: 選手名
 //  3: 展示ST(展示走行時)  例: .15
 //  4: ST(スタート展示時)  例: .05
 //  5: F flag  "F" or ""
 //  6: 不明(3.5等)  意味不明
+//
+// 重要: STTは進入コース順(内側=1→外側=6)に並んでいる。
+// parts[0]=進入コース, parts[1]=艇番 である。
+// 選手名(parts[2])で艇番との対応を検証可能。
 // ============================================================
 export function normalizeStartExhibition(text, metadata) {
   const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
@@ -247,8 +251,8 @@ export function normalizeStartExhibition(text, metadata) {
   const racers = racerLines.map(line => {
     const parts = line.split('\t');
     return {
-      lane: parseInt(parts[0]),
-      course: parseInt(parts[1]),
+      lane: parseInt(parts[1]),       // 艇番(boat_number)
+      course: parseInt(parts[0]),     // 進入コース(exhibition_course)
       racer_name: parseStr(parts[2])?.replace(/[\s\u3000]+/g, ' ').trim() || null,
       exhibition_st: parseNum(parts[3]),
       st: parseNum(parts[4]),

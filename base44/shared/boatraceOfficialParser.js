@@ -595,7 +595,7 @@ export function parseBeforeInfo(html) {
       exhibition_time: exhibitionTime,
       exhibition_st: stExMap[boatNumber] ?? null,
       exhibition_st_raw: stExMap[boatNumber] ?? null,
-      exhibition_course: courseMap[boatNumber] || boatNumber,
+      exhibition_course: courseMap[boatNumber] || null,
       tilt,
       is_absent: isAbsent,
       is_scratched: isAbsent,

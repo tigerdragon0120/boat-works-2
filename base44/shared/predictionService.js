@@ -307,6 +307,36 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     // マージ済みエントリで予想実行
     entriesWithProfiles = mergeResult.entries;
     console.log(`[FINAL_READY] race=${race.id} key=${race.race_key} status=${mergeResult.exhibition_status} boatcast=${mergeResult.boatcast_available}`);
+
+    // BOATCAST展示データをRaceEntryへ保存(BOATCAST取得成功時のみ)
+    // BOATCAST公式値をPRIMARYとして保存。展示進入コース・展示ST・展示タイム・チルトを反映。
+    // exhibition_stはF flagを負値へ変換して保存(LOCAL表現と統一)。
+    if (mergeResult.boatcast_available) {
+      const bcRacers = boatcastExhibition?.racers || [];
+      for (const entry of mergeResult.entries) {
+        if (!entry.boat_number || entry.is_absent) continue;
+        const bcRacer = bcRacers.find(r => r.lane === entry.boat_number);
+        if (!bcRacer) continue;
+        const update = {};
+        if (bcRacer.exhibition_course != null) {
+          update.exhibition_course = bcRacer.exhibition_course;
+        }
+        if (bcRacer.st != null) {
+          const fFlag = bcRacer.f_flag === 'F';
+          update.exhibition_st = fFlag ? -Math.abs(bcRacer.st) : bcRacer.st;
+          update.exhibition_st_raw = update.exhibition_st;
+        }
+        if (bcRacer.exhibition_time != null) {
+          update.exhibition_time = bcRacer.exhibition_time;
+        }
+        if (entry.tilt != null && entry._exhibition_sources?.tilt === 'BOATCAST') {
+          update.tilt = entry.tilt;
+        }
+        if (Object.keys(update).length > 0) {
+          await client.asServiceRole.entities.RaceEntry.update(entry.id, update).catch(() => {});
+        }
+      }
+    }
   }
 
   // FINAL時: PRE予想を基準に展示補正のみ適用

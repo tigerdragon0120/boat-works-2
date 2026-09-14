@@ -35,14 +35,22 @@ function stToOffset(st, stRaw) {
 }
 
 export default function StartTimingPanel({ entries, compact = false }) {
-  // 1-6号艇を正順に揃える(欠場含む)
-  const boats = [1, 2, 3, 4, 5, 6].map((n) => {
+  // 展示進入コース順(内側=1→外側=6)に配置。
+  // exhibition_courseがnullの艇はboat_numberで代替(展示取得前やLOCAL未対応)。
+  const allBoats = [1, 2, 3, 4, 5, 6].map((n) => {
     const e = entries?.find((x) => x.boat_number === n);
     return e ? { ...e, boat_number: n } : { boat_number: n, is_absent: true, _missing: true };
   });
 
+  // 展示進入コース順にソート(内側→外側)。コース不明艇は末尾。
+  const boats = [...allBoats].sort((a, b) => {
+    const ca = a.exhibition_course != null ? a.exhibition_course : 99;
+    const cb = b.exhibition_course != null ? b.exhibition_course : 99;
+    return ca - cb;
+  });
+
   // 展示データが1件でもあるか
-  const hasExhibition = boats.some(
+  const hasExhibition = allBoats.some(
     (b) => !b._missing && (b.exhibition_st != null || b.exhibition_st_raw != null)
   );
 
