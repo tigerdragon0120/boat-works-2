@@ -286,40 +286,40 @@ function computeV4BoatScores(entries, race, stage) {
 
 // ============================================================
 // 4. 1着確率計算: Lane Prior + Bayesian調整
+// V4修正: Lane Priorを弱め(prior^0.3)、TEMP=20でスコア重視
+// 1号艇-only補正(insideEscapeBonus)は廃止・過補正のため
 // ============================================================
 function computeFirstProbabilitiesWithPrior(boatScores, stage) {
   const scoreField = stage === "FINAL" ? "final_score" : "pre_score";
 
-  // 1着適性スコア: base score + コース別1着能力 + ST(外枠は減権)
+  // 1着適性スコア: base score + コース別勝ち方ボーナス(全艇共通)
   const firstAptitudes = boatScores.map(b => {
     const base = b[scoreField] ?? b.pre_score;
     const course = b.boat_number;
     const wm = b.entry?._profile?.winning_methods;
     let escapeBonus = 0;
     if (wm?.total_wins >= 2) {
-      if (course === 1 && wm.escape_rate != null) escapeBonus = wm.escape_rate * 0.15;
-      if (course === 2 && wm.sashi_rate != null) escapeBonus = wm.sashi_rate * 0.10;
-      if (course === 3 && wm.makuri_rate != null) escapeBonus = wm.makuri_rate * 0.08;
-    }
-    // 1号艇イン逃げ信頼度
-    let insideEscapeBonus = 0;
-    if (course === 1) {
-      const cs = b.entry?._profile?.course_stats?.["1"];
-      if (cs?.sample_size >= 5 && isValid(cs.win_rate)) {
-        insideEscapeBonus = clamp((cs.win_rate - 50) * 0.2, -10, 15);
+      if (course === 1 && wm.escape_rate != null) escapeBonus = wm.escape_rate * 0.10;
+      if (course === 2 && wm.sashi_rate != null) escapeBonus = wm.sashi_rate * 0.08;
+      if (course === 3 && wm.makuri_rate != null) escapeBonus = wm.makuri_rate * 0.06;
+      if (course >= 4 && (wm.makuri_rate || 0) + (wm.makuri_sashi_rate || 0) > 0) {
+        escapeBonus = ((wm.makuri_rate || 0) + (wm.makuri_sashi_rate || 0)) * 0.06;
       }
     }
-    b.first_score = round1(clamp(base + escapeBonus + insideEscapeBonus, 5, 100));
+    b.first_score = round1(clamp(base + escapeBonus, 5, 100));
     return b.first_score;
   });
 
   // Lane Prior × スコア調整
-  // temp = 12: スコア差50ptで約e^4.2 ≈ 67倍の調整可能
-  const TEMP = 12;
+  // PRIOR_STRENGTH = 0.3: priorを0.3乗して弱める(1号艇52%→27.5%)
+  // TEMP = 20: スコア差20ptでe^1=2.7倍の調整(スコア重視)
+  const TEMP = 20;
+  const PRIOR_STRENGTH = 0.3;
   const rawProbs = boatScores.map((b, i) => {
     const prior = LANE_PRIOR[b.boat_number] || 0.05;
+    const weakPrior = Math.pow(prior, PRIOR_STRENGTH);
     const multiplier = Math.exp((firstAptitudes[i] - 50) / TEMP);
-    return prior * multiplier;
+    return weakPrior * multiplier;
   });
 
   const sum = rawProbs.reduce((a, b) => a + b, 0);
