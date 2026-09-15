@@ -714,6 +714,8 @@ async function ensurePreOdds(preV4, raceId) {
 async function ensurePreExcludesScratched(raceId, raceKey) {
   const race = await withRetry(() => base44.entities.Race.get(raceId)).catch(() => null);
   if (!race) return null;
+  // 結果確定後の後付け変更は禁止
+  if (race.status === 'finished') return race;
   const scratchedBoats = race.scratched_boats || [];
   if (!scratchedBoats.length) return race;
 

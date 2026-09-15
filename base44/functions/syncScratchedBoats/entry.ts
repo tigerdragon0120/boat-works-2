@@ -137,10 +137,12 @@ export default async function(req: Request) {
           summary.scratched_detected++;
         }
 
+        // 欠場艇リスト(統合済み) — PRE/FINAL再生成ブロックでも使用するため外で宣言
+        const newScratchedBoats = [...new Set([...detectedScratched, ...dbScratched])].sort((a, b) => a - b);
+
         // DB更新が必要な場合
         if (needsUpdate) {
           // Race.scratched_boats更新
-          const newScratchedBoats = [...new Set([...detectedScratched, ...dbScratched])].sort((a, b) => a - b);
           const raceChanged = JSON.stringify(newScratchedBoats) !== JSON.stringify(dbScratched);
 
           if (raceChanged) {
@@ -223,6 +225,8 @@ export default async function(req: Request) {
                   return boats.some(b => newScratchedBoats.includes(b));
                 });
                 detail.pre_tickets_with_scratched = preTicketsWithScratched.length;
+              } else {
+                summary.errors.push(`${race.race_key}: PRE再生成スキップ ${preResult.reason || ''} ${preResult.error || ''}`);
               }
             }
           } catch (e: any) {

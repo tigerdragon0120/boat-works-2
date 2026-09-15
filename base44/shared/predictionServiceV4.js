@@ -91,6 +91,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
     // OD3未取得時は WAITING_ODDS(絶対にCOMPLETEDにしない)。
     // 予想確率・買い目は保持したまま保存(削除しない)。
     // ============================================================
+    const expectedOddsCount = getExpectedOddsCount(race);
     let effectiveOddsMap = normalizeOddsMap(oddsMap);
     let oddsSource = null;
     let oddsFetchedAt = null;
@@ -133,7 +134,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
             od3Debug.od3_valid_count = Object.keys(normalizedLive).length;
             effectiveOddsMap = { ...effectiveOddsMap, ...normalizedLive };
             od3Status = "FETCHED";
-            if (od3Debug.od3_parse_count === 120) od3Status = "PARSED";
+            if (od3Debug.od3_parse_count === expectedOddsCount) od3Status = "PARSED";
             oddsSource = resolved.source;
             oddsFetchedAt = resolved.fetched_at;
             oddsComboCount = Object.keys(effectiveOddsMap).length;
@@ -187,7 +188,6 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
 
     // OD3 combination一致カウント
     od3Debug.od3_match_count = (result.trifectas || []).filter(t => t.actual_odds != null).length;
-    const expectedOddsCount = getExpectedOddsCount(race);
     if (stage === "FINAL" && od3Debug.od3_match_count === expectedOddsCount) od3Status = "MATCHED";
     const selectedSet = new Set(result.selected_trifectas || []);
     od3Debug.od3_selected_match_count = (result.trifectas || []).filter(t => selectedSet.has(t.combination) && t.actual_odds != null).length;
