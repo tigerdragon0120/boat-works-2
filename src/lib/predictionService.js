@@ -680,11 +680,11 @@ export async function ensureV4Final(race) {
 //   3. なし(旧Race予想fallback禁止)
 // ============================================================
 export async function resolveCurrentPrediction(raceId, raceKey) {
-  // 1. V4 FINAL COMPLETED (最優先)
+  // 1. V4 FINAL (COMPLETED or FINAL_PENDING_ODDS — 最優先)
   const finV4 = await getV4Prediction(raceId, "FINAL", raceKey);
-  if (finV4 && (finV4.status === "COMPLETED" || !finV4.status)) {
+  if (finV4 && (finV4.status === "COMPLETED" || finV4.status === "FINAL_PENDING_ODDS" || !finV4.status)) {
     const mapped = mapV4ToUI(finV4, "FINAL");
-    if (mapped) return { stage: "FINAL", ...mapped };
+    if (mapped) return { stage: "FINAL", ...mapped, pendingOdds: finV4.status === "FINAL_PENDING_ODDS" };
   }
   // 2. V4 PRE COMPLETED
   const preV4 = await getV4Prediction(raceId, "PRE", raceKey);

@@ -297,12 +297,31 @@
         }
       }
     },
+    "odds_source": {
+      "type": "string",
+      "description": "\u30aa\u30c3\u30ba\u53d6\u5f97\u5143 BOATCAST/LOCAL/null",
+      "enum": [
+        "BOATCAST",
+        "LOCAL",
+        null
+      ]
+    },
+    "odds_fetched_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u30aa\u30c3\u30ba\u53d6\u5f97\u65e5\u6642"
+    },
+    "odds_combination_count": {
+      "type": "number",
+      "description": "\u53d6\u5f97\u3057\u305f\u30aa\u30c3\u30ba\u7d44\u307f\u5408\u308f\u305b\u6570(120\u304c\u6b63\u5e38)"
+    },
     "status": {
       "type": "string",
       "enum": [
         "PENDING",
         "COMPLETED",
-        "MISSING"
+        "MISSING",
+        "FINAL_PENDING_ODDS"
       ],
       "default": "COMPLETED"
     }

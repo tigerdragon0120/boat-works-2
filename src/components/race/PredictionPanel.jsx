@@ -1,6 +1,6 @@
 import React from "react";
 import { cn } from "@/lib/utils";
-import { Crown, Shield, Sparkles, TrendingUp, Gauge, Trophy, Zap, Activity, Target, Calculator, Ticket } from "lucide-react";
+import { Crown, Shield, Sparkles, TrendingUp, Gauge, Trophy, Zap, Activity, Target, Calculator, Ticket, AlertCircle } from "lucide-react";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import { buildSelectedTickets } from "@/lib/predictionService";
 
@@ -33,7 +33,7 @@ const groupStyle = {
   C: "text-slate-600 bg-slate-700/30 border-slate-600",
 };
 
-export default function PredictionPanel({ race, stage, run, busy, entries, activePred, activeBoats, allTri, compareData }) {
+export default function PredictionPanel({ race, stage, run, busy, entries, activePred, activeBoats, allTri, compareData, pendingOdds }) {
   const hasPred = !!activePred;
   const judgment = activePred?.final_judgment || "PENDING";
   const jcfg = judgmentConfig[judgment] || judgmentConfig.PENDING;
@@ -89,6 +89,16 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
           </div>
         ) : (
           <div className="flex flex-col gap-3">
+            {/* === オッズ取得待ちバナー === */}
+            {pendingOdds && (
+              <div className="rounded-xl border-2 border-amber-400/60 bg-amber-500/10 p-2.5 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                <div className="text-[11px] text-amber-300 font-semibold leading-relaxed">
+                  オッズ取得待ち — BOATCAST OD3未取得のため実オッズ・期待値は未表示。BUY判定不可。
+                </div>
+              </div>
+            )}
+
             {/* === 1. 最終判定 BUY/WATCH/SKIP === */}
             <div className={cn("rounded-xl border-2 p-3 flex items-center gap-3", jcfg.cls)}>
               <div className="text-center shrink-0">
