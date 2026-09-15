@@ -2,8 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Waves } from "lucide-react";
 import {
-  listTodayRaces, getRaceEntries, getPrediction, getBoatPredictions, getTrifectaPredictions,
-  generateAndSavePrediction, getSettings,
+  listTodayRaces, getRaceEntries,
+  getV4Prediction, mapV4ToUI, resolveCurrentPrediction,
+  generateV4PredictionForRace,
 } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
@@ -19,14 +20,10 @@ export default function Venue() {
   // 選択中レースの詳細データ
   const [race, setRace] = useState(null);
   const [entries, setEntries] = useState([]);
-  const [pre, setPre] = useState(null);
-  const [fin, setFin] = useState(null);
+  // currentPrediction: resolveCurrentPredictionの結果(FINAL優先)
+  const [current, setCurrent] = useState(null);
   const [preBoats, setPreBoats] = useState([]);
-  const [finBoats, setFinBoats] = useState([]);
-  const [preTri, setPreTri] = useState([]);
-  const [finTri, setFinTri] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState("FINAL");
   const [rankMode, setRankMode] = useState("prob");
   const sectionFetchTried = useRef(new Set());
 
@@ -47,13 +44,16 @@ export default function Venue() {
   // 選択中レースの詳細読み込み
   const loadDetail = async () => {
     if (!selectedId) return;
+    // 前レースのstateを完全クリア
+    setCurrent(null);
+    setPreBoats([]);
+
     const r = races.find((x) => x.id === selectedId);
     setRace(r);
     if (!r) return;
     let es = await getRaceEntries(selectedId);
 
     // 節間成績が未取得なら、そのレースの公式racelistから自動補完する。
-    // 画面の「更新」だけでも節間成績が埋まるようにし、同一表示中の無限再取得は防ぐ。
     const hasSection = (es || []).some((e) =>
       e.section_points != null || e.section_st != null || !!e.section_finishes || e.section_momentum != null
     );
@@ -68,33 +68,54 @@ export default function Venue() {
       }
     }
     setEntries(es || []);
-    const p = await getPrediction(selectedId, "PRE");
-    const f = await getPrediction(selectedId, "FINAL");
-    setPre(p); setFin(f);
-    if (p) {
-      setPreBoats(await getBoatPredictions(p.id));
-      setPreTri(await getTrifectaPredictions(p.id));
-    } else { setPreBoats([]); setPreTri([]); }
-    if (f) {
-      setFinBoats(await getBoatPredictions(f.id));
-      setFinTri(await getTrifectaPredictions(f.id));
-      setView("FINAL");
-    } else if (p) {
-      setView("PRE");
+
+    // === V4 FINAL自動生成保証 ===
+    if (r?.exhibition_ready && r?.deadline) {
+      const deadlineMs = new Date(r.deadline).getTime();
+      if (deadlineMs > Date.now()) {
+        const finCheck = await getV4Prediction(selectedId, "FINAL", r?.race_key);
+        if (!finCheck || finCheck.status !== "COMPLETED") {
+          try {
+            await generateV4PredictionForRace(selectedId, "FINAL", false);
+            // 生成後、Race最新状態を再取得
+            const updatedRaces = await listTodayRaces({ includeFinished: true });
+            const updatedList = (updatedRaces || []).filter((rr) => String(rr.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
+              .sort((a, b) => a.race_number - b.race_number);
+            setRaces(updatedList);
+            const r2 = updatedList.find((x) => x.id === selectedId);
+            if (r2) setRace(r2);
+          } catch (e) {
+            console.warn("[Venue] V4 FINAL auto-gen failed:", e?.message || e);
+          }
+        }
+      }
+    }
+
+    // === Current Prediction Resolver (V4唯一) ===
+    const resolved = await resolveCurrentPrediction(selectedId, r?.race_key);
+    setCurrent(resolved);
+
+    // FINAL表示時のみPRE boat_scoresを取得(PRE→FINAL比較用)
+    if (resolved.stage === "FINAL") {
+      const preV4 = await getV4Prediction(selectedId, "PRE", r?.race_key);
+      if (preV4) {
+        const mapped = mapV4ToUI(preV4, "PRE");
+        setPreBoats(mapped?.boats || []);
+      }
     }
   };
-  useEffect(() => { loadDetail(); }, [selectedId, races]);
+  useEffect(() => { loadDetail(); }, [selectedId, races.length]);
 
   const run = async (stage) => {
     if (!race) return;
     setBusy(true);
     try {
-      const settings = await getSettings();
-      await generateAndSavePrediction(race, entries, settings, stage, {});
+      // V4予想生成(バックエンド関数経由)
+      await generateV4PredictionForRace(selectedId, stage, true);
       await loadDetail();
       await loadList();
     } catch (e) {
-      alert("予想生成に失敗: " + e.message);
+      alert("予想生成に失敗: " + (e?.message || e));
     }
     setBusy(false);
   };
@@ -102,15 +123,18 @@ export default function Venue() {
   if (loading) return <div className="py-24 text-center text-slate-500">読み込み中…</div>;
   if (!raceList.length) return <div className="space-y-4"><Link to="/" className="text-blue-400 text-sm">← レース場一覧へ</Link><div className="py-24 text-center text-slate-500">本日のレースはありません</div></div>;
 
-  const activePred = view === "FINAL" ? fin : pre;
-  const activeBoats = (view === "FINAL" ? finBoats : preBoats).sort((a, b) => a.boat_number - b.boat_number);
-  const allTri = view === "FINAL" ? finTri : preTri;
+  // === 全てcurrentPredictionから表示 ===
+  const activePred = current?.pred;
+  const activeBoats = (current?.boats || []).sort((a, b) => a.boat_number - b.boat_number);
+  const allTri = current?.trifectas || [];
+  const stage = current?.stage; // "FINAL" | "PRE" | null
+
   const probRank = [...allTri].sort((a, b) => a.rank - b.rank).slice(0, 10);
   const evRank = [...allTri].sort((a, b) => b.expected_value - a.expected_value).slice(0, 10);
-  const compareData = preBoats.length && finBoats.length
+  const compareData = stage === "FINAL" && preBoats.length && activeBoats.length
     ? [1, 2, 3, 4, 5, 6].map((n) => {
         const pb = preBoats.find((b) => b.boat_number === n);
-        const fb = finBoats.find((b) => b.boat_number === n);
+        const fb = activeBoats.find((b) => b.boat_number === n);
         if (!pb || !fb) return null;
         return { n, pre: pb.total_power, final: fb.total_power, delta: fb.total_power - pb.total_power };
       }).filter(Boolean)
@@ -146,7 +170,7 @@ export default function Venue() {
               r.status === "finished" ? "bg-white text-slate-600 border-slate-200" :
               "bg-slate-50 text-slate-700 border-slate-300 hover:border-slate-500")}>
             <span>{r.race_number}R</span>
-            {r.prediction_grade && r.id !== selectedId && <span className="text-[8px] text-slate-500">{r.prediction_grade}</span>}
+            {r.exhibition_ready && r.id !== selectedId && <span className="text-[8px] text-blue-500">展</span>}
           </button>
         ))}
       </div>
@@ -155,7 +179,7 @@ export default function Venue() {
       {race && (
         <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
           <PredictionPanel
-            race={race} pre={pre} fin={fin} view={view} setView={setView}
+            race={race} stage={stage}
             run={run} busy={busy} entries={entries}
             activePred={activePred} activeBoats={activeBoats} allTri={allTri}
             compareData={compareData}

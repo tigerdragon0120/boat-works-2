@@ -637,12 +637,47 @@ export function mapV4ToUI(v4Pred, stage) {
 }
 
 // ============================================================
+// V4予想生成(単一レース) — UIからの「PRE/FINAL再実行」「更新」で呼ぶ
+// バックエンド関数 generateV4PredictionForRace を呼び出す
+// ============================================================
+export async function generateV4PredictionForRace(raceId, stage, force = false) {
+  const res = await base44.functions.invoke("generateV4PredictionForRace", {
+    race_id: raceId, stage, force,
+  });
+  return res?.data || res;
+}
+
+// ============================================================
+// V4 FINAL自動生成保証
+// exhibition_ready=true かつ V4 FINAL未生成 かつ 締切前なら生成
+// UIのload時に呼び出し、FINALが自動で揃うようにする
+// ============================================================
+export async function ensureV4Final(race) {
+  if (!race || !race.id) return null;
+  if (!race.exhibition_ready) return null;
+  if (race.deadline) {
+    const deadlineMs = new Date(race.deadline).getTime();
+    if (deadlineMs < Date.now()) return null; // 締切後はスキップ
+  }
+  // V4 FINAL既存確認
+  const existing = await getV4Prediction(race.id, "FINAL", race.race_key);
+  if (existing && (existing.status === "COMPLETED" || !existing.status)) return existing;
+  // 生成
+  try {
+    return await generateV4PredictionForRace(race.id, "FINAL", false);
+  } catch (e) {
+    console.warn("[ensureV4Final] generation failed:", e?.message || e);
+    return null;
+  }
+}
+
+// ============================================================
 // Current Prediction Resolver
 // FINAL優先で予想を1本化して返す。UIの唯一の表示ソース。
 // 優先順位:
 //   1. PredictionV4 FINAL COMPLETED
 //   2. PredictionV4 PRE COMPLETED
-//   3. なし
+//   3. なし(旧Race予想fallback禁止)
 // ============================================================
 export async function resolveCurrentPrediction(raceId, raceKey) {
   // 1. V4 FINAL COMPLETED (最優先)

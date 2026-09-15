@@ -2,8 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import {
-  getRaceEntries, getSettings, generateAndSavePrediction,
+  getRaceEntries, getSettings,
   getV4Prediction, mapV4ToUI, resolveCurrentPrediction,
+  ensureV4Final, generateV4PredictionForRace,
 } from "@/lib/predictionService";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
@@ -33,6 +34,25 @@ export default function RaceDetail() {
     const es = await getRaceEntries(id);
     setEntries(es || []);
 
+    // === V4 FINAL自動生成保証 ===
+    // exhibition_ready=true かつ V4 FINAL未生成 かつ 締切前なら生成
+    if (r?.exhibition_ready && r?.deadline) {
+      const deadlineMs = new Date(r.deadline).getTime();
+      if (deadlineMs > Date.now()) {
+        const finCheck = await getV4Prediction(id, "FINAL", r?.race_key);
+        if (!finCheck || finCheck.status !== "COMPLETED") {
+          try {
+            await generateV4PredictionForRace(id, "FINAL", false);
+            // 生成後、Race最新状態を再取得
+            const r2 = await base44.entities.Race.get(id);
+            setRace(r2);
+          } catch (e) {
+            console.warn("[RaceDetail] V4 FINAL auto-gen failed:", e?.message || e);
+          }
+        }
+      }
+    }
+
     // === Current Prediction Resolver ===
     // FINAL優先で予想を1本化取得。UIの唯一の表示ソース。
     const resolved = await resolveCurrentPrediction(id, r?.race_key);
@@ -55,13 +75,13 @@ export default function RaceDetail() {
   const run = async (stage) => {
     setBusy(true);
     try {
-      const settings = await getSettings();
-      await generateAndSavePrediction(race, entries, settings, stage, {});
-      // FINAL再実行後: resolver再実行しcurrentPredictionを完全置き換え
+      // V4予想生成(バックエンド関数経由)
+      await generateV4PredictionForRace(id, stage, true);
+      // 再実行後: resolver再実行しcurrentPredictionを完全置き換え
       // PRE stateへmergeせず、最新データで完全replace
       await load();
     } catch (e) {
-      alert("予想生成に失敗: " + e.message);
+      alert("予想生成に失敗: " + (e?.message || e));
     }
     setBusy(false);
   };
