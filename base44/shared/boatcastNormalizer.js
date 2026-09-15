@@ -283,8 +283,14 @@ export function normalizeExhibitionData(tkzResult, sttResult, metadata) {
   const stRankMap = {};
   sortedBySt.forEach((s, idx) => { stRankMap[s.lane] = idx + 1; });
 
+  // STTの艇番対応は選手名を最優先で照合する。
+  // 進入変更時に「コース番号」と「枠番」を取り違えても、選手名なら艇を一意に特定できる。
+  // 名前が取れない古い/不完全データだけ lane をフォールバックに使う。
+  const normalizeName = (v) => String(v || '').replace(/[\s\u3000]/g, '');
   const racers = tkz.map(tkzRacer => {
-    const sttRacer = stt.find(s => s.lane === tkzRacer.lane);
+    const tkzName = normalizeName(tkzRacer.racer_name);
+    const sttRacer = (tkzName && stt.find(s => normalizeName(s.racer_name) === tkzName))
+      || stt.find(s => s.lane === tkzRacer.lane);
     const stData = tkzSt.find(s => s.lane === tkzRacer.lane);
     return {
       lane: tkzRacer.lane,
