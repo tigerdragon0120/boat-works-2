@@ -682,6 +682,34 @@ export async function ensureV4Final(race) {
 //   4. V4予想生成待ち
 // Race旧予想をfallbackにしない。
 // ============================================================
+// ============================================================
+// ensurePreOdds — PREレコードのオッズが未付与ならOD3をアタッチ
+// 予想ロジックは変更しない。actual_odds/expected_valueのみ付与。
+// 同じprediction_idへ保存→再READ→同じIDを返す。
+// ============================================================
+async function ensurePreOdds(preV4, raceId) {
+  if (!preV4) return preV4;
+  const trifectas = preV4.trifectas || [];
+  const oddsCount = trifectas.filter(t => t.actual_odds != null).length;
+  if (oddsCount >= 120) return preV4; // 既にオッズあり
+
+  try {
+    const res = await base44.functions.invoke("attachOddsToV4Prediction", {
+      prediction_id: preV4.id,
+      race_id: raceId,
+      stage: "PRE",
+    });
+    if (res?.ok && res?.prediction_id === preV4.id) {
+      // 同じIDで再READ
+      const updated = await withRetry(() => base44.entities.PredictionV4.get(preV4.id));
+      if (updated) return updated;
+    }
+  } catch (e) {
+    console.warn("[ensurePreOdds] attach failed:", e?.message || e);
+  }
+  return preV4; // 失敗時はそのまま返す
+}
+
 export async function resolveCurrentPrediction(raceId, raceKey) {
   // 1. V4 FINAL取得
   const finV4 = await getV4Prediction(raceId, "FINAL", raceKey);
@@ -694,8 +722,10 @@ export async function resolveCurrentPrediction(raceId, raceKey) {
     }
     // 1b. FINAL WAITING_ODDS / FINAL_PENDING_ODDS → PRE内容 + バナー
     if (finV4.status === "WAITING_ODDS" || finV4.status === "FINAL_PENDING_ODDS") {
-      const preV4 = await getV4Prediction(raceId, "PRE", raceKey);
+      let preV4 = await getV4Prediction(raceId, "PRE", raceKey);
       if (preV4 && (preV4.status === "COMPLETED" || !preV4.status)) {
+        // PREのオッズが未付与ならOD3をアタッチ(同じIDへ保存)
+        preV4 = await ensurePreOdds(preV4, raceId);
         const mapped = mapV4ToUI(preV4, "PRE");
         if (mapped) return { stage: "PRE", ...mapped, pendingOdds: true, waitingFinalOdds: true };
       }
@@ -706,8 +736,10 @@ export async function resolveCurrentPrediction(raceId, raceKey) {
   }
 
   // 2. V4 PRE COMPLETED → PRE表示
-  const preV4 = await getV4Prediction(raceId, "PRE", raceKey);
+  let preV4 = await getV4Prediction(raceId, "PRE", raceKey);
   if (preV4 && (preV4.status === "COMPLETED" || !preV4.status)) {
+    // PREのオッズが未付与ならOD3をアタッチ(同じIDへ保存)
+    preV4 = await ensurePreOdds(preV4, raceId);
     const mapped = mapV4ToUI(preV4, "PRE");
     if (mapped) return { stage: "PRE", ...mapped };
   }
