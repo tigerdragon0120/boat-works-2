@@ -19,7 +19,7 @@
 // UIへ返す場合も同じtargetIdを返す。
 // =====================================================
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
-import { resolveProductionOdds } from '../../shared/oddsResolver.js';
+import { resolveProductionOdds, fetchBoatcastOdds3, buildOddsMap } from '../../shared/oddsResolver.js';
 
 function normalizeCombination(combo: any): string | null {
   if (!combo) return null;
@@ -91,25 +91,46 @@ export default async function(req: Request) {
     }
 
     // =====================================================
-    // STEP 3: Race取得・締切チェック
+    // STEP 3: Race取得
+    // (締切後もOD3は確定オッズとして取得可能 — チェックしない)
     // =====================================================
     const race = await sr.Race.get(pred.race_id).catch(() => null);
     if (!race) {
       return Response.json({ ok: false, reason: 'RACE_NOT_FOUND', prediction_id: targetId });
     }
 
-    const deadlineMs = race.deadline ? new Date(race.deadline).getTime() : 0;
-    const preDeadline = deadlineMs > 0 && deadlineMs > Date.now();
-    if (!preDeadline) {
-      return Response.json({ ok: false, reason: 'PAST_DEADLINE', prediction_id: targetId });
-    }
-
     // =====================================================
     // STEP 4: OD3取得(BOATCAST優先、LOCAL fallback)
+    // 締切前はリアルタイムOD3、締切後は確定OD3が取得される
     // =====================================================
+    console.warn(`[attachOdds] race=${race.race_key} venue=${race.venue_code} date=${race.race_date} num=${race.race_number}`);
+    // 直接fetchBoatcastOdds3を呼んで詳細ログ取得
+    const directResult = await fetchBoatcastOdds3(race);
+    console.warn(`[attachOdds] fetchBoatcastOdds3 ok=${directResult.ok} error=${directResult.error || 'none'} http=${directResult.http_access_count} subtype=${directResult.subtype || 'none'}`);
+    if (directResult.ok) {
+      console.warn(`[attachOdds] integrity=${JSON.stringify(directResult.integrity)} odds_count=${directResult.odds?.odds?.length || 0}`);
+    }
     const resolved = await resolveProductionOdds(race, base44);
+    console.warn(`[attachOdds] resolved source=${resolved.source} odds_count=${resolved.odds_map ? Object.keys(resolved.odds_map).length : 0} integrity=${JSON.stringify(resolved.integrity)}`);
     if (!resolved.odds_map || Object.keys(resolved.odds_map).length === 0) {
-      return Response.json({ ok: false, reason: 'OD3_FETCH_FAILED', prediction_id: targetId });
+      return Response.json({
+        ok: false,
+        reason: 'OD3_FETCH_FAILED',
+        prediction_id: targetId,
+        debug: {
+          race_key: race.race_key,
+          venue_code: race.venue_code,
+          race_date: race.race_date,
+          race_number: race.race_number,
+          direct_ok: directResult.ok,
+          direct_error: directResult.error || null,
+          direct_http_count: directResult.http_access_count,
+          direct_subtype: directResult.subtype || null,
+          direct_integrity: directResult.integrity || null,
+          resolved_source: resolved.source,
+          resolved_integrity: resolved.integrity,
+        },
+      });
     }
 
     const normalizedOdds = normalizeOddsMap(resolved.odds_map);
