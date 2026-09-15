@@ -247,10 +247,15 @@ function computeRelativeRanks(boats) {
 
 // ============================================================
 // メイン: V2 Boat Scores計算
+// 欠場艇(is_scratched/is_absent/Race.scratched_boats)を完全除外
 // ============================================================
 export function computeV2BoatScores(entries, race, stage) {
   const isFinal = stage === "FINAL";
-  const activeEntries = entries.filter(e => !e.is_absent && e.boat_number);
+  const scratchedBoats = race?.scratched_boats || [];
+  const activeEntries = entries.filter(e =>
+    !e.is_absent && !e.is_scratched && e.boat_number &&
+    !(Array.isArray(scratchedBoats) && scratchedBoats.includes(e.boat_number))
+  );
 
   // Step 1-3: 各軸スコア計算
   const boats = activeEntries.map(entry => {
@@ -334,7 +339,7 @@ export function computeV2BoatScores(entries, race, stage) {
 // 1着適性・2着適性・3着適性を分離
 // ============================================================
 export function computeV2Trifectas(boatScores, stage) {
-  const boats = boatScores.filter(b => !b.entry?.is_absent);
+  const boats = boatScores.filter(b => !b.entry?.is_absent && !b.entry?.is_scratched);
   const numbers = boats.map(b => b.boat_number);
 
   // 1着適性: スコア + コース別1着能力 + ST
@@ -589,11 +594,11 @@ export function runPredictionV2(entries, race, settings, options = {}) {
   });
   const thirdRanking = thirdSorted.map(b => b.boat_number);
 
-  // 本命・対抗・穴・消し
+  // 本命・対抗・穴・消し(欠場艇除外後の艇数で動的に処理)
   const honmei = firstRanking[0];
   const taiko = firstRanking[1];
   const ana = firstRanking[2];
-  const keshi = firstRanking[5];
+  const keshi = firstRanking[firstRanking.length - 1];
 
   // トップ3連単
   const topTrifecta = trifectas[0];

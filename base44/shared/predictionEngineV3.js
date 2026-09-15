@@ -522,10 +522,15 @@ function computeThirdScore(entry, baseScore, stage) {
 
 // ============================================================
 // メイン: V3 Boat Scores計算
+// 欠場艇(is_scratched/is_absent/Race.scratched_boats)を完全除外
 // ============================================================
 export function computeV3BoatScores(entries, race, stage) {
   const isFinal = stage === "FINAL";
-  const activeEntries = entries.filter(e => !e.is_absent && e.boat_number);
+  const scratchedBoats = race?.scratched_boats || [];
+  const activeEntries = entries.filter(e =>
+    !e.is_absent && !e.is_scratched && e.boat_number &&
+    !(Array.isArray(scratchedBoats) && scratchedBoats.includes(e.boat_number))
+  );
 
   // 条件付き重み
   const condWeights = computeConditionalWeights(activeEntries, race, stage);
@@ -617,7 +622,7 @@ export function computeV3BoatScores(entries, race, stage) {
 // softmax + 正規化
 // ============================================================
 export function computeV3Probabilities(boatScores) {
-  const boats = boatScores.filter(b => !b.entry?.is_absent);
+  const boats = boatScores.filter(b => !b.entry?.is_absent && !b.entry?.is_scratched);
   const numbers = boats.map(b => b.boat_number);
 
   const softmax = (scores, temp) => {
@@ -712,7 +717,7 @@ export function computeV3Trifectas(boatScores) {
 // 【V3新規】1着信頼度・確率ギャップ計算
 // ============================================================
 function computeFirstConfidence(boatScores, probabilities, stage) {
-  const boats = boatScores.filter(b => !b.entry?.is_absent);
+  const boats = boatScores.filter(b => !b.entry?.is_absent && !b.entry?.is_scratched);
   const sorted = [...boats].sort((a, b) => (probabilities.firstP[b.boat_number] || 0) - (probabilities.firstP[a.boat_number] || 0));
 
   if (sorted.length < 2) return { confidence: 0, gap: 0, top1_prob: 0, top2_prob: 0 };
@@ -753,7 +758,7 @@ function computeFirstConfidence(boatScores, probabilities, stage) {
 // 【V3新規】レースタイプ分類
 // ============================================================
 function classifyRaceType(boatScores, probabilities, firstConfidence, dataConfidence, stage) {
-  const boats = boatScores.filter(b => !b.entry?.is_absent);
+  const boats = boatScores.filter(b => !b.entry?.is_absent && !b.entry?.is_scratched);
   const sorted = [...boats].sort((a, b) => (probabilities.firstP[b.boat_number] || 0) - (probabilities.firstP[a.boat_number] || 0));
   const top1 = sorted[0];
   const top1Prob = (probabilities.firstP[top1.boat_number] || 0) * 100;
@@ -956,7 +961,7 @@ export function computeV3SetMetrics(selectedTickets, oddsMap, settings) {
 // 【V3新規】データ完全性チェック
 // ============================================================
 function computeDataCompleteness(boatScores, stage, oddsMap) {
-  const boats = boatScores.filter(b => !b.entry?.is_absent);
+  const boats = boatScores.filter(b => !b.entry?.is_absent && !b.entry?.is_scratched);
   const hasEntry = boats.length >= 6;
   const hasWaku10 = boats.filter(b => b.recent_components?.waku10_win != null).length >= 4;
   const hasProfile = boats.filter(b => b.past_components?.national_win != null).length >= 4;
@@ -1122,7 +1127,7 @@ export function runPredictionV3(entries, race, settings, options = {}) {
   }
 
   // 条件付き重み
-  const condWeights = computeConditionalWeights(entries.filter(e => !e.is_absent && e.boat_number), race, stage);
+  const condWeights = computeConditionalWeights(entries.filter(e => !e.is_absent && !e.is_scratched && e.boat_number), race, stage);
 
   // データソース使用状況
   const dataSources = {

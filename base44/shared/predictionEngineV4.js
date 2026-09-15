@@ -228,10 +228,15 @@ function computeTodayScore(entry, allEntries, race) {
 
 // ============================================================
 // Boat Scores計算
+// 欠場艇(is_scratched/is_absent/Race.scratched_boats)を完全除外
 // ============================================================
 function computeV4BoatScores(entries, race, stage) {
   const isFinal = stage === "FINAL";
-  const activeEntries = entries.filter(e => !e.is_absent && e.boat_number);
+  const scratchedBoats = race?.scratched_boats || [];
+  const activeEntries = entries.filter(e =>
+    !e.is_absent && !e.is_scratched && e.boat_number &&
+    !(Array.isArray(scratchedBoats) && scratchedBoats.includes(e.boat_number))
+  );
 
   const boats = activeEntries.map(entry => {
     const past = computePastScore(entry);
