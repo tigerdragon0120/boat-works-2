@@ -73,8 +73,8 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-3">
               <Zap className="w-8 h-8 text-[#f9c836]" />
             </div>
-            <div className="text-slate-700 font-semibold text-sm mb-1">予想未実行</div>
-            <div className="text-slate-500 text-xs mb-4">PRE/FINAL予想を実行すると<br />買い目と判定が表示されます</div>
+            <div className="text-slate-700 font-semibold text-sm mb-1">V4予想生成待ち</div>
+            <div className="text-slate-500 text-xs mb-4">PredictionV4の生成を待っています<br />PRE/FINAL予想を実行すると表示されます</div>
             <div className="flex gap-2 w-full max-w-xs">
               <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
                 className="flex-1 h-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">

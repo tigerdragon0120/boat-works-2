@@ -328,7 +328,7 @@ function BetTicketView({ activePred, allTri, race }) {
         return !boats.some(b => scratchedBoats.includes(b));
       })
     : selected;
-  if (!filteredSelected.length) return <Empty msg="買い目データがありません。予想を実行してください。" />;
+  if (!filteredSelected.length) return <Empty msg="V4予想生成待ち — 買い目データがありません" />;
   const judgment = activePred?.final_judgment || "—";
   return (
     <div className="p-2 space-y-2">
