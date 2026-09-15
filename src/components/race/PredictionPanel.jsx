@@ -38,7 +38,15 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
   const judgment = activePred?.final_judgment || "PENDING";
   const jcfg = judgmentConfig[judgment] || judgmentConfig.PENDING;
   // selected_trifectasを第一ソース、trifectas.filter(is_selected)をフォールバック
-  const selectedTri = buildSelectedTickets(activePred, allTri);
+  const selectedTriRaw = buildSelectedTickets(activePred, allTri);
+  // 欠場艇を含む買い目をフィルタ
+  const scratchedBoats = race?.scratched_boats || [];
+  const selectedTri = scratchedBoats.length > 0
+    ? selectedTriRaw.filter(t => {
+        const boats = t.combination.split("-").map(Number);
+        return !boats.some(b => scratchedBoats.includes(b));
+      })
+    : selectedTriRaw;
   // ticket_countはselected_trifectas.lengthを正とする
   const displayTicketCount = activePred?.selected_trifectas?.length || activePred?.ticket_count || selectedTri.length || "—";
   // 旧予想データに本命/対抗/穴の重複が残っていても表示時に必ず補正する。

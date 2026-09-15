@@ -79,7 +79,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
       <div className="flex-1 overflow-auto">
         {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} race={race} />}
         {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />}
-        {subTab === "直前情報" && <ExhibitionInfo entries={entries} />}
+        {subTab === "直前情報" && <ExhibitionInfo entries={entries} race={race} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
         {subTab === "3連単" && <TrifectaView probRank={probRank} evRank={evRank} rankMode={rankMode} setRankMode={setRankMode} />}
         {subTab === "6艇評価" && <BoatEvalView entries={entries} activeBoats={activeBoats} activePred={displayPred} />}
@@ -243,8 +243,10 @@ function renderDataCols(filter, e) {
   }
 }
 
-function ExhibitionInfo({ entries }) {
+function ExhibitionInfo({ entries, race }) {
   if (!entries.length) return <Empty msg="展示データがありません" />;
+  const scratchedBoats = race?.scratched_boats || [];
+  const isScratched = (n) => scratchedBoats.includes(n) || entries.find(e => e.boat_number === n)?.is_scratched || entries.find(e => e.boat_number === n)?.is_absent;
   return (
     <div className="p-2.5 sm:p-3 space-y-2.5">
       {/* スタート展示パネル */}
@@ -252,11 +254,13 @@ function ExhibitionInfo({ entries }) {
       {/* 各艇展示データ詳細 */}
       {entries.map((e) => {
         const hasEntryChange = e.exhibition_course != null && Number(e.exhibition_course) !== Number(e.boat_number);
+        const scratched = isScratched(e.boat_number);
         return (
-        <div key={e.boat_number} className={cn("flex items-center gap-2 rounded-lg border bg-white p-2", hasEntryChange ? "border-amber-400/50" : "border-slate-200")}>
+        <div key={e.boat_number} className={cn("flex items-center gap-2 rounded-lg border bg-white p-2", scratched ? "border-red-400/50 opacity-40 bg-slate-100" : hasEntryChange ? "border-amber-400/50" : "border-slate-200")}>
           <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
           <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} size="sm" />
           <span className="text-xs font-bold text-slate-900 w-20 truncate">{e.player_name || ""}</span>
+          {scratched && <span className="text-[9px] px-1 rounded bg-red-500 text-white font-bold shrink-0">欠場</span>}
           <div className="flex-1 grid grid-cols-4 gap-1 text-center text-[10px]">
             <div><div className="text-slate-500">展示T</div><div className="font-mono font-bold text-slate-900">{e.exhibition_time?.toFixed(2) || "—"}</div></div>
             <div><div className="text-slate-500">展示ST</div><div className="font-mono font-bold text-slate-900">{e.exhibition_st?.toFixed(2) || "—"}</div></div>
