@@ -50,8 +50,9 @@ export function mergeExhibition(boatcastExhibition, localEntries, race) {
     const boatNumber = Number(localEntry.boat_number);
     const bcRacer = bcRacers.find(r => r.lane === boatNumber);
 
-    // 欠場チェック(LOCAL優先・BOATCASTでも確認)
-    const isAbsent = !!(localEntry.is_absent || localEntry.is_scratched);
+    // 欠場チェック(LOCAL優先・BOATCASTでも確認・Race.scratched_boatsも参照)
+    const isAbsent = !!(localEntry.is_absent || localEntry.is_scratched) ||
+      (Array.isArray(race?.scratched_boats) && race.scratched_boats.includes(boatNumber));
 
     const merged = {
       ...localEntry,

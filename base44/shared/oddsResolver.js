@@ -14,6 +14,20 @@ import { normalizeOd3 } from "./boatcastNormalizer.js";
 const STALE_THRESHOLD_SECONDS = 600;
 
 // ============================================================
+// ACTIVE_BOATS関連ヘルパー(全場共通)
+// 欠場艇を除外した有効艇数と有効3連単数を計算
+// ============================================================
+export function getActiveBoatCount(race) {
+  const scratchedBoats = race?.scratched_boats || [];
+  return Math.max(1, 6 - (Array.isArray(scratchedBoats) ? scratchedBoats.length : 0));
+}
+
+export function getExpectedOddsCount(race) {
+  const n = getActiveBoatCount(race);
+  return n * (n - 1) * (n - 2);
+}
+
+// ============================================================
 // BOATCAST OD3取得
 // kakutei(確定)を優先、失敗時smt(リアルタイム)へフォールバック
 // ============================================================
@@ -88,7 +102,8 @@ export async function fetchBoatcastOdds3(race) {
     };
   }
 
-  const integrity = validateOddsIntegrity(normalizedOdds);
+  const activeBoatCount = getActiveBoatCount(race);
+  const integrity = validateOddsIntegrity(normalizedOdds, activeBoatCount);
 
   return {
     ok: true,
@@ -96,6 +111,8 @@ export async function fetchBoatcastOdds3(race) {
     subtype,
     odds: normalizedOdds,
     integrity,
+    active_boat_count: activeBoatCount,
+    expected_odds_count: activeBoatCount * (activeBoatCount - 1) * (activeBoatCount - 2),
     fetched_at: fetchedAt,
     http_access_count: httpCount,
   };
@@ -164,19 +181,27 @@ export function isOddsStale(fetchedAt) {
 // 3. 欠損
 // ============================================================
 export async function resolveProductionOdds(race, client) {
+  const activeBoatCount = getActiveBoatCount(race);
+  const expectedOddsCount = activeBoatCount * (activeBoatCount - 1) * (activeBoatCount - 2);
+
   // 1. BOATCAST OD3
   const boatcastResult = await fetchBoatcastOdds3(race);
-  if (boatcastResult.ok && boatcastResult.integrity.status === 'OK') {
+  if (boatcastResult.ok) {
     const oddsMap = buildOddsMap(boatcastResult.odds);
-    if (Object.keys(oddsMap).length > 0) {
+    // 欠場艇がある場合、integrity=ERRORでも有効オッズ数が期待値に一致すれば使用
+    const oddsCount = Object.keys(oddsMap).length;
+    const integrityOk = boatcastResult.integrity.status === 'OK' || oddsCount === expectedOddsCount;
+    if (oddsCount > 0 && integrityOk) {
       return {
         source: 'BOATCAST',
         subtype: boatcastResult.subtype,
         odds_map: oddsMap,
         fetched_at: boatcastResult.fetched_at,
         age_seconds: getOddsAge(boatcastResult.fetched_at),
-        is_stale: false, // BOATCASTは取得直後なので非STALE
+        is_stale: false,
         integrity: boatcastResult.integrity,
+        active_boat_count: activeBoatCount,
+        expected_odds_count: expectedOddsCount,
         http_access_count: boatcastResult.http_access_count,
       };
     }

@@ -710,7 +710,37 @@ async function ensurePreOdds(preV4, raceId) {
   return preV4; // 失敗時はそのまま返す
 }
 
+// PRE予想が欠場艇を含む場合は再生成する(欠場検知後の古いPREを表示しない)
+async function ensurePreExcludesScratched(raceId, raceKey) {
+  const race = await withRetry(() => base44.entities.Race.get(raceId)).catch(() => null);
+  if (!race) return null;
+  const scratchedBoats = race.scratched_boats || [];
+  if (!scratchedBoats.length) return race;
+
+  const preV4 = await getV4Prediction(raceId, "PRE", raceKey);
+  if (!preV4) return race;
+
+  const selected = preV4.selected_trifectas || [];
+  const includesScratched = selected.some(combo => {
+    const boats = combo.split("-").map(Number);
+    return boats.some(b => scratchedBoats.includes(b));
+  });
+
+  if (includesScratched) {
+    try {
+      await generateV4PredictionForRace(raceId, "PRE", true);
+    } catch (e) {
+      console.warn("[ensurePreExcludesScratched] regeneration failed:", e?.message || e);
+    }
+  }
+
+  return race;
+}
+
 export async function resolveCurrentPrediction(raceId, raceKey) {
+  // 0. PREが欠場艇を含む場合は再生成(欠場検知後の古いPREを表示しない)
+  await ensurePreExcludesScratched(raceId, raceKey);
+
   // 1. V4 FINAL取得
   const finV4 = await getV4Prediction(raceId, "FINAL", raceKey);
 

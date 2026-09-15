@@ -19,7 +19,7 @@
 // UIへ返す場合も同じtargetIdを返す。
 // =====================================================
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
-import { resolveProductionOdds, fetchBoatcastOdds3, buildOddsMap } from '../../shared/oddsResolver.js';
+import { resolveProductionOdds, fetchBoatcastOdds3, buildOddsMap, getExpectedOddsCount } from '../../shared/oddsResolver.js';
 
 function normalizeCombination(combo: any): string | null {
   if (!combo) return null;
@@ -77,26 +77,28 @@ export default async function(req: Request) {
     const targetId = pred.id;
 
     // =====================================================
-    // STEP 2: 既にオッズがある場合はそのまま返す(冪等性)
+    // STEP 2: Race取得(先に取得してACTIVE_BOATSを計算)
+    // =====================================================
+    const race = await sr.Race.get(pred.race_id).catch(() => null);
+    if (!race) {
+      return Response.json({ ok: false, reason: 'RACE_NOT_FOUND', prediction_id: targetId });
+    }
+
+    // =====================================================
+    // STEP 3: 既にオッズがある場合はそのまま返す(冪等性)
+    // 欠場艇がある場合は120より少ない有効オッズ数でOK
     // =====================================================
     const trifectas = pred.trifectas || [];
     const existingOddsCount = trifectas.filter((t: any) => t.actual_odds != null).length;
-    if (existingOddsCount >= 120) {
+    const expectedOddsCount = getExpectedOddsCount(race);
+    if (existingOddsCount >= expectedOddsCount) {
       return Response.json({
         ok: true,
         already_has_odds: true,
         prediction_id: targetId,
         odds_count: existingOddsCount,
+        expected_odds_count: expectedOddsCount,
       });
-    }
-
-    // =====================================================
-    // STEP 3: Race取得
-    // (締切後もOD3は確定オッズとして取得可能 — チェックしない)
-    // =====================================================
-    const race = await sr.Race.get(pred.race_id).catch(() => null);
-    if (!race) {
-      return Response.json({ ok: false, reason: 'RACE_NOT_FOUND', prediction_id: targetId });
     }
 
     // =====================================================

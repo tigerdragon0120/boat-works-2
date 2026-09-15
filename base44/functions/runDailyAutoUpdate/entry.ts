@@ -559,11 +559,13 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       }
     }
 
-    // 実展示値(展示タイム+ST)が6艇揃った場合のみ exhibition_ready=true
+    // 実展示値(展示タイム+ST)がACTIVE_BOATS(6-欠場艇)揃った場合のみ exhibition_ready=true
     const realCount = parsed.data.real_exhibition_count || 0;
+    const scratchedBoats = race.scratched_boats || [];
+    const activeBoatCount = Math.max(1, 6 - (Array.isArray(scratchedBoats) ? scratchedBoats.length : 0));
     if (updated > 0) {
       const raceUpdate: any = {};
-      if (realCount >= 6) raceUpdate.exhibition_ready = true;
+      if (realCount >= activeBoatCount) raceUpdate.exhibition_ready = true;
       if (parsed.data.weather) raceUpdate.weather = parsed.data.weather;
       if (parsed.data.wind_speed != null) raceUpdate.wind_speed = parsed.data.wind_speed;
       if (parsed.data.water_temp != null) raceUpdate.water_temp = parsed.data.water_temp;
@@ -571,7 +573,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       if (parsed.data.wave_height != null) raceUpdate.wave_height = parsed.data.wave_height;
       await sr.Race.update(race.id, raceUpdate).catch(() => {});
       fetched++;
-      logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新(実展示${realCount}/6)`);
+      logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新(実展示${realCount}/${activeBoatCount})`);
     }
 
     await sleep(300);

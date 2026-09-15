@@ -3,7 +3,7 @@
 // V4 HIT Candidate予想をDBへ保存。V1/V2/V3とは完全独立。
 // ============================================================
 import { runPredictionV4 } from "./predictionEngineV4.js";
-import { resolveProductionOdds } from "./oddsResolver.js";
+import { resolveProductionOdds, getActiveBoatCount, getExpectedOddsCount } from "./oddsResolver.js";
 
 const V4_VERSION = "v4";
 
@@ -187,7 +187,8 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
 
     // OD3 combination一致カウント
     od3Debug.od3_match_count = (result.trifectas || []).filter(t => t.actual_odds != null).length;
-    if (stage === "FINAL" && od3Debug.od3_match_count === 120) od3Status = "MATCHED";
+    const expectedOddsCount = getExpectedOddsCount(race);
+    if (stage === "FINAL" && od3Debug.od3_match_count === expectedOddsCount) od3Status = "MATCHED";
     const selectedSet = new Set(result.selected_trifectas || []);
     od3Debug.od3_selected_match_count = (result.trifectas || []).filter(t => selectedSet.has(t.combination) && t.actual_odds != null).length;
 
@@ -314,7 +315,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
           od3Debug.post_save_selected_with_odds = postSaveSelectedWithOdds;
           od3Debug.post_save_selected_with_ev = postSaveSelectedWithEv;
 
-          const postSaveOk = postSaveOddsCount === 120 &&
+          const postSaveOk = postSaveOddsCount === expectedOddsCount &&
                              postSaveSelectedWithOdds === ticketCount &&
                              postSaveSelectedWithEv === ticketCount;
 
@@ -327,7 +328,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
           } else {
             od3Status = "ERROR";
             finalStatus = "WAITING_ODDS";
-            od3Debug.od3_error = `POST_SAVE failed: odds=${postSaveOddsCount}/120, sel_odds=${postSaveSelectedWithOdds}/${ticketCount}, sel_ev=${postSaveSelectedWithEv}/${ticketCount}`;
+            od3Debug.od3_error = `POST_SAVE failed: odds=${postSaveOddsCount}/${expectedOddsCount}, sel_odds=${postSaveSelectedWithOdds}/${ticketCount}, sel_ev=${postSaveSelectedWithEv}/${ticketCount}`;
             await sr.PredictionV4.update(predictionId, {
               od3_status: "ERROR",
               status: "WAITING_ODDS",

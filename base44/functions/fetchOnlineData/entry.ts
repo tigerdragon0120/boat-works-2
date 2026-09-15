@@ -88,10 +88,12 @@ async function processExhibition(base44: any, race: any, parsed: any) {
   }
 
   // Race展示取得済フラグ + 天候情報更新
-  // 実展示値(展示タイム+ST)が6艇揃った場合のみ exhibition_ready=true
+  // 実展示値(展示タイム+ST)がACTIVE_BOATS(6-欠場艇)揃った場合のみ exhibition_ready=true
   const realCount = parsed.real_exhibition_count || 0;
+  const scratchedBoats = race.scratched_boats || [];
+  const activeBoatCount = Math.max(1, 6 - (Array.isArray(scratchedBoats) ? scratchedBoats.length : 0));
   const raceUpdate: any = {};
-  if (realCount >= 6) raceUpdate.exhibition_ready = true;
+  if (realCount >= activeBoatCount) raceUpdate.exhibition_ready = true;
   if (parsed.weather) raceUpdate.weather = parsed.weather;
   if (parsed.wind_speed != null) raceUpdate.wind_speed = parsed.wind_speed;
   if (parsed.water_temp != null) raceUpdate.water_temp = parsed.water_temp;
@@ -99,7 +101,7 @@ async function processExhibition(base44: any, race: any, parsed: any) {
   if (parsed.wave_height != null) raceUpdate.wave_height = parsed.wave_height;
   await sr.Race.update(race.id, raceUpdate);
 
-  return { entries_updated: updated, exhibition_ready: realCount >= 6, real_exhibition_count: realCount };
+  return { entries_updated: updated, exhibition_ready: realCount >= activeBoatCount, real_exhibition_count: realCount, active_boat_count: activeBoatCount };
 }
 
 // === オッズデータ処理(決定論的パーサー出力 → OddsSnapshot保存 + FINAL生成) ===

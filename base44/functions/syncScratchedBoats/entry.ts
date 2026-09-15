@@ -101,6 +101,7 @@ export default async function(req: Request) {
       entries_updated: 0,
       final_regenerated: 0,
       final_skipped_post_deadline: 0,
+      pre_regenerated: 0,
       no_change: 0,
       errors: [] as string[],
       details: [] as any[],
@@ -167,10 +168,69 @@ export default async function(req: Request) {
           summary.no_change++;
         }
 
-        // 締切前で欠場艇ありの場合: FINAL再生成
+        // 欠場艇あり かつ 結果未確定の場合: PRE再生成(欠場艇を除外した買い目へ更新)
         const deadline = race.deadline ? new Date(race.deadline) : null;
         const isPreDeadline = deadline ? now < deadline : false;
+        const isFinished = race.status === 'finished';
 
+        if (detectedScratched.length > 0 && !isFinished) {
+          try {
+            // RaceEntry再取得(欠場反映済み)
+            const preEntries = await withRetry(() => sr.RaceEntry.filter({ race_key: race.race_key }, 'boat_number', 20));
+            const preByBoat = new Map<number, any>();
+            for (const e of preEntries || []) {
+              const bn = Number(e.boat_number);
+              if (bn >= 1 && bn <= 6 && !preByBoat.has(bn)) preByBoat.set(bn, e);
+            }
+            const preSix = [...preByBoat.values()].sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
+
+            if (preSix.length >= 5) {
+              // RacerLaneRecentStats取得
+              const preLaneRecent = await sr.RacerLaneRecentStats.filter(
+                { race_id: race.id }, '-updated_at', 5000
+              ).catch(() => []);
+              const preLaneByKey = new Map();
+              for (const x of preLaneRecent || []) {
+                const key = `${String(x.registration_number)}_${Number(x.lane)}`;
+                if (!preLaneByKey.has(key)) preLaneByKey.set(key, x);
+              }
+
+              const preEntriesWithProfiles = preSix.map((e: any) => {
+                const reg = String(e.registration_number || e.register_number || '').trim();
+                const laneKey = `${reg}_${Number(e.boat_number)}`;
+                return {
+                  ...e,
+                  _profile: reg ? profileByReg.get(reg) || null : null,
+                  _rollingStats: reg ? rollingByReg.get(reg) || null : null,
+                  _laneRecent: reg ? preLaneByKey.get(laneKey) || null : null,
+                };
+              });
+
+              const preRaceForEngine = { ...race, scratched_boats: newScratchedBoats };
+
+              const preResult = await withRetry(() => runAndSavePredictionV4(
+                base44, preRaceForEngine, preEntriesWithProfiles, settings, 'PRE', {}, profileByReg, rollingByReg
+              ));
+
+              if (!preResult.skipped) {
+                summary.pre_regenerated++;
+                detail.pre_regenerated = true;
+                detail.pre_ticket_count = preResult.result?.selected_trifectas?.length || 0;
+                // 欠場艇を含む買い目が0件であることを確認
+                const preTickets = preResult.result?.selected_trifectas || [];
+                const preTicketsWithScratched = preTickets.filter((combo: string) => {
+                  const boats = combo.split('-').map(Number);
+                  return boats.some(b => newScratchedBoats.includes(b));
+                });
+                detail.pre_tickets_with_scratched = preTicketsWithScratched.length;
+              }
+            }
+          } catch (e: any) {
+            summary.errors.push(`${race.race_key}: PRE再生成エラー ${e?.message || e}`);
+          }
+        }
+
+        // 締切前で欠場艇ありの場合: FINAL再生成
         if (detectedScratched.length > 0 && regenerateFinal) {
           if (isPreDeadline) {
             // 締切前: 古いFINAL削除 → 再生成
