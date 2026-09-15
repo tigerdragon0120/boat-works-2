@@ -94,10 +94,15 @@ function detectScratchesFromStt(sttText) {
     }
   }
 
+  // 全6艇が「欠場」= データ未公開のfalse positive → 無効化
+  if (scratchedBoats.length >= 6) {
+    return { scratchedBoats: [], source: 'STT', reliable: false, reason: 'DATA_NOT_PUBLISHED' };
+  }
+
   return {
     scratchedBoats,
     source: 'STT',
-    reliable: true, // STTは展示後なので最も確実
+    reliable: scratchedBoats.length > 0 && scratchedBoats.length < 6,
   };
 }
 
@@ -117,6 +122,7 @@ function detectScratchesFromTkz(tkzText) {
   // trimしない(末尾のタブが削除されフィールド数が減るのを防ぐ)
   const lines = tkzText.split('\n').filter(l => l.length > 0);
   const scratchedBoats = [];
+  let validBoatCount = 0; // 展示データありの艇数(データ公開判定用)
 
   let boatNumber = 1;
   for (const line of lines) {
@@ -124,25 +130,31 @@ function detectScratchesFromTkz(tkzText) {
     if (trimmed === 'data=' || trimmed === '1') continue;
     // 最後の行はST一覧(数字.数字形式)をスキップ
     if (/^\d+\.\d+/.test(trimmed)) continue;
-    // 選手名のみの行(展示データなし)はスキップしない
 
     const fields = line.split('\t');
     if (fields.length < 1) continue;
 
-    // 展示タイム(2番目フィールド)が空 → 欠場
+    // 展示タイム(2番目フィールド)が空 → 欠場候補
     const exhibitionTime = (fields[1] || '').trim();
     if (exhibitionTime === '' || isNaN(Number(exhibitionTime))) {
       scratchedBoats.push(boatNumber);
+    } else {
+      validBoatCount++;
     }
 
     boatNumber++;
     if (boatNumber > 6) break;
   }
 
+  // 全6艇が「欠場」= データ未公開のfalse positive → 無効化
+  if (scratchedBoats.length >= 6 && validBoatCount === 0) {
+    return { scratchedBoats: [], source: 'TKZ', reliable: false, reason: 'DATA_NOT_PUBLISHED' };
+  }
+
   return {
     scratchedBoats,
     source: 'TKZ',
-    reliable: scratchedBoats.length > 0,
+    reliable: scratchedBoats.length > 0 && scratchedBoats.length < 6,
   };
 }
 
