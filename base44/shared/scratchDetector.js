@@ -71,23 +71,24 @@ function detectScratchesFromStr3(str3Text) {
 function detectScratchesFromStt(sttText) {
   if (!sttText) return { scratchedBoats: [], source: 'STT', reliable: false };
 
-  const lines = sttText.split('\n').map(l => l.trim()).filter(Boolean);
+  // trimしない(末尾のタブが削除されフィールド数が減るのを防ぐ)
+  const lines = sttText.split('\n').filter(l => l.length > 0);
   const scratchedBoats = [];
 
   // ヘッダスキップ(data= と 1)
   for (const line of lines) {
-    if (line === 'data=' || line === '1') continue;
+    const trimmed = line.trim();
+    if (trimmed === 'data=' || trimmed === '1') continue;
 
     const fields = line.split('\t');
-    if (fields.length < 4) continue;
+    if (fields.length < 2) continue;
 
-    const courseField = fields[0] || '';
-    const boatNum = parseInt(fields[1], 10);
-    const stField = fields[3] || '';
+    const courseField = (fields[0] || '').trim();
+    const boatNum = parseInt((fields[1] || '').trim(), 10);
 
     // 進入コースが「－」または数字でない → 欠場
     if (boatNum >= 1 && boatNum <= 6) {
-      if (courseField === '－' || courseField === '-' || courseField === '' || isNaN(Number(courseField))) {
+      if (courseField === '－' || courseField === '-' || courseField === '' || courseField === '—' || isNaN(Number(courseField))) {
         scratchedBoats.push(boatNum);
       }
     }
@@ -113,20 +114,23 @@ function detectScratchesFromStt(sttText) {
 function detectScratchesFromTkz(tkzText) {
   if (!tkzText) return { scratchedBoats: [], source: 'TKZ', reliable: false };
 
-  const lines = tkzText.split('\n').map(l => l.trim()).filter(Boolean);
+  // trimしない(末尾のタブが削除されフィールド数が減るのを防ぐ)
+  const lines = tkzText.split('\n').filter(l => l.length > 0);
   const scratchedBoats = [];
 
   let boatNumber = 1;
   for (const line of lines) {
-    if (line === 'data=' || line === '1') continue;
-    // 最後の行はST一覧(数字\t数字形式)をスキップ
-    if (/^\d+\.\d+/.test(line)) continue;
+    const trimmed = line.trim();
+    if (trimmed === 'data=' || trimmed === '1') continue;
+    // 最後の行はST一覧(数字.数字形式)をスキップ
+    if (/^\d+\.\d+/.test(trimmed)) continue;
+    // 選手名のみの行(展示データなし)はスキップしない
 
     const fields = line.split('\t');
-    if (fields.length < 2) continue;
+    if (fields.length < 1) continue;
 
     // 展示タイム(2番目フィールド)が空 → 欠場
-    const exhibitionTime = fields[1] || '';
+    const exhibitionTime = (fields[1] || '').trim();
     if (exhibitionTime === '' || isNaN(Number(exhibitionTime))) {
       scratchedBoats.push(boatNumber);
     }

@@ -77,7 +77,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
 
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-auto">
-        {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} />}
+        {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} race={race} />}
         {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />}
         {subTab === "直前情報" && <ExhibitionInfo entries={entries} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
@@ -134,6 +134,8 @@ function resolveRoleBoats(activePred, activeBoats = []) {
 function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
   if (!entries.length) return <Empty msg="出走表データがありません" />;
   if (filter === "枠番過去10走") return <LanePast10Table entries={entries} race={race} />;
+  const scratchedBoats = race?.scratched_boats || [];
+  const isScratched = (n) => scratchedBoats.includes(n);
   const roleOf = (n) => {
     if (activePred?.honmei_boat === n) return "本命";
     if (activePred?.taiko_boat === n) return "対抗";
@@ -156,8 +158,9 @@ function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
       {entries.map((e) => {
         const bp = bpOf(e.boat_number);
         const role = roleOf(e.boat_number);
+        const scratched = isScratched(e.boat_number) || e.is_scratched || e.is_absent;
         return (
-          <div key={e.boat_number} className={cn("grid gap-1 px-2 py-2 border-b border-slate-200 items-center", cfg.gridCls, rowTint[e.boat_number])}>
+          <div key={e.boat_number} className={cn("grid gap-1 px-2 py-2 border-b border-slate-200 items-center", cfg.gridCls, rowTint[e.boat_number], scratched && "opacity-40 bg-slate-100")}>
             <div className="flex justify-center">
               <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
             </div>
@@ -167,15 +170,25 @@ function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-slate-900 text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</span>
                   {e.player_class && <span className="text-[9px] px-1 rounded bg-slate-700 text-slate-700 font-bold shrink-0">{e.player_class}</span>}
-                  {role && <span className={cn("text-[9px] px-1 rounded font-bold shrink-0", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-slate-900" : role === "穴" ? "bg-rose-500 text-slate-900" : "bg-slate-600 text-slate-700")}>{role}</span>}
+                  {scratched && <span className="text-[9px] px-1 rounded bg-red-500 text-white font-bold shrink-0">欠場</span>}
+                  {!scratched && role && <span className={cn("text-[9px] px-1 rounded font-bold shrink-0", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-slate-900" : role === "穴" ? "bg-rose-500 text-slate-900" : "bg-slate-600 text-slate-700")}>{role}</span>}
                 </div>
                 <div className="text-[10px] text-slate-500 truncate">{e.register_number || e.registration_number ? `登録${e.register_number || e.registration_number}` : ""}</div>
               </div>
             </div>
-            {renderDataCols(filter, e)}
-            <div className="text-center">
-              {bp ? <span className="font-black text-[#f9c836] text-sm">{bp.total_power?.toFixed(0) ?? "—"}</span> : <span className="text-slate-600">—</span>}
-            </div>
+            {scratched ? (
+              <>
+                {cfg.headers.map((h) => <div key={h} className="text-center text-slate-400 text-[10px]">—</div>)}
+                <div className="text-center text-slate-400 text-[10px] font-bold">欠場</div>
+              </>
+            ) : (
+              <>
+                {renderDataCols(filter, e)}
+                <div className="text-center">
+                  {bp ? <span className="font-black text-[#f9c836] text-sm">{bp.total_power?.toFixed(0) ?? "—"}</span> : <span className="text-slate-600">—</span>}
+                </div>
+              </>
+            )}
           </div>
         );
       })}
@@ -300,10 +313,18 @@ function TrifectaView({ probRank, evRank, rankMode, setRankMode }) {
   );
 }
 
-function BetTicketView({ activePred, allTri }) {
+function BetTicketView({ activePred, allTri, race }) {
   // selected_trifectasを第一ソース、trifectas.filter(is_selected)をフォールバック
   const selected = buildSelectedTickets(activePred, allTri);
-  if (!selected.length) return <Empty msg="買い目データがありません。予想を実行してください。" />;
+  // 欠場艇を含む買い目をフィルタ(安全策: エンジンで除外済みだが二重チェック)
+  const scratchedBoats = race?.scratched_boats || [];
+  const filteredSelected = scratchedBoats.length > 0
+    ? selected.filter(t => {
+        const boats = t.combination.split("-").map(Number);
+        return !boats.some(b => scratchedBoats.includes(b));
+      })
+    : selected;
+  if (!filteredSelected.length) return <Empty msg="買い目データがありません。予想を実行してください。" />;
   const judgment = activePred?.final_judgment || "—";
   return (
     <div className="p-2 space-y-2">
@@ -317,7 +338,7 @@ function BetTicketView({ activePred, allTri }) {
         {activePred?.expand_reason && <div className="text-[10px] text-amber-400/80 mt-1">拡張: {activePred.expand_reason}</div>}
       </div>
       {/* 買い目リスト */}
-      {selected.map((t) => {
+      {filteredSelected.map((t) => {
         const odds = t.actual_odds ?? t.current_odds ?? null;
         const ev = t.expected_value;
         return (
