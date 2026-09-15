@@ -96,6 +96,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
     let oddsFetchedAt = null;
     let oddsComboCount = 0;
     let oddsMissing = false;
+    let od3Status = stage === "FINAL" ? "WAITING" : null;
     let od3Debug = {
       od3_requested: false,
       od3_source: null,
@@ -127,6 +128,8 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
             od3Debug.od3_parse_count = rawCount;
             od3Debug.od3_valid_count = Object.keys(normalizedLive).length;
             effectiveOddsMap = { ...effectiveOddsMap, ...normalizedLive };
+            od3Status = "FETCHED";
+            if (od3Debug.od3_parse_count === 120) od3Status = "PARSED";
             oddsSource = resolved.source;
             oddsFetchedAt = resolved.fetched_at;
             oddsComboCount = Object.keys(effectiveOddsMap).length;
@@ -137,6 +140,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
               oddsSource = "LOCAL";
             } else {
               oddsMissing = true;
+              od3Status = "ERROR";
               od3Debug.od3_error = resolved.source ? 'no valid odds' : 'BOATCAST fetch failed';
             }
           }
@@ -147,8 +151,10 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
           oddsComboCount = Object.keys(effectiveOddsMap).length;
           if (oddsComboCount > 0) {
             oddsSource = "LOCAL";
+            od3Status = "FETCHED";
           } else {
             oddsMissing = true;
+            od3Status = "ERROR";
           }
         }
       } else {
@@ -156,6 +162,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
         oddsComboCount = Object.keys(effectiveOddsMap).length;
         if (oddsComboCount === 0) {
           oddsMissing = true;
+          od3Status = "ERROR";
           od3Debug.od3_error = 'past deadline, no OddsSnapshot';
         }
         oddsSource = effectiveOddsMap && oddsComboCount > 0 ? "LOCAL" : null;
@@ -170,6 +177,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
 
     // OD3 combination一致カウント
     od3Debug.od3_match_count = (result.trifectas || []).filter(t => t.actual_odds != null).length;
+    if (stage === "FINAL" && od3Debug.od3_match_count === 120) od3Status = "MATCHED";
     const selectedSet = new Set(result.selected_trifectas || []);
     od3Debug.od3_selected_match_count = (result.trifectas || []).filter(t => selectedSet.has(t.combination) && t.actual_odds != null).length;
 
@@ -195,6 +203,9 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
         finalStatus = "WAITING_ODDS";
         result.final_judgment = null;
         result.judgment_reason = "FINAL オッズ取得待ち — BOATCAST OD3未取得のためBUY/WATCH/SKIP判定不可。オッズ取得後に再実行してください。";
+        if (od3Status === "WAITING") od3Status = "ERROR";
+      } else {
+        od3Status = "READY";
       }
     }
 
@@ -254,6 +265,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       odds_fetched_at: oddsFetchedAt,
       odds_combination_count: oddsComboCount,
       od3_debug: stage === "FINAL" ? od3Debug : undefined,
+      od3_status: od3Status,
       status: finalStatus,
     };
 
@@ -266,6 +278,46 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
     console.error(`[V4] runAndSavePredictionV4 error race=${race?.id} stage=${stage}:`, e.message);
     return { skipped: true, reason: "V4_ERROR", error: e.message };
   }
+}
+
+// ============================================================
+// ensureOddsAndFinalizeV4 — 全場共通のOD3→V4 FINAL完成関数
+// すべてのFINAL生成経路はこの関数を通す。
+//
+// 戻り値:
+//   { ok: true, prediction, skipped: true }  → 既にREADY
+//   { ok: true, prediction, skipped: false }  → 再生成成功
+//   { ok: false, reason, prediction }         → 再生成不可(展示未公開/締切後)
+// ============================================================
+export async function ensureOddsAndFinalizeV4(client, raceKey) {
+  const sr = client.asServiceRole.entities;
+
+  // Race取得
+  const races = await sr.Race.filter({ race_key: raceKey }, '-updated_date', 1).catch(() => []);
+  const race = races?.[0];
+  if (!race) return { ok: false, reason: 'RACE_NOT_FOUND' };
+
+  // 展示データ確認
+  if (!race.exhibition_ready) return { ok: false, reason: 'EXHIBITION_NOT_READY', race };
+
+  // 締切確認
+  const deadlineMs = race.deadline ? new Date(race.deadline).getTime() : 0;
+  const preDeadline = deadlineMs > 0 && deadlineMs > Date.now();
+  if (!preDeadline) return { ok: false, reason: 'PAST_DEADLINE', race };
+
+  // V4 FINAL取得
+  const existing = await sr.PredictionV4.filter(
+    { race_key: raceKey, stage: 'FINAL', prediction_version: 'v4' }, '-computed_at', 1
+  ).catch(() => []);
+  const pred = existing?.[0];
+
+  // COMPLETED + od3_status=READY → そのまま返す
+  if (pred?.status === 'COMPLETED' && pred?.od3_status === 'READY') {
+    return { ok: true, prediction: pred, skipped: true, race };
+  }
+
+  // WAITING_ODDS or 未生成 → 再生成必要
+  return { ok: false, reason: 'NEEDS_REGENERATION', prediction: pred, race, needs_regeneration: true };
 }
 
 // ============================================================

@@ -61,9 +61,19 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
           <span className="font-black text-slate-900 text-base sm:text-lg">{race.venue || "—"}</span>
           <span className="text-xs text-slate-600">{race.race_number}R</span>
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center">
           {stage === "PRE" && <TabBtn active label="PRE" />}
           {stage === "FINAL" && <TabBtn active label="FINAL" />}
+          {stage === "FINAL" && activePred?.od3_status && (
+            <span className={cn("px-1.5 h-5 rounded text-[9px] font-bold border flex items-center ml-1",
+              activePred.od3_status === "READY"
+                ? "bg-emerald-500/10 text-emerald-600 border-emerald-400/30"
+                : activePred.od3_status === "ERROR"
+                ? "bg-rose-500/10 text-rose-600 border-rose-400/30"
+                : "bg-amber-500/10 text-amber-600 border-amber-400/30")}>
+              OD3 {activePred.od3_status}
+            </span>
+          )}
         </div>
       </div>
 

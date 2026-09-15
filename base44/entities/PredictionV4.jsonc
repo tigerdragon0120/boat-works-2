@@ -315,6 +315,18 @@
       "type": "number",
       "description": "\u53d6\u5f97\u3057\u305f\u30aa\u30c3\u30ba\u7d44\u307f\u5408\u308f\u305b\u6570(120\u304c\u6b63\u5e38)"
     },
+    "od3_status": {
+      "type": "string",
+      "description": "OD3\u53d6\u5f97\u72b6\u614b: WAITING/FETCHED/PARSED/MATCHED/READY/ERROR",
+      "enum": [
+        "WAITING",
+        "FETCHED",
+        "PARSED",
+        "MATCHED",
+        "READY",
+        "ERROR"
+      ]
+    },
     "od3_debug": {
       "type": "object",
       "description": "OD3\u53d6\u5f97\u30c7\u30d0\u30c3\u30b0\u30ed\u30b0",
