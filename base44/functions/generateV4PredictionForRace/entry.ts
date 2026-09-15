@@ -125,19 +125,19 @@ export default async function(req: Request) {
       return Response.json({ ok: false, error: result.reason || 'V4 skipped', race_key: race.race_key }, { status: 500 });
     }
 
-    // FINAL成功時: Race.has_final更新
-    if (stage === 'FINAL' && result?.predictionId) {
-      await withRetry(() => sr.Race.update(raceId, { has_final: true, status: 'final' })).catch(() => {});
-    }
-    if (stage === 'PRE' && result?.predictionId) {
-      await withRetry(() => sr.Race.update(raceId, { has_pre: true })).catch(() => {});
-    }
-
     // 生成結果取得して返す
     const freshList = await withRetry(() => sr.PredictionV4.filter(
       { race_id: raceId, stage, prediction_version: 'v4' }, '-computed_at', 1
     ));
     const fresh = freshList?.[0] || null;
+
+    // FINAL成功時: Race.has_final更新(COMPLETED時のみ)
+    if (stage === 'FINAL' && result?.predictionId && fresh?.status === 'COMPLETED') {
+      await withRetry(() => sr.Race.update(raceId, { has_final: true, status: 'final' })).catch(() => {});
+    }
+    if (stage === 'PRE' && result?.predictionId) {
+      await withRetry(() => sr.Race.update(raceId, { has_pre: true })).catch(() => {});
+    }
 
     return Response.json({
       ok: true,
@@ -148,7 +148,8 @@ export default async function(req: Request) {
       ticket_count: fresh?.ticket_count,
       selected_trifectas: fresh?.selected_trifectas || [],
       final_judgment: fresh?.final_judgment,
-      has_final: stage === 'FINAL',
+      status: fresh?.status,
+      has_final: stage === 'FINAL' && fresh?.status === 'COMPLETED',
       has_pre: stage === 'PRE',
     });
   } catch (e: any) {

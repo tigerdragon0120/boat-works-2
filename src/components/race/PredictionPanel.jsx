@@ -33,9 +33,10 @@ const groupStyle = {
   C: "text-slate-600 bg-slate-700/30 border-slate-600",
 };
 
-export default function PredictionPanel({ race, stage, run, busy, entries, activePred, activeBoats, allTri, compareData, pendingOdds }) {
+export default function PredictionPanel({ race, stage, run, busy, entries, activePred, activeBoats, allTri, compareData, pendingOdds, waitingFinalOdds }) {
   const hasPred = !!activePred;
-  const judgment = activePred?.final_judgment || "PENDING";
+  // WAITING_ODDS時は判定を表示しない(判定待ち)
+  const judgment = waitingFinalOdds ? "PENDING" : (activePred?.final_judgment || "PENDING");
   const jcfg = judgmentConfig[judgment] || judgmentConfig.PENDING;
   // selected_trifectasを第一ソース、trifectas.filter(is_selected)をフォールバック
   const selectedTriRaw = buildSelectedTickets(activePred, allTri);
@@ -89,12 +90,14 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {/* === オッズ取得待ちバナー === */}
+            {/* === FINAL オッズ取得待ちバナー === */}
             {pendingOdds && (
               <div className="rounded-xl border-2 border-amber-400/60 bg-amber-500/10 p-2.5 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
                 <div className="text-[11px] text-amber-300 font-semibold leading-relaxed">
-                  オッズ取得待ち — BOATCAST OD3未取得のため実オッズ・期待値は未表示。BUY判定不可。
+                  {waitingFinalOdds
+                    ? "FINAL オッズ取得待ち — BOATCAST OD3未取得のためBUY/WATCH/SKIP判定不可。FINAL再実行でOD3を再取得してください。"
+                    : "オッズ取得待ち — BOATCAST OD3未取得のため実オッズ・期待値は未表示。BUY判定不可。"}
                 </div>
               </div>
             )}

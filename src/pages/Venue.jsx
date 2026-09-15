@@ -128,7 +128,8 @@ export default function Venue() {
   const activeBoats = (current?.boats || []).sort((a, b) => a.boat_number - b.boat_number);
   const allTri = current?.trifectas || [];
   const stage = current?.stage; // "FINAL" | "PRE" | null
-  const pendingOdds = current?.pendingOdds; // FINAL_PENDING_ODDS状態
+  const pendingOdds = current?.pendingOdds; // WAITING_ODDS状態
+  const waitingFinalOdds = current?.waitingFinalOdds; // FINAL オッズ取得待ち
 
   const probRank = [...allTri].sort((a, b) => a.rank - b.rank).slice(0, 10);
   const evRank = [...allTri].sort((a, b) => b.expected_value - a.expected_value).slice(0, 10);
@@ -180,7 +181,7 @@ export default function Venue() {
       {race && (
         <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
           <PredictionPanel
-            race={race} stage={stage} pendingOdds={pendingOdds}
+            race={race} stage={stage} pendingOdds={pendingOdds} waitingFinalOdds={waitingFinalOdds}
             run={run} busy={busy} entries={entries}
             activePred={activePred} activeBoats={activeBoats} allTri={allTri}
             compareData={compareData}

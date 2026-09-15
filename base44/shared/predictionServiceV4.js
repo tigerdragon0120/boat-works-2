@@ -7,6 +7,30 @@ import { resolveProductionOdds } from "./oddsResolver.js";
 
 const V4_VERSION = "v4";
 
+// ============================================================
+// combination正規化(共通)
+// 全角/半角・ハイフン種類・空白を吸収して "1-2-5" 形式へ統一
+// ============================================================
+function normalizeCombination(combo) {
+  if (!combo) return null;
+  return String(combo)
+    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)) // 全角→半角
+    .replace(/[\s\u3000]/g, '') // 空白削除
+    .replace(/[－‐–—ー]/g, '-') // ハイフン統一
+    .trim();
+}
+
+// oddsMapのキーを正規化(OD3のcombination形式をV4形式へ統一)
+function normalizeOddsMap(oddsMap) {
+  if (!oddsMap || typeof oddsMap !== 'object') return {};
+  const normalized = {};
+  for (const [key, val] of Object.entries(oddsMap)) {
+    const norm = normalizeCombination(key);
+    if (norm && val != null && val > 0) normalized[norm] = val;
+  }
+  return normalized;
+}
+
 // 既存V4予想取得(重複作成防止)
 async function getOrCreateV4Prediction(client, raceId, raceKey, stage) {
   const list = await client.asServiceRole.entities.PredictionV4.filter(
@@ -58,24 +82,51 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
 
     // ============================================================
     // FINAL時: BOATCAST OD3ライブ取得(既存のoddsResolverを使用)
-    // 締切前のレースのみライブ取得。締切後は引数のoddsMap(OddsSnapshot)を使用。
-    // V2/V3と同じresolveProductionOdds経路。
+    // V4 FINAL正式パイプライン:
+    //   展示取得 → exhibition_ready確認 → V4純粋確率計算 →
+    //   BOATCAST OD3取得 → 120通りへ結合 → actual_odds保存 →
+    //   EV計算 → selected_trifectas確定 → set_expected_recovery計算 →
+    //   BUY/WATCH/SKIP判定 → 保存 → COMPLETED
+    //
+    // OD3未取得時は WAITING_ODDS(絶対にCOMPLETEDにしない)。
+    // 予想確率・買い目は保持したまま保存(削除しない)。
     // ============================================================
-    let effectiveOddsMap = oddsMap || {};
+    let effectiveOddsMap = normalizeOddsMap(oddsMap);
     let oddsSource = null;
     let oddsFetchedAt = null;
     let oddsComboCount = 0;
     let oddsMissing = false;
+    let od3Debug = {
+      od3_requested: false,
+      od3_source: null,
+      od3_raw_received: false,
+      od3_raw_length: 0,
+      od3_parse_count: 0,
+      od3_valid_count: 0,
+      od3_match_count: 0,
+      od3_selected_match_count: 0,
+      od3_error: null,
+    };
 
     if (stage === "FINAL") {
       const deadlineMs = race.deadline ? new Date(race.deadline).getTime() : 0;
       const preDeadline = deadlineMs > 0 && deadlineMs > Date.now();
+      od3Debug.od3_requested = preDeadline;
+
       if (preDeadline) {
         // 締切前: BOATCAST OD3ライブ取得(常に試行)
         try {
           const resolved = await resolveProductionOdds(race, client);
-          if (resolved.odds_map && Object.keys(resolved.odds_map).length > 0) {
-            effectiveOddsMap = { ...oddsMap, ...resolved.odds_map };
+          od3Debug.od3_source = resolved.source || null;
+          const rawCount = resolved.odds_map ? Object.keys(resolved.odds_map).length : 0;
+          od3Debug.od3_raw_received = rawCount > 0;
+          od3Debug.od3_raw_length = rawCount;
+
+          if (resolved.odds_map && rawCount > 0) {
+            const normalizedLive = normalizeOddsMap(resolved.odds_map);
+            od3Debug.od3_parse_count = rawCount;
+            od3Debug.od3_valid_count = Object.keys(normalizedLive).length;
+            effectiveOddsMap = { ...effectiveOddsMap, ...normalizedLive };
             oddsSource = resolved.source;
             oddsFetchedAt = resolved.fetched_at;
             oddsComboCount = Object.keys(effectiveOddsMap).length;
@@ -86,10 +137,13 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
               oddsSource = "LOCAL";
             } else {
               oddsMissing = true;
+              od3Debug.od3_error = resolved.source ? 'no valid odds' : 'BOATCAST fetch failed';
             }
           }
         } catch (e) {
-          console.warn(`[V4] OD3 fetch failed race=${race.race_key}:`, e?.message || e);
+          const errMsg = e?.message || String(e);
+          console.warn(`[V4] OD3 fetch failed race=${race.race_key}:`, errMsg);
+          od3Debug.od3_error = errMsg;
           oddsComboCount = Object.keys(effectiveOddsMap).length;
           if (oddsComboCount > 0) {
             oddsSource = "LOCAL";
@@ -100,8 +154,12 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       } else {
         // 締切後: 引数のoddsMap(OddsSnapshot)のみ使用
         oddsComboCount = Object.keys(effectiveOddsMap).length;
-        if (oddsComboCount === 0) oddsMissing = true;
+        if (oddsComboCount === 0) {
+          oddsMissing = true;
+          od3Debug.od3_error = 'past deadline, no OddsSnapshot';
+        }
         oddsSource = effectiveOddsMap && oddsComboCount > 0 ? "LOCAL" : null;
+        od3Debug.od3_source = oddsSource;
       }
     }
 
@@ -110,15 +168,34 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       stage, oddsMap: effectiveOddsMap,
     });
 
+    // OD3 combination一致カウント
+    od3Debug.od3_match_count = (result.trifectas || []).filter(t => t.actual_odds != null).length;
+    const selectedSet = new Set(result.selected_trifectas || []);
+    od3Debug.od3_selected_match_count = (result.trifectas || []).filter(t => selectedSet.has(t.combination) && t.actual_odds != null).length;
+
+    // OD3デバッグログ出力
+    console.warn(`[V4 FINAL OD3] race_key=${race.race_key}`, JSON.stringify(od3Debug));
+
     // ============================================================
-    // FINAL時: オッズ未取得なら FINAL_PENDING_ODDS 状態へ
-    // BUY判定禁止。SKIP + 「OD3取得待ち」理由。
-    // 予想確率ロジック自体は変更しない(resultはそのまま保持)。
+    // FINAL COMPLETED厳格条件チェック
+    // exhibition_ready + selected>=6 + 全selectedにactual_odds +
+    // 全selectedにexpected_value + set_expected_recovery!=null
     // ============================================================
-    if (stage === "FINAL" && oddsMissing) {
-      result.final_judgment = "SKIP";
-      result.judgment_reason = "OD3取得待ち — BOATCASTオッズ未取得のためBUY不可。オッズ取得後に再実行してください。";
-      result.status_override = "FINAL_PENDING_ODDS";
+    let finalStatus = "COMPLETED";
+    if (stage === "FINAL") {
+      const selectedTris = (result.trifectas || []).filter(t => selectedSet.has(t.combination));
+      const allHaveOdds = selectedTris.length > 0 && selectedTris.every(t => t.actual_odds != null);
+      const allHaveEv = selectedTris.length > 0 && selectedTris.every(t => t.expected_value != null);
+      const hasRecovery = result.set_metrics?.set_expected_recovery != null;
+      const selectedOk = (result.selected_trifectas || []).length >= 6;
+
+      if (oddsMissing || !allHaveOdds || !allHaveEv || !hasRecovery || !selectedOk) {
+        // OD3未取得 → WAITING_ODDS(絶対にCOMPLETEDにしない)
+        // 買い目・確率は保持したまま保存(削除しない)
+        finalStatus = "WAITING_ODDS";
+        result.final_judgment = null;
+        result.judgment_reason = "FINAL オッズ取得待ち — BOATCAST OD3未取得のためBUY/WATCH/SKIP判定不可。オッズ取得後に再実行してください。";
+      }
     }
 
     // V4予想レコード保存
@@ -176,7 +253,8 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       odds_source: oddsSource,
       odds_fetched_at: oddsFetchedAt,
       odds_combination_count: oddsComboCount,
-      status: result.status_override || "COMPLETED",
+      od3_debug: stage === "FINAL" ? od3Debug : undefined,
+      status: finalStatus,
     };
 
     await sr.PredictionV4.update(predictionId, record).catch(e => {

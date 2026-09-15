@@ -315,12 +315,46 @@
       "type": "number",
       "description": "\u53d6\u5f97\u3057\u305f\u30aa\u30c3\u30ba\u7d44\u307f\u5408\u308f\u305b\u6570(120\u304c\u6b63\u5e38)"
     },
+    "od3_debug": {
+      "type": "object",
+      "description": "OD3\u53d6\u5f97\u30c7\u30d0\u30c3\u30b0\u30ed\u30b0",
+      "properties": {
+        "od3_requested": {
+          "type": "boolean"
+        },
+        "od3_source": {
+          "type": "string"
+        },
+        "od3_raw_received": {
+          "type": "boolean"
+        },
+        "od3_raw_length": {
+          "type": "number"
+        },
+        "od3_parse_count": {
+          "type": "number"
+        },
+        "od3_valid_count": {
+          "type": "number"
+        },
+        "od3_match_count": {
+          "type": "number"
+        },
+        "od3_selected_match_count": {
+          "type": "number"
+        },
+        "od3_error": {
+          "type": "string"
+        }
+      }
+    },
     "status": {
       "type": "string",
       "enum": [
         "PENDING",
         "COMPLETED",
         "MISSING",
+        "WAITING_ODDS",
         "FINAL_PENDING_ODDS"
       ],
       "default": "COMPLETED"

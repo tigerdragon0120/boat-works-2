@@ -650,6 +650,7 @@ export async function generateV4PredictionForRace(raceId, stage, force = false) 
 // ============================================================
 // V4 FINAL自動生成保証
 // exhibition_ready=true かつ V4 FINAL未生成 かつ 締切前なら生成
+// WAITING_ODDSのFINALがあれば再生成を試行(OD3再取得)
 // UIのload時に呼び出し、FINALが自動で揃うようにする
 // ============================================================
 export async function ensureV4Final(race) {
@@ -661,10 +662,10 @@ export async function ensureV4Final(race) {
   }
   // V4 FINAL既存確認
   const existing = await getV4Prediction(race.id, "FINAL", race.race_key);
-  if (existing && (existing.status === "COMPLETED" || !existing.status)) return existing;
-  // 生成
+  if (existing && existing.status === "COMPLETED") return existing;
+  // WAITING_ODDS or 未生成 → 再生成を試行(OD3再取得)
   try {
-    return await generateV4PredictionForRace(race.id, "FINAL", false);
+    return await generateV4PredictionForRace(race.id, "FINAL", !existing);
   } catch (e) {
     console.warn("[ensureV4Final] generation failed:", e?.message || e);
     return null;
@@ -675,23 +676,42 @@ export async function ensureV4Final(race) {
 // Current Prediction Resolver
 // FINAL優先で予想を1本化して返す。UIの唯一の表示ソース。
 // 優先順位:
-//   1. PredictionV4 FINAL COMPLETED
-//   2. PredictionV4 PRE COMPLETED
-//   3. なし(旧Race予想fallback禁止)
+//   1. PredictionV4 FINAL COMPLETED → FINAL表示
+//   2. PredictionV4 FINAL WAITING_ODDS → PRE内容表示 +「FINAL オッズ取得待ち」
+//   3. PredictionV4 PRE COMPLETED → PRE表示
+//   4. V4予想生成待ち
+// Race旧予想をfallbackにしない。
 // ============================================================
 export async function resolveCurrentPrediction(raceId, raceKey) {
-  // 1. V4 FINAL (COMPLETED or FINAL_PENDING_ODDS — 最優先)
+  // 1. V4 FINAL取得
   const finV4 = await getV4Prediction(raceId, "FINAL", raceKey);
-  if (finV4 && (finV4.status === "COMPLETED" || finV4.status === "FINAL_PENDING_ODDS" || !finV4.status)) {
-    const mapped = mapV4ToUI(finV4, "FINAL");
-    if (mapped) return { stage: "FINAL", ...mapped, pendingOdds: finV4.status === "FINAL_PENDING_ODDS" };
+
+  if (finV4) {
+    // 1a. FINAL COMPLETED → FINAL表示
+    if (finV4.status === "COMPLETED" || !finV4.status) {
+      const mapped = mapV4ToUI(finV4, "FINAL");
+      if (mapped) return { stage: "FINAL", ...mapped, pendingOdds: false };
+    }
+    // 1b. FINAL WAITING_ODDS / FINAL_PENDING_ODDS → PRE内容 + バナー
+    if (finV4.status === "WAITING_ODDS" || finV4.status === "FINAL_PENDING_ODDS") {
+      const preV4 = await getV4Prediction(raceId, "PRE", raceKey);
+      if (preV4 && (preV4.status === "COMPLETED" || !preV4.status)) {
+        const mapped = mapV4ToUI(preV4, "PRE");
+        if (mapped) return { stage: "PRE", ...mapped, pendingOdds: true, waitingFinalOdds: true };
+      }
+      // PREもなければFINAL自体の確率を表示(オッズなし)
+      const mappedFin = mapV4ToUI(finV4, "FINAL");
+      if (mappedFin) return { stage: "FINAL", ...mappedFin, pendingOdds: true, waitingFinalOdds: true };
+    }
   }
-  // 2. V4 PRE COMPLETED
+
+  // 2. V4 PRE COMPLETED → PRE表示
   const preV4 = await getV4Prediction(raceId, "PRE", raceKey);
   if (preV4 && (preV4.status === "COMPLETED" || !preV4.status)) {
     const mapped = mapV4ToUI(preV4, "PRE");
     if (mapped) return { stage: "PRE", ...mapped };
   }
+
   // 3. 予想なし
   return { stage: null, pred: null, boats: [], trifectas: [] };
 }
