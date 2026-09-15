@@ -100,42 +100,46 @@ export default async function(req: Request) {
     }
 
     // =====================================================
-    // STEP 4: OD3取得(BOATCAST優先、LOCAL fallback)
-    // 締切前はリアルタイムOD3、締切後は確定OD3が取得される
+    // STEP 4: OD3取得
+    // BOATCAST OD3を直接取得し、buildOddsMapで有効なオッズのみ抽出。
+    // 欠場艇がある場合、integrity=ERRORでも有効なオッズを使用する。
+    // resolveProductionOddsはintegrity=OKしか返さないため、
+    // ここでは直接fetchBoatcastOdds3 + buildOddsMapを使用。
     // =====================================================
-    console.warn(`[attachOdds] race=${race.race_key} venue=${race.venue_code} date=${race.race_date} num=${race.race_number}`);
-    // 直接fetchBoatcastOdds3を呼んで詳細ログ取得
-    const directResult = await fetchBoatcastOdds3(race);
-    console.warn(`[attachOdds] fetchBoatcastOdds3 ok=${directResult.ok} error=${directResult.error || 'none'} http=${directResult.http_access_count} subtype=${directResult.subtype || 'none'}`);
-    if (directResult.ok) {
-      console.warn(`[attachOdds] integrity=${JSON.stringify(directResult.integrity)} odds_count=${directResult.odds?.odds?.length || 0}`);
+    let normalizedOdds: Record<string, number> = {};
+    let oddsSource: string | null = null;
+    let oddsFetchedAt: string | null = null;
+
+    const boatcastResult = await fetchBoatcastOdds3(race);
+    if (boatcastResult.ok && boatcastResult.odds) {
+      const rawMap = buildOddsMap(boatcastResult.odds);
+      normalizedOdds = normalizeOddsMap(rawMap);
+      oddsSource = 'BOATCAST';
+      oddsFetchedAt = boatcastResult.fetched_at || null;
     }
-    const resolved = await resolveProductionOdds(race, base44);
-    console.warn(`[attachOdds] resolved source=${resolved.source} odds_count=${resolved.odds_map ? Object.keys(resolved.odds_map).length : 0} integrity=${JSON.stringify(resolved.integrity)}`);
-    if (!resolved.odds_map || Object.keys(resolved.odds_map).length === 0) {
+
+    // BOATCAST失敗時: resolveProductionOdds(LOCAL fallback含む)を試行
+    if (Object.keys(normalizedOdds).length === 0) {
+      const resolved = await resolveProductionOdds(race, base44);
+      if (resolved.odds_map && Object.keys(resolved.odds_map).length > 0) {
+        normalizedOdds = normalizeOddsMap(resolved.odds_map);
+        oddsSource = resolved.source;
+        oddsFetchedAt = resolved.fetched_at || null;
+      }
+    }
+
+    if (Object.keys(normalizedOdds).length === 0) {
       return Response.json({
         ok: false,
         reason: 'OD3_FETCH_FAILED',
         prediction_id: targetId,
         debug: {
           race_key: race.race_key,
-          venue_code: race.venue_code,
-          race_date: race.race_date,
-          race_number: race.race_number,
-          direct_ok: directResult.ok,
-          direct_error: directResult.error || null,
-          direct_http_count: directResult.http_access_count,
-          direct_subtype: directResult.subtype || null,
-          direct_integrity: directResult.integrity || null,
-          resolved_source: resolved.source,
-          resolved_integrity: resolved.integrity,
+          boatcast_ok: boatcastResult.ok,
+          boatcast_error: boatcastResult.error || null,
+          boatcast_integrity: boatcastResult.integrity || null,
         },
       });
-    }
-
-    const normalizedOdds = normalizeOddsMap(resolved.odds_map);
-    if (Object.keys(normalizedOdds).length === 0) {
-      return Response.json({ ok: false, reason: 'OD3_NO_VALID_ODDS', prediction_id: targetId });
     }
 
     // =====================================================
@@ -201,8 +205,8 @@ export default async function(req: Request) {
     // =====================================================
     const updateDoc = {
       trifectas: updatedTrifectas,
-      odds_source: resolved.source,
-      odds_fetched_at: resolved.fetched_at,
+      odds_source: oddsSource,
+      odds_fetched_at: oddsFetchedAt,
       odds_combination_count: Object.keys(normalizedOdds).length,
       od3_status: 'PARSED',
       top_odds: topOdds,
@@ -216,7 +220,7 @@ export default async function(req: Request) {
       od3_debug: {
         ...(pred.od3_debug || {}),
         od3_requested: true,
-        od3_source: resolved.source,
+        od3_source: oddsSource,
         od3_raw_received: Object.keys(normalizedOdds).length > 0,
         od3_parse_count: Object.keys(normalizedOdds).length,
         od3_valid_count: Object.keys(normalizedOdds).length,
