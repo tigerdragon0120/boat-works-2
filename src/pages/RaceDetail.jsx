@@ -4,6 +4,7 @@ import { base44 } from "@/api/base44Client";
 import {
   getRaceEntries, getPrediction, getBoatPredictions, getTrifectaPredictions,
   generateAndSavePrediction, getSettings,
+  getV4Prediction, mapV4ToUI,
 } from "@/lib/predictionService";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
@@ -24,24 +25,40 @@ export default function RaceDetail() {
   const [view, setView] = useState("FINAL");
   const [rankMode, setRankMode] = useState("prob");
 
+  // V4優先取得、なければV3フォールバック
+  const loadStage = async (raceId, stage, raceKey) => {
+    const v4 = await getV4Prediction(raceId, stage, raceKey);
+    if (v4) {
+      const mapped = mapV4ToUI(v4, stage);
+      return { pred: mapped.pred, boats: mapped.boats, trifectas: mapped.trifectas };
+    }
+    const v3 = await getPrediction(raceId, stage);
+    if (v3) {
+      const boats = await getBoatPredictions(v3.id);
+      const trifectas = await getTrifectaPredictions(v3.id);
+      return { pred: v3, boats, trifectas };
+    }
+    return { pred: null, boats: [], trifectas: [] };
+  };
+
   const load = async () => {
     setLoading(true);
     const r = await base44.entities.Race.get(id);
     setRace(r);
     const es = await getRaceEntries(id);
     setEntries(es || []);
-    const p = await getPrediction(id, "PRE");
-    const f = await getPrediction(id, "FINAL");
-    setPre(p); setFin(f);
-    if (p) {
-      setPreBoats(await getBoatPredictions(p.id));
-      setPreTri(await getTrifectaPredictions(p.id));
-    }
-    if (f) {
-      setFinBoats(await getBoatPredictions(f.id));
-      setFinTri(await getTrifectaPredictions(f.id));
+    // V4優先、V3フォールバックでPRE/FINAL取得
+    const [preData, finData] = await Promise.all([
+      loadStage(id, "PRE", r?.race_key),
+      loadStage(id, "FINAL", r?.race_key),
+    ]);
+    // 完全置き換え(mergeではなくreplace)
+    setPre(preData.pred); setFin(finData.pred);
+    setPreBoats(preData.boats); setFinBoats(finData.boats);
+    setPreTri(preData.trifectas); setFinTri(finData.trifectas);
+    if (finData.pred) {
       setView("FINAL");
-    } else if (p) {
+    } else if (preData.pred) {
       setView("PRE");
     }
     setLoading(false);
@@ -53,6 +70,7 @@ export default function RaceDetail() {
     try {
       const settings = await getSettings();
       await generateAndSavePrediction(race, entries, settings, stage, {});
+      // FINAL再実行後: V4 FINALを再取得し画面stateを完全置き換え
       await load();
     } catch (e) {
       alert("予想生成に失敗: " + e.message);

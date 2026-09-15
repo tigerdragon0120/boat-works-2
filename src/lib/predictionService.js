@@ -574,6 +574,95 @@ export async function getVerificationSummary() {
 }
 
 // ============================================================
+// V4予想取得・UIマッピング
+// PredictionV4エンティティからV4予想を取得し、UI表示用にマッピングする
+// V4はboat_scores/trifectasを埋め込み配列として保持するため
+// BoatPrediction/TrifectaPredictionの個別取得は不要
+// ============================================================
+export async function getV4Prediction(raceId, stage, raceKey) {
+  let list = await withRetry(() => base44.entities.PredictionV4.filter({
+    race_id: raceId, stage, prediction_version: "v4",
+  }, "-computed_at", 1));
+  if ((!list || !list.length) && raceKey) {
+    list = await withRetry(() => base44.entities.PredictionV4.filter({
+      race_key: raceKey, stage, prediction_version: "v4",
+    }, "-computed_at", 1));
+  }
+  return list && list[0];
+}
+
+// V4予想レコードをUI表示用にマッピング
+// pred: V4レコード本体(final_judgment, selected_trifectas等を保持)
+// boats: boat_scoresをBoatPrediction互換形状へマッピング
+// trifectas: trifectas配列をTrifectaPrediction互換形状へマッピング
+export function mapV4ToUI(v4Pred, stage) {
+  if (!v4Pred) return null;
+  const isFinal = stage === "FINAL";
+  const scoreField = isFinal ? "final_score" : "pre_score";
+
+  const boats = (v4Pred.boat_scores || []).map(b => ({
+    boat_number: b.boat_number,
+    total_power: b[scoreField] ?? b.pre_score ?? 0,
+    first_power: b.first_score ?? 0,
+    second_power: b.second_score ?? 0,
+    third_power: b.third_score ?? 0,
+    start_power: null,
+    motor_power: null,
+    exhibition_power: null,
+    exhibition_score: null,
+    racer_power_score: null,
+    recent_form_score: null,
+    st_trend_score: null,
+    class_trend_score: null,
+    ana_potential: null,
+    reasons: b.reasons || [],
+    notes: b.notes || [],
+  }));
+
+  const trifectas = (v4Pred.trifectas || []).map(t => ({
+    combination: t.combination,
+    rank: t.rank,
+    probability: t.race_probability,
+    actual_odds: t.actual_odds,
+    current_odds: t.actual_odds,
+    expected_value: t.expected_value,
+    is_selected: t.is_selected,
+    ticket_rank: t.ticket_rank,
+    set_group: null,
+    selection_reason: null,
+    judgment: null,
+  }));
+
+  return { pred: v4Pred, boats, trifectas };
+}
+
+// selected_trifectasを第一ソースとして買い目リストを構築
+// selected_trifectasが空の場合のみtrifectas.filter(is_selected)にフォールバック
+export function buildSelectedTickets(activePred, allTri) {
+  const selectedTrifectas = activePred?.selected_trifectas || [];
+  if (selectedTrifectas.length > 0) {
+    const triMap = new Map((allTri || []).map(t => [t.combination, t]));
+    return selectedTrifectas.map((combo, idx) => {
+      const tri = triMap.get(combo) || {};
+      return {
+        combination: combo,
+        ticket_rank: tri.ticket_rank || idx + 1,
+        is_selected: true,
+        actual_odds: tri.actual_odds ?? null,
+        current_odds: tri.current_odds ?? null,
+        expected_value: tri.expected_value ?? null,
+        probability: tri.probability ?? null,
+        rank: tri.rank ?? null,
+        set_group: tri.set_group ?? null,
+        selection_reason: tri.selection_reason ?? null,
+        judgment: tri.judgment ?? null,
+      };
+    });
+  }
+  return (allTri || []).filter(t => t.is_selected).sort((a, b) => (a.ticket_rank || 99) - (b.ticket_rank || 99));
+}
+
+// ============================================================
 // V1 vs V2 比較検証サマリー
 // PredictionV2VerificationからV1/V2並行検証結果を集計
 // ============================================================

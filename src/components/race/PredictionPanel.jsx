@@ -2,6 +2,7 @@ import React from "react";
 import { cn } from "@/lib/utils";
 import { Crown, Shield, Sparkles, TrendingUp, Gauge, Trophy, Zap, Activity, Target, Calculator, Ticket } from "lucide-react";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
+import { buildSelectedTickets } from "@/lib/predictionService";
 
 const gradeStyle = {
   S: "border-fuchsia-400 text-fuchsia-300 bg-fuchsia-500/10",
@@ -36,7 +37,10 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
   const hasPred = pre || fin;
   const judgment = activePred?.final_judgment || "PENDING";
   const jcfg = judgmentConfig[judgment] || judgmentConfig.PENDING;
-  const selectedTri = (allTri || []).filter((t) => t.is_selected).sort((a, b) => (a.ticket_rank || 99) - (b.ticket_rank || 99));
+  // selected_trifectasを第一ソース、trifectas.filter(is_selected)をフォールバック
+  const selectedTri = buildSelectedTickets(activePred, allTri);
+  // ticket_countはselected_trifectas.lengthを正とする
+  const displayTicketCount = activePred?.selected_trifectas?.length || activePred?.ticket_count || selectedTri.length || "—";
   // 旧予想データに本命/対抗/穴の重複が残っていても表示時に必ず補正する。
   const roles = resolveRoleBoats(activePred, activeBoats);
 
@@ -88,7 +92,7 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-[10px] text-slate-600">買い目</span>
-                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-900 text-xs font-bold">{activePred?.ticket_count || "—"}点</span>
+                  <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-900 text-xs font-bold">{displayTicketCount}点</span>
                   {activePred?.ticket_strategy && (
                     <span className="text-[10px] text-slate-500 truncate">{activePred.ticket_strategy}</span>
                   )}

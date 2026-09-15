@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import StartTimingPanel from "@/components/race/StartTimingPanel";
 import LanePast10Table from "@/components/race/LanePast10Table";
+import { buildSelectedTickets } from "@/lib/predictionService";
 
 
 const boatColors = {
@@ -300,7 +301,8 @@ function TrifectaView({ probRank, evRank, rankMode, setRankMode }) {
 }
 
 function BetTicketView({ activePred, allTri }) {
-  const selected = (allTri || []).filter((t) => t.is_selected).sort((a, b) => (a.ticket_rank || 99) - (b.ticket_rank || 99));
+  // selected_trifectasを第一ソース、trifectas.filter(is_selected)をフォールバック
+  const selected = buildSelectedTickets(activePred, allTri);
   if (!selected.length) return <Empty msg="買い目データがありません。予想を実行してください。" />;
   const judgment = activePred?.final_judgment || "—";
   return (
