@@ -33,8 +33,8 @@ const groupStyle = {
   C: "text-slate-600 bg-slate-700/30 border-slate-600",
 };
 
-export default function PredictionPanel({ race, pre, fin, view, setView, run, busy, entries, activePred, activeBoats, allTri, compareData }) {
-  const hasPred = pre || fin;
+export default function PredictionPanel({ race, stage, run, busy, entries, activePred, activeBoats, allTri, compareData }) {
+  const hasPred = !!activePred;
   const judgment = activePred?.final_judgment || "PENDING";
   const jcfg = judgmentConfig[judgment] || judgmentConfig.PENDING;
   // selected_trifectasを第一ソース、trifectas.filter(is_selected)をフォールバック
@@ -61,8 +61,8 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
           <span className="text-xs text-slate-600">{race.race_number}R</span>
         </div>
         <div className="flex gap-1">
-          {pre && <TabBtn active={view === "PRE"} onClick={() => setView("PRE")} label="PRE" />}
-          {fin && <TabBtn active={view === "FINAL"} onClick={() => setView("FINAL")} label="FINAL" />}
+          {stage === "PRE" && <TabBtn active label="PRE" />}
+          {stage === "FINAL" && <TabBtn active label="FINAL" />}
         </div>
       </div>
 
@@ -259,7 +259,7 @@ export default function PredictionPanel({ race, pre, fin, view, setView, run, bu
       {/* フッター */}
       <div className="px-3 py-2 border-t border-slate-200 flex items-center justify-between text-[11px]">
         <span className="text-slate-500">予想エンジン v5</span>
-        <span className="text-slate-500">{race.has_final ? "FINAL済" : race.has_pre ? "PRE済" : "予想待ち"}</span>
+        <span className="text-slate-500">{stage === "FINAL" ? "FINAL済" : stage === "PRE" ? "PRE済" : "予想待ち"}</span>
       </div>
     </div>
   );

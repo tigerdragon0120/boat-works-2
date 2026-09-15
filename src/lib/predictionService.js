@@ -636,6 +636,31 @@ export function mapV4ToUI(v4Pred, stage) {
   return { pred: v4Pred, boats, trifectas };
 }
 
+// ============================================================
+// Current Prediction Resolver
+// FINAL優先で予想を1本化して返す。UIの唯一の表示ソース。
+// 優先順位:
+//   1. PredictionV4 FINAL COMPLETED
+//   2. PredictionV4 PRE COMPLETED
+//   3. なし
+// ============================================================
+export async function resolveCurrentPrediction(raceId, raceKey) {
+  // 1. V4 FINAL COMPLETED (最優先)
+  const finV4 = await getV4Prediction(raceId, "FINAL", raceKey);
+  if (finV4 && (finV4.status === "COMPLETED" || !finV4.status)) {
+    const mapped = mapV4ToUI(finV4, "FINAL");
+    if (mapped) return { stage: "FINAL", ...mapped };
+  }
+  // 2. V4 PRE COMPLETED
+  const preV4 = await getV4Prediction(raceId, "PRE", raceKey);
+  if (preV4 && (preV4.status === "COMPLETED" || !preV4.status)) {
+    const mapped = mapV4ToUI(preV4, "PRE");
+    if (mapped) return { stage: "PRE", ...mapped };
+  }
+  // 3. 予想なし
+  return { stage: null, pred: null, boats: [], trifectas: [] };
+}
+
 // selected_trifectasを第一ソースとして買い目リストを構築
 // selected_trifectasが空の場合のみtrifectas.filter(is_selected)にフォールバック
 export function buildSelectedTickets(activePred, allTri) {
