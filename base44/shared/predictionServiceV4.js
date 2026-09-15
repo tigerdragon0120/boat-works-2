@@ -96,7 +96,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
     let oddsFetchedAt = null;
     let oddsComboCount = 0;
     let oddsMissing = false;
-    let od3Status = stage === "FINAL" ? "WAITING" : null;
+    let od3Status = "WAITING";
     let od3Debug = {
       od3_requested: false,
       od3_source: null,
@@ -107,9 +107,13 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       od3_match_count: 0,
       od3_selected_match_count: 0,
       od3_error: null,
+      post_save_odds_count: 0,
+      post_save_ev_count: 0,
+      post_save_selected_with_odds: 0,
+      post_save_selected_with_ev: 0,
     };
 
-    if (stage === "FINAL") {
+    if (stage === "FINAL" || stage === "PRE") {
       const deadlineMs = race.deadline ? new Date(race.deadline).getTime() : 0;
       const preDeadline = deadlineMs > 0 && deadlineMs > Date.now();
       od3Debug.od3_requested = preDeadline;
@@ -170,6 +174,12 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       }
     }
 
+    // PREの場合、OD3未取得はERRORにしない(表示用のみ)
+    if (stage === "PRE" && (od3Status === "ERROR" || od3Status === "WAITING")) {
+      od3Status = null;
+      oddsMissing = false;
+    }
+
     // V4予想実行(純粋確率計算 — オッズはEV/Judgeのみに使用)
     const result = runPredictionV4(entriesWithProfiles, race, settings, {
       stage, oddsMap: effectiveOddsMap,
@@ -205,7 +215,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
         result.judgment_reason = "FINAL オッズ取得待ち — BOATCAST OD3未取得のためBUY/WATCH/SKIP判定不可。オッズ取得後に再実行してください。";
         if (od3Status === "WAITING") od3Status = "ERROR";
       } else {
-        od3Status = "READY";
+        od3Status = "VERIFIED";
       }
     }
 
@@ -264,7 +274,7 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       odds_source: oddsSource,
       odds_fetched_at: oddsFetchedAt,
       odds_combination_count: oddsComboCount,
-      od3_debug: stage === "FINAL" ? od3Debug : undefined,
+      od3_debug: od3Debug,
       od3_status: od3Status,
       status: finalStatus,
     };
@@ -272,6 +282,77 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
     await sr.PredictionV4.update(predictionId, record).catch(e => {
       console.error("[V4] Failed to save prediction:", e.message);
     });
+
+    // ============================================================
+    // POST_SAVE検証 (FINALのみ)
+    // DBへ保存後、必ず再READして実際の保存結果を確認。
+    // post_save_odds_count=120,
+    // post_save_selected_with_odds=ticket_count,
+    // post_save_selected_with_ev=ticket_count
+    // を満たして初めてREADY。満たさなければERROR+WAITING_ODDS。
+    // ============================================================
+    if (stage === "FINAL" && od3Status === "VERIFIED") {
+      try {
+        const reRead = await sr.PredictionV4.get(predictionId).catch(() => null);
+        if (reRead) {
+          const postSaveTrifectas = reRead.trifectas || [];
+          const postSaveOddsCount = postSaveTrifectas.filter(t => t.actual_odds != null).length;
+          const postSaveEvCount = postSaveTrifectas.filter(t => t.expected_value != null).length;
+          const postSaveSelected = reRead.selected_trifectas || [];
+          const postSaveSelectedWithOdds = postSaveSelected.filter(c => {
+            const t = postSaveTrifectas.find(x => x.combination === c);
+            return t?.actual_odds != null;
+          }).length;
+          const postSaveSelectedWithEv = postSaveSelected.filter(c => {
+            const t = postSaveTrifectas.find(x => x.combination === c);
+            return t?.expected_value != null;
+          }).length;
+          const ticketCount = reRead.ticket_count || postSaveSelected.length || 0;
+
+          od3Debug.post_save_odds_count = postSaveOddsCount;
+          od3Debug.post_save_ev_count = postSaveEvCount;
+          od3Debug.post_save_selected_with_odds = postSaveSelectedWithOdds;
+          od3Debug.post_save_selected_with_ev = postSaveSelectedWithEv;
+
+          const postSaveOk = postSaveOddsCount === 120 &&
+                             postSaveSelectedWithOdds === ticketCount &&
+                             postSaveSelectedWithEv === ticketCount;
+
+          if (postSaveOk) {
+            od3Status = "READY";
+            await sr.PredictionV4.update(predictionId, {
+              od3_status: "READY",
+              od3_debug: od3Debug,
+            }).catch(e => console.error("[V4] POST_SAVE READY update failed:", e.message));
+          } else {
+            od3Status = "ERROR";
+            finalStatus = "WAITING_ODDS";
+            od3Debug.od3_error = `POST_SAVE failed: odds=${postSaveOddsCount}/120, sel_odds=${postSaveSelectedWithOdds}/${ticketCount}, sel_ev=${postSaveSelectedWithEv}/${ticketCount}`;
+            await sr.PredictionV4.update(predictionId, {
+              od3_status: "ERROR",
+              status: "WAITING_ODDS",
+              final_judgment: null,
+              judgment_reason: "FINAL オッズ取得待ち — POST_SAVE検証失敗。OD3取得後に再実行してください。",
+              od3_debug: od3Debug,
+            }).catch(e => console.error("[V4] POST_SAVE ERROR update failed:", e.message));
+            result.final_judgment = null;
+            result.judgment_reason = "FINAL オッズ取得待ち — POST_SAVE検証失敗。";
+          }
+
+          console.warn(`[V4 FINAL POST_SAVE] race_key=${race.race_key}`, JSON.stringify({
+            post_save_odds_count: postSaveOddsCount,
+            post_save_ev_count: postSaveEvCount,
+            post_save_selected_with_odds: postSaveSelectedWithOdds,
+            post_save_selected_with_ev: postSaveSelectedWithEv,
+            ticket_count: ticketCount,
+            od3_status: od3Status,
+          }));
+        }
+      } catch (e) {
+        console.error(`[V4] POST_SAVE verification error race=${race.race_key}:`, e.message);
+        od3Status = "ERROR";
+      }
+    }
 
     return { predictionId, result, skipped: false };
   } catch (e) {

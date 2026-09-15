@@ -317,12 +317,13 @@
     },
     "od3_status": {
       "type": "string",
-      "description": "OD3\u53d6\u5f97\u72b6\u614b: WAITING/FETCHED/PARSED/MATCHED/READY/ERROR",
+      "description": "OD3\u53d6\u5f97\u72b6\u614b: WAITING\u2192FETCHED\u2192PARSED\u2192MATCHED\u2192VERIFIED\u2192READY\u3002READY\u306fDB\u4fdd\u5b58\u5f8c\u518dREAD\u691c\u8a3c\u6e08\u307f\u306e\u307f\u3002",
       "enum": [
         "WAITING",
         "FETCHED",
         "PARSED",
         "MATCHED",
+        "VERIFIED",
         "READY",
         "ERROR"
       ]
@@ -357,6 +358,22 @@
         },
         "od3_error": {
           "type": "string"
+        },
+        "post_save_odds_count": {
+          "type": "number",
+          "description": "DB\u4fdd\u5b58\u5f8c\u518dREAD: actual_odds\u975enull\u4ef6\u6570"
+        },
+        "post_save_ev_count": {
+          "type": "number",
+          "description": "DB\u4fdd\u5b58\u5f8c\u518dREAD: expected_value\u975enull\u4ef6\u6570"
+        },
+        "post_save_selected_with_odds": {
+          "type": "number",
+          "description": "DB\u4fdd\u5b58\u5f8c\u518dREAD: selected\u3067actual_odds\u3042\u308a\u4ef6\u6570"
+        },
+        "post_save_selected_with_ev": {
+          "type": "number",
+          "description": "DB\u4fdd\u5b58\u5f8c\u518dREAD: selected\u3067expected_value\u3042\u308a\u4ef6\u6570"
         }
       }
     },
