@@ -519,6 +519,18 @@ export async function verifyV4Prediction(client, race, resultData) {
     if (existing?.[0]) saved = await sr.PredictionV4Verification.update(existing[0].id, verifDoc);
     else saved = await sr.PredictionV4Verification.create(verifDoc);
 
+    // FINAL時点に固定したV4学習サンプルへ確定結果を後追い接続する。
+    // snapshot本体は変更せず、actual_result/payoutだけを付与する。
+    const learningSamples = await sr.PredictionLearningSample.filter(
+      { race_id: race.id, stage: "FINAL", prediction_version: V4_VERSION }, "-created_at", 10
+    ).catch(() => []);
+    for (const sample of learningSamples || []) {
+      await sr.PredictionLearningSample.update(sample.id, {
+        actual_result: resultTrifecta,
+        payout: resultData.payout || 0,
+      }).catch(() => {});
+    }
+
     return saved;
   } catch (e) {
     console.error(`[V4] verifyV4Prediction error race=${race?.id}:`, e.message);
