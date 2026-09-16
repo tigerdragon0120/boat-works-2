@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Waves } from "lucide-react";
 import {
   listTodayRaces, getRaceEntries,
@@ -13,6 +13,7 @@ import { fetchOnlineData } from "@/lib/dataManagementService";
 
 export default function Venue() {
   const { code } = useParams();
+  const [searchParams] = useSearchParams();
   const [races, setRaces] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -33,7 +34,24 @@ export default function Venue() {
     const list = (all || []).filter((r) => String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
       .sort((a, b) => a.race_number - b.race_number);
     setRaces(list);
-    setSelectedId((prev) => prev && list.some((r) => r.id === prev) ? prev : (list.find((r) => r.status !== "finished") || list[list.length - 1] || list[0])?.id);
+    setSelectedId((prev) => {
+      // ホーム画面で表示していた「現在○R」をURLで明示的に受け取る。
+      // これによりiPad/iPhoneやRace.status更新タイミングの差で1Rへ戻らない。
+      const requestedRaceNo = Number(searchParams.get("race"));
+      const requested = Number.isFinite(requestedRaceNo)
+        ? list.find((r) => Number(r.race_number) === requestedRaceNo)
+        : null;
+      if (requested) return requested.id;
+      if (prev && list.some((r) => r.id === prev)) return prev;
+
+      const nowMs = Date.now();
+      const nextByDeadline = list.find((r) =>
+        r.status !== "finished" &&
+        r.status !== "cancelled" &&
+        (!r.deadline || new Date(r.deadline).getTime() > nowMs)
+      );
+      return (nextByDeadline || list[list.length - 1] || list[0])?.id;
+    });
     setLoading(false);
   };
   useEffect(() => { loadList(); }, [code]);
