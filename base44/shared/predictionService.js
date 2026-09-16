@@ -679,7 +679,7 @@ async function saveSingleRaceResult(sr, race, doc) {
   return canonical;
 }
 
-export async function collapseDuplicateRaceResults(client, limit = 500) {
+export async function collapseDuplicateRaceResults(client, limit = 5000) {
   const sr = client.asServiceRole.entities;
   const rows = await sr.RaceResult.filter({}, '-finished_at', limit).catch(() => []);
   const groups = new Map();
