@@ -100,7 +100,7 @@ export default function Home() {
                 <div className="mt-1 h-1 rounded-full bg-slate-200 overflow-hidden"><div className="h-full bg-slate-400" style={{width:`${Math.min(100,(done/12)*100)}%`}}/></div>
               </> : <div className="mt-2 text-center text-[10px] text-slate-700">開催なし</div>}
             </>;
-            return active ? <Link key={code} to={`/venue/${code}`} className={cn("min-h-[86px] rounded-lg border p-2 transition",isCurrent?'border-[#f02f7d] bg-[#fff2f7] ring-1 ring-[#f7a8c7]':'border-[#cfd9e6] bg-white hover:border-[#2f6fe4] shadow-sm')}>{body}</Link> : <div key={code} className="min-h-[86px] rounded-lg border border-[#d6dde6] bg-[#edf0f4] p-2 opacity-75">{body}</div>;
+            return active ? <Link key={code} to={`/venue/${code}${nextRace ? `?race=${nextRace.race_number}` : ''}`} className={cn("min-h-[86px] rounded-lg border p-2 transition",isCurrent?'border-[#f02f7d] bg-[#fff2f7] ring-1 ring-[#f7a8c7]':'border-[#cfd9e6] bg-white hover:border-[#2f6fe4] shadow-sm')}>{body}</Link> : <div key={code} className="min-h-[86px] rounded-lg border border-[#d6dde6] bg-[#edf0f4] p-2 opacity-75">{body}</div>;
           })}
         </div>
       </section>
