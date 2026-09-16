@@ -559,12 +559,17 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       }
     }
 
-    // 実展示値(展示タイム+ST)がACTIVE_BOATS(6-欠場艇)揃った場合のみ exhibition_ready=true
+    // 欠場艇は今回取得した直前情報から即時反映する。
+    // Race.scratched_boats がまだ古くても、parserが検出した欠場艇を優先して
+    // ACTIVE_BOATSだけで exhibition_ready を判定する。
     const realCount = parsed.data.real_exhibition_count || 0;
-    const scratchedBoats = race.scratched_boats || [];
-    const activeBoatCount = Math.max(1, 6 - (Array.isArray(scratchedBoats) ? scratchedBoats.length : 0));
+    const parsedScratched = Array.isArray(parsed.data.scratched_boats) ? parsed.data.scratched_boats.map(Number) : [];
+    const storedScratched = Array.isArray(race.scratched_boats) ? race.scratched_boats.map(Number) : [];
+    const scratchedBoats = [...new Set([...storedScratched, ...parsedScratched])].filter((n: any) => n >= 1 && n <= 6).sort((a: any,b: any) => a-b);
+    const activeBoatCount = parsed.data.active_boat_count || Math.max(1, 6 - scratchedBoats.length);
     if (updated > 0) {
       const raceUpdate: any = {};
+      if (scratchedBoats.length) raceUpdate.scratched_boats = scratchedBoats;
       if (realCount >= activeBoatCount) raceUpdate.exhibition_ready = true;
       if (parsed.data.weather) raceUpdate.weather = parsed.data.weather;
       if (parsed.data.wind_speed != null) raceUpdate.wind_speed = parsed.data.wind_speed;
