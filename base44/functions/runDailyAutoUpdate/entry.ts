@@ -828,7 +828,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   const jstHour = parseInt(nowJSTTime().split(':')[0], 10);
 
   // 過去の同時実行で生じたRaceResult重複を先に解消する。
-  const dedupe = await collapseDuplicateRaceResults(base44, 500).catch(() => ({ removed: 0 }));
+  const dedupe = await collapseDuplicateRaceResults(base44, 5000).catch(() => ({ removed: 0 }));
   if (dedupe.removed > 0) logs.push(`RaceResult重複を${dedupe.removed}件削除`);
 
   // 現在のDB状態を確認
