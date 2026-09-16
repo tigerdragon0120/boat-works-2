@@ -284,6 +284,49 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       console.error("[V4] Failed to save prediction:", e.message);
     });
 
+    // V4 FINALの予想時点を学習用に固定保存する。
+    // ここは「自動で重みを書き換える」機能ではなく、結果確定後に
+    // 予想時点と結果を正しく照合するための immutable snapshot。
+    if (stage === "FINAL" && finalStatus === "COMPLETED") {
+      try {
+        const existingLearning = await sr.PredictionLearningSample.filter(
+          { race_id: race.id, stage: "FINAL", prediction_version: V4_VERSION }, "-created_at", 1
+        ).catch(() => []);
+        if (!existingLearning?.length) {
+          await sr.PredictionLearningSample.create({
+            race_id: race.id,
+            stage: "FINAL",
+            prediction_version: V4_VERSION,
+            snapshot: {
+              prediction_id: predictionId,
+              final_judgment: result.final_judgment,
+              selected_trifectas: result.selected_trifectas || [],
+              ticket_count: result.ticket_count || 0,
+              honmei_boat: result.honmei_boat,
+              first_probability_gap: result.first_probability_gap,
+              first_confidence: result.first_confidence,
+              fifty_six_suppressed: result.fifty_six_suppressed || false,
+              boat_scores: record.boat_scores,
+              trifectas: record.trifectas,
+              v4_weights: result.v4_weights,
+              weather: {
+                weather: race.weather || null,
+                wind_dir: race.wind_dir || null,
+                wind_speed: race.wind_speed ?? null,
+                water_temp: race.water_temp ?? null,
+                wave_height: race.wave_height ?? null,
+              },
+              odds_source: oddsSource,
+              odds_fetched_at: oddsFetchedAt,
+            },
+            created_at: new Date().toISOString(),
+          });
+        }
+      } catch (e) {
+        console.warn(`[V4] learning snapshot save skipped race=${race.id}:`, e.message);
+      }
+    }
+
     // ============================================================
     // POST_SAVE検証 (FINALのみ)
     // DBへ保存後、必ず再READして実際の保存結果を確認。
