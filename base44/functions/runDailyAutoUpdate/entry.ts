@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
-import { upsertRace, upsertEntry, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds } from '../../shared/predictionService.js';
+import { upsertRace, upsertEntry, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
@@ -633,9 +633,9 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
 
     // OddsSnapshot保存
     await sr.OddsSnapshot.create({
-      race_id: race.id, stage: inFinalWindow ? 'FINAL' : 'LIVE', odds_map: oddsMap,
-      captured_at: new Date().toISOString(),
-    }).catch(() => {});
+      race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
+      captured_at: new Date().toISOString(), source: 'LOCAL',
+    });
     oddsFetched++;
 
     // PRE/FINALどちらが表示中でも実オッズを画面に出せるよう、
@@ -826,6 +826,10 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   const sr = base44.asServiceRole.entities;
   const startTime = Date.now();
   const jstHour = parseInt(nowJSTTime().split(':')[0], 10);
+
+  // 過去の同時実行で生じたRaceResult重複を先に解消する。
+  const dedupe = await collapseDuplicateRaceResults(base44, 500).catch(() => ({ removed: 0 }));
+  if (dedupe.removed > 0) logs.push(`RaceResult重複を${dedupe.removed}件削除`);
 
   // 現在のDB状態を確認
   const todayRaces = await sr.Race.filter({ race_date: today }, 'race_number', 300).catch(() => []);
