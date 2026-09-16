@@ -522,6 +522,15 @@ export async function getVerificationSummary() {
   ]);
   const learnedRaceIds = new Set((learningSamples || []).filter((s) => s.actual_result).map((s) => s.race_id));
   const learningLinked = buyRecords.filter((v) => learnedRaceIds.has(v.race_id)).length;
+  // 現行V4の学習接続状況も別集計する。旧V1 BUYの0/109だけを表示すると
+  // 現在のV4学習が動いていても0%に見えるため、V4はV4Verificationを母数にする。
+  const v4Verifs = await base44.entities.PredictionV4Verification.list("-verified_at", 500).catch(() => []);
+  const v4BuyRecords = (v4Verifs || []).filter((v) => v.v4_final_judgment === "BUY" && v.actual_result);
+  const v4LearnedRaceIds = new Set((learningSamples || [])
+    .filter((s) => s.prediction_version === "v4" && s.stage === "FINAL" && s.actual_result)
+    .map((s) => s.race_id));
+  const v4LearningLinked = v4BuyRecords.filter((v) => v4LearnedRaceIds.has(v.race_id)).length;
+  const v4LearningLinkRate = v4BuyRecords.length ? Math.round((v4LearningLinked / v4BuyRecords.length) * 1000) / 10 : 0;
 
   const resolvedFactors = (factorRows || []).filter((f) => f.stage === 'FINAL' && f.actual_result && f.factor_summary);
   const factorKeys = ['long_term','mid_term','recent','course_venue','section','exhibition','odds','confidence'];
