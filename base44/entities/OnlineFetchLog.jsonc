@@ -5,6 +5,7 @@
     "fetch_type": {
       "type": "string",
       "enum": [
+        "section",
         "exhibition",
         "odds",
         "result"
