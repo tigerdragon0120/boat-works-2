@@ -118,7 +118,7 @@ async function processOdds(base44: any, race: any, parsed: any) {
   // OddsSnapshot保存
   await sr.OddsSnapshot.create({
     race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
-    captured_at: new Date().toISOString(),
+    captured_at: new Date().toISOString(), source: 'LOCAL',
   });
 
   // TrifectaPredictionのactual_odds更新(既存FINALがある場合)
@@ -333,6 +333,27 @@ export default async function(req: Request) {
           break;
       }
 
+      // HTTP 200やHTML解析成功だけではsuccessにしない。
+      // 対象データがDBへ必要量保存された時だけsuccessとする。
+      let notReadyReason = '';
+      if (fetch_type === 'section' && Number(resultData.entries_updated || 0) < 1) {
+        notReadyReason = '節間成績の保存件数が0件';
+      } else if (fetch_type === 'exhibition' && resultData.exhibition_ready !== true) {
+        notReadyReason = `展示データ未完了: ${Number(resultData.real_exhibition_count || 0)}/${Number(resultData.active_boat_count || 6)}艇`;
+      } else if (fetch_type === 'odds' && Number(resultData.odds_count || 0) < 120) {
+        notReadyReason = `3連単オッズ未完了: ${Number(resultData.odds_count || 0)}/120組`;
+      } else if (fetch_type === 'result' && !resultData.result_trifecta) {
+        notReadyReason = '3連単結果が未確定';
+      }
+
+      if (notReadyReason) {
+        await sr.OnlineFetchLog.create({
+          fetch_type, race_id: race.id, race_date, venue_code: vc, race_number: rn,
+          status: 'not_ready', fetched_at: now, http_status: 200, error_message: notReadyReason,
+        });
+        return Response.json({ ok: false, status: 'not_ready', fetch_type, race_id: race.id, ...resultData, message: notReadyReason });
+      }
+
       await sr.OnlineFetchLog.create({
         fetch_type, race_id: race.id, race_date, venue_code: vc, race_number: rn,
         status: 'success', fetched_at: now, http_status: 200,
@@ -341,7 +362,7 @@ export default async function(req: Request) {
       return Response.json({
         ok: true, status: 'success', fetch_type, race_id: race.id,
         ...resultData,
-        message: `${fetch_type}データ取得完了(決定論的解析)`,
+        message: `${fetch_type}データ取得・DB保存完了`,
       });
     } catch (e: any) {
       await sr.OnlineFetchLog.create({
