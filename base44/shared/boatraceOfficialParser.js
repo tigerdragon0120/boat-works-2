@@ -615,20 +615,24 @@ export function parseBeforeInfo(html) {
   const weatherTypeMatch = html.match(/(晴れ|曇り|雨|雪|霧)/);
   if (weatherTypeMatch) weather = weatherTypeMatch[1];
 
-  // 実展示値(展示タイム+ST)が6艇揃った場合のみOK
-  const realCount = exhibitionData.filter(
+  // 欠場艇を除くACTIVE_BOATSだけで展示完成を判定する。
+  // 以前は常に6艇分の展示タイム+STを要求していたため、欠場が1艇でもあると
+  // parseBeforeInfo.ok=falseとなり、正常な5艇分の展示データまで保存されなかった。
+  const activeExhibitionData = exhibitionData.filter((e) => !e.is_absent && !e.is_scratched);
+  const realCount = activeExhibitionData.filter(
     (e) => e.exhibition_time != null && e.exhibition_st != null
   ).length;
+  const activeBoatCount = activeExhibitionData.length;
 
   if (exhibitionData.length < 6) {
-    warnings.push(`展示データ${exhibitionData.length}艇(6艇期待)`);
+    warnings.push(`展示データ${exhibitionData.length}艇(通常6艇)`);
   }
-  if (realCount < 6) {
-    warnings.push(`実展示値${realCount}艇(展示タイム+ST必要)`);
+  if (realCount < activeBoatCount) {
+    warnings.push(`実展示値${realCount}/${activeBoatCount}艇(ACTIVE_BOATSのみ必要)`);
   }
 
   return {
-    ok: exhibitionData.length >= 6 && realCount >= 6,
+    ok: exhibitionData.length > 0 && activeBoatCount >= 3 && realCount >= activeBoatCount,
     errors,
     warnings,
     data: {
@@ -639,6 +643,8 @@ export function parseBeforeInfo(html) {
       air_temp: airTemp,
       wave_height: waveHeight,
       real_exhibition_count: realCount,
+      active_boat_count: activeBoatCount,
+      scratched_boats: exhibitionData.filter((e) => e.is_absent || e.is_scratched).map((e) => e.boat_number),
     },
   };
 }
