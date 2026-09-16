@@ -189,8 +189,9 @@ export default function Verification() {
             <p className="text-[11px] text-slate-500 mt-1">予想時点の6艇スコア・展示・オッズ・天候・節間データと、確定結果を同じ学習サンプルに紐づけます。</p>
           </div>
           <div className="text-right">
-            <div className="text-3xl font-black text-indigo-600">{summary.learning_link_rate}<span className="text-sm ml-0.5">%</span></div>
-            <div className="text-[10px] text-slate-400">BUY結果の学習接続率 {summary.learning_linked}/{summary.buy_count}</div>
+            <div className="text-3xl font-black text-indigo-600">{summary.v4_learning_link_rate ?? summary.learning_link_rate}<span className="text-sm ml-0.5">%</span></div>
+            <div className="text-[10px] text-slate-400">V4 BUY結果の学習接続率 {summary.v4_learning_linked ?? 0}/{summary.v4_learning_total ?? 0}</div>
+            <div className="text-[9px] text-slate-300 mt-0.5">旧エンジン {summary.learning_linked}/{summary.buy_count}</div>
           </div>
         </div>
         <div className="mt-4 grid md:grid-cols-4 gap-2">
