@@ -634,6 +634,75 @@ export async function refreshFinalOdds(client, race, settings) {
   };
 }
 
+// RaceResult は race_id ごとに必ず1件だけ残す。
+// 同じレースを複数ワーカーが同時保存しても、保存後の再読込で決定論的に1件へ収束させる。
+function resultQualityScore(row) {
+  let score = 0;
+  if (row?.source === 'BOATCAST') score += 1000;
+  if (row?.result_status === 'RESULT_FINAL') score += 200;
+  if (row?.is_finished === true) score += 100;
+  if (Array.isArray(row?.boats)) score += Math.min(row.boats.length, 6) * 10;
+  if (row?.payouts) score += 20;
+  if (row?.result_trifecta) score += 10;
+  if (Number(row?.payout) > 0) score += 5;
+  return score;
+}
+
+function pickCanonicalResult(rows) {
+  return [...(rows || [])].sort((a, b) => {
+    const qualityDiff = resultQualityScore(b) - resultQualityScore(a);
+    if (qualityDiff) return qualityDiff;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  })[0] || null;
+}
+
+async function saveSingleRaceResult(sr, race, doc) {
+  const before = await sr.RaceResult.filter({ race_id: race.id }, '-finished_at', 20).catch(() => []);
+  const current = pickCanonicalResult(before);
+  let saved;
+
+  // BOATCAST確定結果をLOCAL結果で劣化させない。
+  if (current?.source === 'BOATCAST' && doc?.source !== 'BOATCAST') {
+    saved = current;
+  } else if (current) {
+    saved = await sr.RaceResult.update(current.id, mergeResultProtect(current, doc));
+  } else {
+    saved = await sr.RaceResult.create(doc);
+  }
+
+  // 同時createの競合を保存直後に収束させる。
+  const after = await sr.RaceResult.filter({ race_id: race.id }, '-finished_at', 20).catch(() => []);
+  const canonical = pickCanonicalResult(after) || saved;
+  for (const row of after) {
+    if (row.id !== canonical.id) await sr.RaceResult.delete(row.id).catch(() => {});
+  }
+  return canonical;
+}
+
+export async function collapseDuplicateRaceResults(client, limit = 500) {
+  const sr = client.asServiceRole.entities;
+  const rows = await sr.RaceResult.filter({}, '-finished_at', limit).catch(() => []);
+  const groups = new Map();
+  for (const row of rows) {
+    if (!row.race_id) continue;
+    if (!groups.has(row.race_id)) groups.set(row.race_id, []);
+    groups.get(row.race_id).push(row);
+  }
+
+  let removed = 0;
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const canonical = pickCanonicalResult(group);
+    for (const row of group) {
+      if (row.id !== canonical.id) {
+        await sr.RaceResult.delete(row.id).catch(() => {});
+        removed++;
+      }
+    }
+  }
+  return { removed };
+}
+
 // ============================================================
 // BOATCAST結果upsert + 照合(サーバー側)
 // BOATCAST結果(着順・ST・進入・決まり手・天候・全券種払戻)を保存し、
@@ -676,13 +745,7 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
     console.log(`[RESULT_CONFLICT] race=${race.id} key=${race.race_key} ${doc.conflict_log}`);
   }
 
-  let saved;
-  if (existingResult) {
-    const merged = mergeResultProtect(existingResult, doc);
-    saved = await sr.RaceResult.update(existingResult.id, merged);
-  } else {
-    saved = await sr.RaceResult.create(doc);
-  }
+  const saved = await saveSingleRaceResult(sr, race, doc);
 
   // Race状態更新
   await sr.Race.update(race.id, { status: "finished" }).catch(() => {});
@@ -790,11 +853,9 @@ async function verifyPrediction(client, race, resultData) {
 // 結果upsert + 照合(サーバー側)
 export async function upsertResultOnly(client, race, resultData) {
   if (!resultData.result_trifecta) return null;
-  const existing = await client.asServiceRole.entities.RaceResult.filter({ race_id: race.id }, "-finished_at", 1);
-  const doc = { race_id: race.id, race_key: race.race_key, result_trifecta: resultData.result_trifecta, finish_order: resultData.finish_order, payout: resultData.payout || 0, is_finished: true, finished_at: new Date().toISOString() };
-  let saved;
-  if (existing && existing[0]) saved = await client.asServiceRole.entities.RaceResult.update(existing[0].id, doc);
-  else saved = await client.asServiceRole.entities.RaceResult.create(doc);
+  const sr = client.asServiceRole.entities;
+  const doc = { race_id: race.id, race_key: race.race_key, result_trifecta: resultData.result_trifecta, finish_order: resultData.finish_order, payout: resultData.payout || 0, is_finished: true, finished_at: new Date().toISOString(), source: 'LOCAL', result_status: 'RESULT_FINAL' };
+  const saved = await saveSingleRaceResult(sr, race, doc);
   await client.asServiceRole.entities.Race.update(race.id, { status: "finished" });
   return saved;
 }
@@ -809,9 +870,7 @@ export async function upsertResultAndVerify(client, race, resultData) {
     payout: resultData.payout || 0, is_finished: true, finished_at: new Date().toISOString(),
     source: 'LOCAL', result_status: 'RESULT_FINAL',
   };
-  let saved;
-  if (existing && existing[0]) saved = await sr.RaceResult.update(existing[0].id, doc);
-  else saved = await sr.RaceResult.create(doc);
+  const saved = await saveSingleRaceResult(sr, race, doc);
   await sr.Race.update(race.id, { status: "finished" });
 
   const verification = await verifyPrediction(client, race, resultData);
