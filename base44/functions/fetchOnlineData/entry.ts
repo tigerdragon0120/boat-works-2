@@ -90,9 +90,12 @@ async function processExhibition(base44: any, race: any, parsed: any) {
   // Race展示取得済フラグ + 天候情報更新
   // 実展示値(展示タイム+ST)がACTIVE_BOATS(6-欠場艇)揃った場合のみ exhibition_ready=true
   const realCount = parsed.real_exhibition_count || 0;
-  const scratchedBoats = race.scratched_boats || [];
-  const activeBoatCount = Math.max(1, 6 - (Array.isArray(scratchedBoats) ? scratchedBoats.length : 0));
+  const parsedScratched = Array.isArray(parsed.scratched_boats) ? parsed.scratched_boats.map(Number) : [];
+  const storedScratched = Array.isArray(race.scratched_boats) ? race.scratched_boats.map(Number) : [];
+  const scratchedBoats = [...new Set([...storedScratched, ...parsedScratched])].filter((n: any) => n >= 1 && n <= 6).sort((a: any,b: any) => a-b);
+  const activeBoatCount = parsed.active_boat_count || Math.max(1, 6 - scratchedBoats.length);
   const raceUpdate: any = {};
+  if (scratchedBoats.length) raceUpdate.scratched_boats = scratchedBoats;
   if (realCount >= activeBoatCount) raceUpdate.exhibition_ready = true;
   if (parsed.weather) raceUpdate.weather = parsed.weather;
   if (parsed.wind_speed != null) raceUpdate.wind_speed = parsed.wind_speed;
