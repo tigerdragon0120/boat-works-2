@@ -361,6 +361,14 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
   return { total: races.length, fetched, skipped, boatcast: boatcastCount, local: localCount, errors };
 }
 
+function isCompletePrePrediction(p: any) {
+  if (p?.stage !== 'PRE' || p?.status !== 'COMPLETED') return false;
+  const ticketCount = Number(p.ticket_count || 0);
+  const selected = Array.isArray(p.selected_trifectas) ? p.selected_trifectas : [];
+  const judgmentOk = ['BUY', 'WATCH', 'SKIP'].includes(String(p.final_judgment || ''));
+  return ticketCount >= 6 && ticketCount <= 8 && selected.length === ticketCount && judgmentOk;
+}
+
 // =====================================================
 // STEP 8: PRE予想生成
 // =====================================================
@@ -374,7 +382,12 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
   const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
-  const pending = races.filter((r: any) => !r.has_pre);
+  const existingPrePreds = await sr.RacePrediction.filter({ stage: 'PRE' }, '-computed_at', 1000).catch(() => []);
+  const completePreKeys = new Set(
+    existingPrePreds.filter((p: any) => isCompletePrePrediction(p)).map((p: any) => String(p.race_key || ''))
+  );
+  // has_preフラグではなく、6〜8点・判定まで揃った実レコードを完成条件にする。
+  const pending = races.filter((r: any) => !completePreKeys.has(String(r.race_key || '')));
   let generated = 0, skipped = races.length - pending.length, rateLimited = false;
 
   // 1回の実行で最大5Rだけ生成する。
@@ -834,14 +847,20 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   // 現在のDB状態を確認
   const todayRaces = await sr.Race.filter({ race_date: today }, 'race_number', 300).catch(() => []);
   const tomorrowRaces = await sr.Race.filter({ race_date: tomorrow }, 'race_number', 300).catch(() => []);
-  const existingResults = await sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []);
+  const [existingResults, existingPrePreds] = await Promise.all([
+    sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []),
+    sr.RacePrediction.filter({ stage: 'PRE' }, '-computed_at', 1000).catch(() => []),
+  ]);
   const raceIdsWithResult = new Set(existingResults.map((r: any) => r.race_id));
+  const completePreKeys = new Set(
+    existingPrePreds.filter((p: any) => isCompletePrePrediction(p)).map((p: any) => String(p.race_key || ''))
+  );
 
   const todayRaceCount = todayRaces.length;
   const tomorrowRaceCount = tomorrowRaces.length;
   const todayResultCount = todayRaces.filter((r: any) => raceIdsWithResult.has(r.id)).length;
-  const todayPreCount = todayRaces.filter((r: any) => r.has_pre).length;
-  const tomorrowPreCount = tomorrowRaces.filter((r: any) => r.has_pre).length;
+  const todayPreCount = todayRaces.filter((r: any) => completePreKeys.has(String(r.race_key || ''))).length;
+  const tomorrowPreCount = tomorrowRaces.filter((r: any) => completePreKeys.has(String(r.race_key || ''))).length;
 
   const steps: string[] = [];
   let remaining = timeBudgetMs;
@@ -892,6 +911,15 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     const before = Date.now();
     const r = await fetchAndSaveOddsAndFinal(base44, today, remaining, logs, errors);
     steps.push(`odds_final: ${r.odds_fetched}R/${r.final_generated}FINAL`);
+    remaining -= (Date.now() - before);
+  }
+
+  // 朝に追加されたナイター場など、当日分の不足PREも5分周期で差分補完する。
+  if (remaining > 10000 && todayRaceCount > 0 && todayPreCount < todayRaceCount) {
+    logs.push(`AUTO: 当日不足PRE予想生成開始（${todayPreCount}/${todayRaceCount}）`);
+    const before = Date.now();
+    const r = await generatePrePredictions(base44, today, remaining, logs, errors);
+    steps.push(`today_pre_predictions: ${r.generated}R`);
     remaining -= (Date.now() - before);
   }
 
@@ -956,7 +984,7 @@ export default async function(req: Request) {
         result = await fetchAndSaveRaceCards(base44, tomorrow, TIME_BUDGET, logs, errors);
         break;
       case 'pre_predictions':
-        result = await generatePrePredictions(base44, tomorrow, TIME_BUDGET, logs, errors);
+        result = await generatePrePredictions(base44, body.race_date || today, TIME_BUDGET, logs, errors);
         break;
       case 'exhibition':
         result = await fetchAndSaveExhibition(base44, today, TIME_BUDGET, logs, errors);
