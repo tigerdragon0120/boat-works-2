@@ -264,7 +264,7 @@ const VENUE_NAMES = {
 
 function RaceIdentity({ verification }) {
   const parts = String(verification.race_key || "").split("_");
-  const date = verification.race_date || (parts[0] && /^\\d{4}-\\d{2}-\\d{2}$/.test(parts[0]) ? parts[0] : "");
+  const date = verification.race_date || (parts[0] && /^\d{4}-\d{2}-\d{2}$/.test(parts[0]) ? parts[0] : "");
   const venueCode = String(verification.venue_code || parts[1] || "").padStart(2, "0");
   const raceNumber = Number(verification.race_number || parts[2] || 0);
   const venueName = verification.venue || verification.venue_name || VENUE_NAMES[venueCode] || (venueCode ? `場コード${venueCode}` : "会場不明");
