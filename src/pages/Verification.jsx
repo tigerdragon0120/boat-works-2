@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { getVerificationSummary } from "@/lib/predictionService";
 import {
   BarChart3, Target, Coins, TrendingUp, CheckCircle2, XCircle,
-  ArrowRight, BrainCircuit, Database, TicketCheck, RefreshCw, AlertTriangle
+  ArrowRight, BrainCircuit, Database, TicketCheck, RefreshCw, AlertTriangle, CalendarDays, MapPin
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import V1V2Comparison from "@/components/verification/V1V2Comparison";
@@ -228,7 +228,8 @@ export default function Verification() {
             <div className="py-12 text-center text-slate-400 text-sm">まだBUY判定の確定レースがありません</div>
           ) : summary.records.map((v) => (
             <div key={v.id} className={cn("px-3 sm:px-4 py-3 border-b border-slate-100 last:border-0", v.recommended_hit ? "bg-emerald-50/35" : "bg-white")}>
-              <div className="flex flex-wrap items-center gap-2 justify-between">
+              <RaceIdentity verification={v} />
+              <div className="flex flex-wrap items-center gap-2 justify-between mt-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className={cn("px-2 h-6 rounded-md text-[10px] font-black flex items-center", v.recommended_hit ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-600")}>
                     {v.recommended_hit ? "的中" : "不的中"}
@@ -250,6 +251,34 @@ export default function Verification() {
           ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+const VENUE_NAMES = {
+  "01": "桐生", "02": "戸田", "03": "江戸川", "04": "平和島", "05": "多摩川", "06": "浜名湖",
+  "07": "蒲郡", "08": "常滑", "09": "津", "10": "三国", "11": "びわこ", "12": "住之江",
+  "13": "尼崎", "14": "鳴門", "15": "丸亀", "16": "児島", "17": "宮島", "18": "徳山",
+  "19": "下関", "20": "若松", "21": "芦屋", "22": "福岡", "23": "唐津", "24": "大村",
+};
+
+function RaceIdentity({ verification }) {
+  const parts = String(verification.race_key || "").split("_");
+  const date = verification.race_date || (parts[0] && /^\\d{4}-\\d{2}-\\d{2}$/.test(parts[0]) ? parts[0] : "");
+  const venueCode = String(verification.venue_code || parts[1] || "").padStart(2, "0");
+  const raceNumber = Number(verification.race_number || parts[2] || 0);
+  const venueName = verification.venue || verification.venue_name || VENUE_NAMES[venueCode] || (venueCode ? `場コード${venueCode}` : "会場不明");
+  const dateLabel = date ? date.replace(/-/g, "/") : "日付不明";
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-slate-600">
+      <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+        <CalendarDays className="w-3.5 h-3.5 text-sky-600" />{dateLabel}
+      </span>
+      <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+        <MapPin className="w-3.5 h-3.5 text-indigo-600" />{venueName}
+      </span>
+      <span className="rounded-md bg-slate-900 px-2 py-1 font-black text-white">{raceNumber ? `${raceNumber}R` : "R不明"}</span>
     </div>
   );
 }
