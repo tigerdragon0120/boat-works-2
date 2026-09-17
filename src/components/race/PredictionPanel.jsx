@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { Crown, Shield, Sparkles, TrendingUp, Gauge, Trophy, Zap, Activity, Target, Calculator, Ticket, AlertCircle } from "lucide-react";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import { buildSelectedTickets } from "@/lib/predictionService";
+import V5ScenarioPanel from "@/components/race/V5ScenarioPanel";
 
 const gradeStyle = {
   S: "border-fuchsia-400 text-fuchsia-300 bg-fuchsia-500/10",
@@ -176,13 +177,16 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
               </div>
             )}
 
-            {/* === 4. 展開予測 === */}
+            {/* === 4. V5 データ駆動型 展開予測 === */}
+            <V5ScenarioPanel entries={entries} activePred={activePred} />
+
+            {/* 既存エンジンの展開ラベル */}
             <div className="flex items-center gap-3">
               <div className={cn("w-12 h-12 border-2 rounded-xl flex items-center justify-center text-xl font-black", gradeStyle[activePred?.prediction_grade || "C"])}>
                 {activePred?.prediction_grade || "C"}
               </div>
               <div className="flex-1">
-                <div className="text-[10px] text-slate-500 mb-0.5">展開予測</div>
+                <div className="text-[10px] text-slate-500 mb-0.5">既存エンジンの展開判定</div>
                 <div className="font-black text-sm text-[#f9c836]">{activePred?.race_scenario?.primary || "—"}</div>
                 {activePred?.race_scenario?.secondary && activePred.race_scenario.secondary !== "—" && (
                   <div className="text-[10px] text-slate-600 mt-0.5">{activePred.race_scenario.secondary}</div>
