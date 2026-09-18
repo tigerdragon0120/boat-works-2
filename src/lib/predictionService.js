@@ -479,9 +479,26 @@ export async function listTodayRaceStatus() {
 
 // 検証集計: 「BUYしたレースが当たったか」を中心に、次の予想ロジック改善へ繋げる
 export async function getVerificationSummary() {
-  const raw = await base44.entities.PredictionVerification.list("-verified_at", 500);
-  // 実結果が入っている正規データだけを検証対象にする
-  const verifs = (raw || []).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
+  // レース画面と同じ現行V4 FINALだけを検証対象にする。
+  // 旧PredictionVerification(V1)を混ぜると、画面の買い目と検証の買い目が別物になる。
+  const raw = await base44.entities.PredictionV4Verification.list("-verified_at", 500);
+  const verifs = (raw || [])
+    .filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")))
+    .map((v) => ({
+      ...v,
+      final_judgment: v.v4_final_judgment,
+      recommended_hit: !!v.v4_recommended_hit,
+      investment: Number(v.v4_investment || 0),
+      payout: Number(v.v4_payout || 0),
+      recovery_rate: Number(v.v4_recovery_rate || 0),
+      ticket_count: Number(v.v4_ticket_count || 0),
+      selected_trifectas: v.v4_selected_trifectas || [],
+      pre_prediction: v.v4_pre_prediction || "",
+      final_prediction: v.v4_final_prediction || "",
+      pre_hit: !!v.v4_pre_hit,
+      final_hit: !!v.v4_final_hit,
+      miss_reason: v.miss_reason_primary || null,
+    }));
   const total = verifs.length;
   if (total === 0) return { total: 0, records: [] };
 
@@ -508,9 +525,9 @@ export async function getVerificationSummary() {
   const missBreakdown = { first: 0, second: 0, third: 0, other: 0 };
   for (const v of buyRecords.filter((x) => !x.recommended_hit)) {
     const reason = String(v.miss_reason || "");
-    if (reason.startsWith("1着")) missBreakdown.first += 1;
-    else if (reason.startsWith("2着")) missBreakdown.second += 1;
-    else if (reason.startsWith("3着")) missBreakdown.third += 1;
+    if (reason === "FIRST_WRONG" || reason === "INSIDE_UNDERVALUED" || reason === "OUTSIDE_UNDERRATED" || reason === "FIFTY_SIX_OVERVALUED" || reason === "ST_MISREAD") missBreakdown.first += 1;
+    else if (reason === "SECOND_WRONG" || reason === "SECOND_CONDITIONAL_ERROR") missBreakdown.second += 1;
+    else if (reason === "THIRD_WRONG") missBreakdown.third += 1;
     else missBreakdown.other += 1;
   }
 
@@ -520,17 +537,12 @@ export async function getVerificationSummary() {
     base44.entities.RacerPerformanceProfile.list("-updated_at", 5000).catch(() => []),
     base44.entities.RacerRollingStats.list("-calculated_at", 5000).catch(() => []),
   ]);
-  const learnedRaceIds = new Set((learningSamples || []).filter((s) => s.actual_result).map((s) => s.race_id));
-  const learningLinked = buyRecords.filter((v) => learnedRaceIds.has(v.race_id)).length;
-  // 現行V4の学習接続状況も別集計する。旧V1 BUYの0/109だけを表示すると
-  // 現在のV4学習が動いていても0%に見えるため、V4はV4Verificationを母数にする。
-  const v4Verifs = await base44.entities.PredictionV4Verification.list("-verified_at", 500).catch(() => []);
-  const v4BuyRecords = (v4Verifs || []).filter((v) => v.v4_final_judgment === "BUY" && v.actual_result);
   const v4LearnedRaceIds = new Set((learningSamples || [])
     .filter((s) => s.prediction_version === "v4" && s.stage === "FINAL" && s.actual_result)
     .map((s) => s.race_id));
-  const v4LearningLinked = v4BuyRecords.filter((v) => v4LearnedRaceIds.has(v.race_id)).length;
-  const v4LearningLinkRate = v4BuyRecords.length ? Math.round((v4LearningLinked / v4BuyRecords.length) * 1000) / 10 : 0;
+  const learningLinked = buyRecords.filter((v) => v4LearnedRaceIds.has(v.race_id)).length;
+  const v4LearningLinked = learningLinked;
+  const v4LearningLinkRate = buyRecords.length ? Math.round((v4LearningLinked / buyRecords.length) * 1000) / 10 : 0;
 
   const resolvedFactors = (factorRows || []).filter((f) => f.stage === 'FINAL' && f.actual_result && f.factor_summary);
   const factorKeys = ['long_term','mid_term','recent','course_venue','section','exhibition','odds','confidence'];
@@ -572,7 +584,7 @@ export async function getVerificationSummary() {
     learning_linked: learningLinked,
     learning_link_rate: buyRecords.length ? Math.round((learningLinked / buyRecords.length) * 1000) / 10 : 0,
     v4_learning_linked: v4LearningLinked,
-    v4_learning_total: v4BuyRecords.length,
+    v4_learning_total: buyRecords.length;
     v4_learning_link_rate: v4LearningLinkRate,
     tickets_6: byTicketCount(6),
     tickets_7: byTicketCount(7),
