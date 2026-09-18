@@ -204,7 +204,7 @@ export default function Verification() {
           <div className="text-right">
             <div className="text-3xl font-black text-indigo-600">{summary.v4_learning_link_rate ?? summary.learning_link_rate}<span className="text-sm ml-0.5">%</span></div>
             <div className="text-[10px] text-slate-400">V4 BUY結果の学習接続率 {summary.v4_learning_linked ?? 0}/{summary.v4_learning_total ?? 0}</div>
-            <div className="text-[9px] text-slate-300 mt-0.5">旧エンジン {summary.learning_linked}/{summary.buy_count}</div>
+            <div className="text-[9px] text-slate-300 mt-0.5">レース画面と同じV4 FINALを検証</div>
           </div>
         </div>
         <div className="mt-4 grid md:grid-cols-4 gap-2">
@@ -219,7 +219,7 @@ export default function Verification() {
         <div className="flex items-end justify-between gap-2 mb-2">
           <div>
             <div className="text-[10px] font-bold text-slate-400">BUY HISTORY</div>
-            <h2 className="font-display font-black text-slate-900 text-lg">BUYレース別の検証</h2>
+            <h2 className="font-display font-black text-slate-900 text-lg">V4 BUYレース別の検証</h2>
           </div>
           <div className="text-[10px] text-slate-400">最新500件まで</div>
         </div>
