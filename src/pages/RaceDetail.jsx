@@ -23,11 +23,13 @@ export default function RaceDetail() {
   const [busy, setBusy] = useState(false);
   const [rankMode, setRankMode] = useState("prob");
 
-  const load = async () => {
-    setLoading(true);
-    // 前レースのstateを完全クリア(mergeではなくreplace)
-    setCurrent(null);
-    setPreBoats([]);
+  const load = async ({ silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true);
+      // 前レースのstateを完全クリア(mergeではなくreplace)
+      setCurrent(null);
+      setPreBoats([]);
+    }
 
     const r = await base44.entities.Race.get(id);
     setRace(r);
@@ -67,10 +69,56 @@ export default function RaceDetail() {
       }
     }
 
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
 
   useEffect(() => { load(); }, [id]);
+
+  // 締切6分前から締切1分後まで、最新FINAL予想を10秒ごとに再取得する。
+  // オッズはバックエンドで取得・保存されるため、ここでは画面の古い表示だけを更新する。
+  useEffect(() => {
+    if (!race?.deadline || race?.status === "finished" || race?.status === "cancelled") return;
+
+    const deadlineMs = new Date(race.deadline).getTime();
+    if (!Number.isFinite(deadlineMs)) return;
+
+    const pollStartMs = deadlineMs - 6 * 60 * 1000;
+    const pollEndMs = deadlineMs + 60 * 1000;
+    const nowMs = Date.now();
+    if (nowMs >= pollEndMs) return;
+
+    let intervalId = null;
+    let timeoutId = null;
+    let refreshInFlight = false;
+
+    const refresh = async () => {
+      if (refreshInFlight || Date.now() >= pollEndMs) return;
+      refreshInFlight = true;
+      try {
+        await load({ silent: true });
+      } catch (e) {
+        console.warn("[RaceDetail] live refresh failed:", e?.message || e);
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+
+    const startPolling = () => {
+      refresh();
+      intervalId = window.setInterval(refresh, 10000);
+    };
+
+    if (nowMs >= pollStartMs) {
+      startPolling();
+    } else {
+      timeoutId = window.setTimeout(startPolling, pollStartMs - nowMs);
+    }
+
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [id, race?.deadline, race?.status]);
 
   const run = async (stage) => {
     setBusy(true);
