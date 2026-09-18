@@ -9,6 +9,7 @@ import V1V2Comparison from "@/components/verification/V1V2Comparison";
 import V2V3Comparison from "@/components/verification/V2V3Comparison";
 import V3V4Comparison from "@/components/verification/V3V4Comparison";
 import V2V5Comparison from "@/components/verification/V2V5Comparison";
+import V4V6Comparison from "@/components/verification/V4V6Comparison";
 
 export default function Verification() {
   const [summary, setSummary] = useState(null);
@@ -114,6 +115,19 @@ export default function Verification() {
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
           <V2V5Comparison />
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-end justify-between gap-2 mb-2">
+          <div>
+            <div className="text-[10px] font-bold text-violet-600">V6 PROFIT CANDIDATE</div>
+            <h2 className="font-display font-black text-slate-900 text-lg">TARGET 20-30% HIT / 110%+ RECOVERY — V6 利益型</h2>
+          </div>
+          <div className="text-[10px] text-slate-400">最低100BUYで自動採用判定</div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <V4V6Comparison />
         </div>
       </section>
 

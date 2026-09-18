@@ -831,6 +831,75 @@ export function buildSelectedTickets(activePred, allTri) {
 }
 
 // ============================================================
+// V6 PROFIT Candidate検証サマリー
+// PredictionV6VerificationからV6予想の成績を集計
+// BUY/WATCH/SKIP別・チケット数別・HIT_PROFIT/HIT_LOW_VALUE/MISS分類
+// ============================================================
+export async function getV6VerificationSummary() {
+  const raw = await base44.entities.PredictionV6Verification.list("-verified_at", 1000).catch(() => []);
+  const verifs = (raw || []).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
+  const total = verifs.length;
+  if (total === 0) return { total: 0 };
+
+  const buyRecords = verifs.filter((v) => v.v6_final_judgment === "BUY");
+  const watchRecords = verifs.filter((v) => v.v6_final_judgment === "WATCH");
+  const skipRecords = verifs.filter((v) => v.v6_final_judgment === "SKIP");
+  const buyHits = buyRecords.filter((v) => v.v6_recommended_hit).length;
+  const buyInvest = buyRecords.reduce((a, v) => a + (v.v6_investment || 0), 0);
+  const buyReturn = buyRecords.filter((v) => v.v6_recommended_hit).reduce((a, v) => a + (v.v6_payout || 0), 0);
+  const buyHitRate = buyRecords.length ? Math.round((buyHits / buyRecords.length) * 1000) / 10 : 0;
+  const buyRecoveryRate = buyInvest > 0 ? Math.round((buyReturn / buyInvest) * 100) : 0;
+  const avgTickets = buyRecords.length
+    ? Math.round(buyRecords.reduce((a, v) => a + (Number(v.v6_ticket_count) || 6), 0) / buyRecords.length * 10) / 10
+    : 0;
+
+  // チケット数別
+  const byTicketCount = (n) => {
+    const list = buyRecords.filter((v) => Number(v.v6_ticket_count) === n);
+    const hits = list.filter((v) => v.v6_recommended_hit).length;
+    const invest = list.reduce((a, v) => a + (v.v6_investment || 0), 0);
+    const ret = list.filter((v) => v.v6_recommended_hit).reduce((a, v) => a + (v.v6_payout || 0), 0);
+    return {
+      count: list.length, hits,
+      hit_rate: list.length ? Math.round((hits / list.length) * 1000) / 10 : 0,
+      recovery_rate: invest > 0 ? Math.round((ret / invest) * 100) : 0,
+    };
+  };
+
+  // outcome分類
+  const outcome = { HIT_PROFIT: 0, HIT_LOW_VALUE: 0, MISS_FIRST: 0, MISS_SECOND: 0, MISS_THIRD: 0, MISS_OTHER: 0 };
+  for (const v of buyRecords) {
+    const oc = v.outcome_class || "MISS_OTHER";
+    if (outcome[oc] != null) outcome[oc]++;
+  }
+
+  // 要因接続率
+  const factorLinked = buyRecords.filter((v) => v.factor_snapshot && Object.keys(v.factor_snapshot).length > 0).length;
+  const factorLinkRate = buyRecords.length ? Math.round((factorLinked / buyRecords.length) * 1000) / 10 : 0;
+
+  return {
+    total,
+    buy_count: buyRecords.length,
+    watch_count: watchRecords.length,
+    skip_count: skipRecords.length,
+    hit_count: buyHits,
+    hit_rate: buyHitRate,
+    recovery_rate: buyRecoveryRate,
+    total_investment: buyInvest,
+    total_return: buyReturn,
+    avg_ticket_count: avgTickets,
+    tickets_6: byTicketCount(6).count,
+    tickets_7: byTicketCount(7).count,
+    tickets_8: byTicketCount(8).count,
+    tickets_detail: { 6: byTicketCount(6), 7: byTicketCount(7), 8: byTicketCount(8) },
+    outcome,
+    factor_linked: factorLinked,
+    factor_link_rate: factorLinkRate,
+    records: buyRecords.slice(0, 100),
+  };
+}
+
+// ============================================================
 // V1 vs V2 比較検証サマリー
 // PredictionV2VerificationからV1/V2並行検証結果を集計
 // ============================================================
