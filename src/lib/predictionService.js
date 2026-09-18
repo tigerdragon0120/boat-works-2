@@ -584,7 +584,7 @@ export async function getVerificationSummary() {
     learning_linked: learningLinked,
     learning_link_rate: buyRecords.length ? Math.round((learningLinked / buyRecords.length) * 1000) / 10 : 0,
     v4_learning_linked: v4LearningLinked,
-    v4_learning_total: buyRecords.length;
+    v4_learning_total: buyRecords.length,
     v4_learning_link_rate: v4LearningLinkRate,
     tickets_6: byTicketCount(6),
     tickets_7: byTicketCount(7),
