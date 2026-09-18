@@ -22,6 +22,36 @@ const boatBadgeBg = {
   6: "bg-emerald-600 text-white",
 };
 
+const BOAT_BRANCH_NAMES = [
+  "群馬", "埼玉", "東京", "静岡", "愛知", "三重", "福井", "滋賀", "大阪",
+  "兵庫", "徳島", "香川", "岡山", "広島", "山口", "福岡", "佐賀", "長崎",
+];
+
+function getRacerIdentity(e, profile) {
+  const rawName = String(e.player_name || e.racer_name || `#${e.boat_number}`).trim();
+  let name = rawName;
+  let branch = String(profile.branch_name || "").trim();
+  let birthplace = String(profile.birthplace || "").trim();
+
+  if (branch) {
+    const fullSuffix = birthplace ? `${branch}/${birthplace}` : branch;
+    if (name.endsWith(fullSuffix)) name = name.slice(0, -fullSuffix.length).trim();
+    else if (name.endsWith(branch)) name = name.slice(0, -branch.length).trim();
+  }
+
+  if ((!branch || !birthplace) && rawName.includes("/")) {
+    const escapedBranches = BOAT_BRANCH_NAMES.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    const match = rawName.match(new RegExp(`(${escapedBranches})/([^/\\s]+)$`));
+    if (match) {
+      name = rawName.slice(0, match.index).trim();
+      branch ||= match[1];
+      birthplace ||= match[2];
+    }
+  }
+
+  return { name: name || rawName, branch, birthplace };
+}
+
 // 着順による文字色(ヒートマップ風)
 function finishTextClass(finish, special) {
   if (special) return "text-rose-500";
@@ -293,6 +323,8 @@ export default function LanePast10Table({ entries, race }) {
 
 // 左側sticky: 選手情報ブロック
 function RacerInfo({ e, reg, profile, sampleCount }) {
+  const identity = getRacerIdentity(e, profile);
+
   return (
     <div className="flex items-start gap-1.5 py-0.5">
       <span className={cn("w-5 h-5 rounded flex items-center justify-center font-black text-[11px] shrink-0 mt-0.5", boatBadgeBg[e.boat_number])}>
@@ -304,12 +336,15 @@ function RacerInfo({ e, reg, profile, sampleCount }) {
           {e.player_class && <span className="font-bold text-slate-300">{e.player_class}</span>}
           {reg && <span className="ml-0.5">/ {reg}</span>}
         </div>
-        <div className="font-bold text-slate-100 text-[12px] leading-tight truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</div>
-        <div className="text-[9px] text-slate-500 leading-tight truncate">
-          {profile.branch_name && `${profile.branch_name}`}
-          {profile.birthplace && `/${profile.birthplace}`}
-          {profile.age != null && `/${profile.age}歳`}
-        </div>
+        <div className="font-bold text-slate-100 text-[12px] leading-tight truncate">{identity.name}</div>
+        {(identity.branch || identity.birthplace || profile.age != null) && (
+          <div className="mt-1 text-[9px] text-slate-500 leading-tight truncate">
+            {identity.branch}
+            {identity.branch && identity.birthplace && <span className="mx-1 text-slate-600">/</span>}
+            {identity.birthplace}
+            {profile.age != null && <span className="ml-1.5">{profile.age}歳</span>}
+          </div>
+        )}
         {sampleCount != null && sampleCount > 0 && <div className="text-[8px] text-slate-600 mt-px">同枠{sampleCount}走</div>}
       </div>
     </div>
