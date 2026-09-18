@@ -34,6 +34,14 @@ const judgmentStyle = {
 const subTabs = ["買い目", "出走表", "直前情報", "オッズ", "3連単", "6艇評価"];
 const filterTabs = ["選手成績", "枠番過去10走", "節間成績", "モーター履歴", "全国成績", "当地成績"];
 
+const racerBranchPattern = /^(.*?)[\s　]*(北海道|青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|東京|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|京都|大阪|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)(\/.+)$/;
+
+function formatRacerDisplayName(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(racerBranchPattern);
+  return match ? `${match[1]}　${match[2]}${match[3]}` : raw;
+}
+
 export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode }) {
   const [subTab, setSubTab] = useState("出走表");
   const [filter, setFilter] = useState("選手成績");
@@ -168,7 +176,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
               <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-slate-900 text-xs truncate">{e.player_name || e.racer_name || `#${e.boat_number}`}</span>
+                  <span className="font-bold text-slate-900 text-xs truncate">{formatRacerDisplayName(e.player_name || e.racer_name || `#${e.boat_number}`)}</span>
                   {e.player_class && <span className="text-[9px] px-1 rounded bg-slate-700 text-slate-700 font-bold shrink-0">{e.player_class}</span>}
                   {scratched && <span className="text-[9px] px-1 rounded bg-red-500 text-white font-bold shrink-0">欠場</span>}
                   {!scratched && role && <span className={cn("text-[9px] px-1 rounded font-bold shrink-0", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-slate-900" : role === "穴" ? "bg-rose-500 text-slate-900" : "bg-slate-600 text-slate-700")}>{role}</span>}
@@ -259,7 +267,7 @@ function ExhibitionInfo({ entries, race }) {
         <div key={e.boat_number} className={cn("flex items-center gap-2 rounded-lg border bg-white p-2", scratched ? "border-red-400/50 opacity-40 bg-slate-100" : hasEntryChange ? "border-amber-400/50" : "border-slate-200")}>
           <span className={cn("w-6 h-6 rounded flex items-center justify-center font-black text-xs", boatColors[e.boat_number])}>{e.boat_number}</span>
           <PlayerPhoto src={e.player_photo} registrationNumber={e.register_number || e.registration_number} alt={e.player_name} size="sm" />
-          <span className="text-xs font-bold text-slate-900 w-20 truncate">{e.player_name || ""}</span>
+          <span className="text-xs font-bold text-slate-900 w-20 truncate">{formatRacerDisplayName(e.player_name)}</span>
           {scratched && <span className="text-[9px] px-1 rounded bg-red-500 text-white font-bold shrink-0">欠場</span>}
           <div className="flex-1 grid grid-cols-4 gap-1 text-center text-[10px]">
             <div><div className="text-slate-500">展示T</div><div className="font-mono font-bold text-slate-900">{e.exhibition_time?.toFixed(2) || "—"}</div></div>
@@ -396,7 +404,7 @@ function BoatEvalView({ entries, activeBoats, activePred }) {
             <div className="flex items-center gap-2 mb-2">
               <span className={cn("w-7 h-7 rounded flex items-center justify-center font-black text-sm", boatColors[bp.boat_number])}>{bp.boat_number}</span>
               <PlayerPhoto src={entry?.player_photo} registrationNumber={entry?.register_number || entry?.registration_number} alt={entry?.player_name} />
-              <span className="font-bold text-slate-900 text-sm flex-1 truncate">{entry?.player_name || ""}</span>
+              <span className="font-bold text-slate-900 text-sm flex-1 truncate">{formatRacerDisplayName(entry?.player_name)}</span>
               {role && <span className={cn("text-[10px] px-1.5 rounded font-bold", role === "本命" ? "bg-amber-400 text-black" : role === "対抗" ? "bg-blue-500 text-slate-900" : "bg-rose-500 text-slate-900")}>{role}</span>}
               <span className="font-black text-[#f9c836] text-lg">{bp.total_power?.toFixed(0) ?? "—"}</span>
             </div>
