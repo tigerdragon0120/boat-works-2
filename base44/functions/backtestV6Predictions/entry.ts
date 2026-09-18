@@ -8,11 +8,22 @@
 //   - RaceResultは採点(検証)にのみ使用し、予想には使わない
 //   - V6エンジンは結果を一切参照しない
 //
+// データ不足除外(BACKTEST_INSUFFICIENT_DATA):
+//   - exhibition_ready=false → 除外
+//   - RaceEntryに展示データ(exhibition_time/exhibition_st)が4艇未満 → 除外
+//   - OddsSnapshotが存在しない or 20組未満 → 除外
+//
 // 処理:
-//   1. 結果確定済みRace(結果確定済みRaceResult存在)を取得
-//   2. 各レースでV6 FINAL予想を生成(予想時点データのみ)
-//   3. 結果で検証 → PredictionV6Verification保存
-//   4. 集計返却
+//   1. 結果確定済みRaceResultを直近から順に取得(最大1000件)
+//   2. 各レースでデータ十分性チェック → 不足はBACKTEST_INSUFFICIENT_DATA
+//   3. V6 FINAL予想を生成(予想時点データのみ)
+//   4. 結果で検証 → PredictionV6Verification保存
+//   5. 集計をBACKTEST_SUMMARY_V6レコードへ保存
+//   6. 集計返却
+//
+// 安全性:
+//   - Race, RaceEntry, RaceResult, OddsSnapshot等の本番データは一切変更しない
+//   - V6専用領域(PredictionV6, PredictionV6Verification, PredictionLearningSample)のみ更新
 // =====================================================
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { getSettings } from '../../shared/predictionService.js';
@@ -36,6 +47,60 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
   throw lastError;
 }
 
+// =====================================================
+// データ十分性チェック
+// FINAL予想時点のデータが保存されているか検証する。
+// 推測値や現在のデータで補完することは禁止。
+// =====================================================
+function checkSufficientData(race: any, entries: any[], oddsMap: any): { sufficient: boolean; reason: string } {
+  // 1. exhibition_ready
+  if (!race.exhibition_ready) {
+    return { sufficient: false, reason: 'exhibition_not_ready' };
+  }
+
+  // 2. RaceEntryに展示データが保存されているか
+  const boatsWithExhibition = entries.filter(e =>
+    (e.exhibition_time != null && String(e.exhibition_time) !== '') ||
+    (e.exhibition_st != null && String(e.exhibition_st) !== '')
+  ).length;
+  if (boatsWithExhibition < 4) {
+    return { sufficient: false, reason: `exhibition_data_${boatsWithExhibition}_boats` };
+  }
+
+  // 3. OddsSnapshot
+  const oddsCount = oddsMap ? Object.keys(oddsMap).length : 0;
+  if (oddsCount < 20) {
+    return { sufficient: false, reason: `odds_${oddsCount}_entries` };
+  }
+
+  return { sufficient: true, reason: '' };
+}
+
+// =====================================================
+// バックテストサマリー保存
+// PredictionV6Verificationにrace_id="BACKTEST_SUMMARY_V6"で保存
+// (actual_resultが結果パターンにマッチしないため通常集計から除外される)
+// =====================================================
+async function saveBacktestSummary(sr: any, summary: any) {
+  const SUMMARY_RACE_ID = 'BACKTEST_SUMMARY_V6';
+  const existing = await sr.PredictionV6Verification.filter(
+    { race_id: SUMMARY_RACE_ID }, '-verified_at', 1
+  ).catch(() => []);
+
+  const doc = {
+    race_id: SUMMARY_RACE_ID,
+    actual_result: 'BACKTEST_SUMMARY',
+    factor_snapshot: summary,
+    verified_at: new Date().toISOString(),
+  };
+
+  if (existing?.[0]) {
+    await sr.PredictionV6Verification.update(existing[0].id, doc).catch(() => {});
+  } else {
+    await sr.PredictionV6Verification.create(doc).catch(() => {});
+  }
+}
+
 export default async function(req: Request) {
   try {
     const base44 = createClientFromRequest(req);
@@ -48,9 +113,10 @@ export default async function(req: Request) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const limit = Math.min(Number(body.limit) || 200, 1000);
+    const limit = Math.min(Number(body.limit) || 1000, 1000);
     const force = !!body.force;
     const skipVerify = !!body.skip_verify;
+    const targetBuyCount = Number(body.target_buy_count) || 100;
 
     const sr = base44.asServiceRole.entities;
 
@@ -73,8 +139,11 @@ export default async function(req: Request) {
 
     let processed = 0;
     let generated = 0;
+    let insufficientDataCount = 0;
     let verifiedCount = 0;
     let buyCount = 0;
+    let watchCount = 0;
+    let skipCount = 0;
     let hitCount = 0;
     let profitCount = 0;
     let lowValueCount = 0;
@@ -82,11 +151,15 @@ export default async function(req: Request) {
     let tickets6 = 0, tickets7 = 0, tickets8 = 0;
     let totalInvestment = 0;
     let totalReturn = 0;
+    const insufficientReasons: Record<string, number> = {};
     const errors: string[] = [];
 
     for (const result of results) {
       processed++;
       try {
+        // 100BUY到達で打ち切り
+        if (buyCount >= targetBuyCount) break;
+
         // Race取得
         const race = await withRetry(() => sr.Race.get(result.race_id)).catch(() => null);
         if (!race || !race.race_key) continue;
@@ -110,6 +183,17 @@ export default async function(req: Request) {
           if (preOdds?.[0]?.odds_map) oddsMap = preOdds[0].odds_map;
         }
 
+        // =====================================================
+        // データ十分性チェック
+        // 不足場合はBACKTEST_INSUFFICIENT_DATAとして除外
+        // =====================================================
+        const dataCheck = checkSufficientData(race, six, oddsMap);
+        if (!dataCheck.sufficient) {
+          insufficientDataCount++;
+          insufficientReasons[dataCheck.reason] = (insufficientReasons[dataCheck.reason] || 0) + 1;
+          continue;
+        }
+
         // V6予想生成(予想時点データのみ使用 — 結果は参照しない)
         const genResult = await withRetry(() => runAndSavePredictionV6(base44, race, six, settings, 'FINAL', oddsMap, profileByReg, rollingByReg));
         if (genResult?.skipped) continue;
@@ -122,16 +206,17 @@ export default async function(req: Request) {
         const fresh = freshList?.[0];
         if (!fresh) continue;
 
-        // チケット数集計
+        // チケット数集計(全予想)
         const tc = fresh.ticket_count || 6;
-        if (tc === 6) tickets6++;
-        else if (tc === 7) tickets7++;
-        else if (tc === 8) tickets8++;
 
-        // BUY集計
-        if (fresh.final_judgment === 'BUY') {
+        // 判定別集計
+        const judgment = fresh.final_judgment || 'SKIP';
+        if (judgment === 'BUY') {
           buyCount++;
           totalInvestment += (tc * 100);
+          if (tc === 6) tickets6++;
+          else if (tc === 7) tickets7++;
+          else if (tc === 8) tickets8++;
           const hit = (fresh.selected_trifectas || []).includes(result.result_trifecta);
           if (hit) {
             hitCount++;
@@ -140,6 +225,10 @@ export default async function(req: Request) {
             if (recovery >= 150) profitCount++;
             else lowValueCount++;
           }
+        } else if (judgment === 'WATCH') {
+          watchCount++;
+        } else {
+          skipCount++;
         }
 
         // 検証(結果確定後)
@@ -151,7 +240,7 @@ export default async function(req: Request) {
           if (verifiedResult) {
             verifiedCount++;
             // outcome_class集計(BUY予想のみ)
-            if (fresh.final_judgment === 'BUY' && !verifiedResult.v6_recommended_hit) {
+            if (judgment === 'BUY' && !verifiedResult.v6_recommended_hit) {
               const oc = verifiedResult.outcome_class;
               if (oc === 'MISS_FIRST') missFirst++;
               else if (oc === 'MISS_SECOND') missSecond++;
@@ -168,19 +257,24 @@ export default async function(req: Request) {
 
     const hitRate = buyCount > 0 ? Math.round(hitCount / buyCount * 1000) / 10 : 0;
     const recoveryRate = totalInvestment > 0 ? Math.round(totalReturn / totalInvestment * 100) : 0;
+    const profit = totalReturn - totalInvestment;
     const avgTickets = buyCount > 0 ? Math.round((tickets6 * 6 + tickets7 * 7 + tickets8 * 8) / buyCount * 10) / 10 : 0;
 
-    return Response.json({
-      ok: true,
+    const summary = {
+      type: 'backtest_summary',
       processed,
       generated,
-      verified: verifiedCount,
+      insufficient_data: insufficientDataCount,
+      insufficient_reasons: insufficientReasons,
       buy_count: buyCount,
+      watch_count: watchCount,
+      skip_count: skipCount,
       hit_count: hitCount,
       hit_rate: hitRate,
       recovery_rate: recoveryRate,
       total_investment: totalInvestment,
       total_return: totalReturn,
+      profit,
       avg_ticket_count: avgTickets,
       tickets_6: tickets6,
       tickets_7: tickets7,
@@ -192,7 +286,22 @@ export default async function(req: Request) {
         MISS_SECOND: missSecond,
         MISS_THIRD: missThird,
         MISS_OTHER: missOther,
+        BACKTEST_INSUFFICIENT_DATA: insufficientDataCount,
       },
+      backtested_at: new Date().toISOString(),
+    };
+
+    // サマリー保存
+    await saveBacktestSummary(sr, summary);
+
+    const targetReached = buyCount >= targetBuyCount;
+
+    return Response.json({
+      ok: true,
+      ...summary,
+      verified: verifiedCount,
+      target_buy_count: targetBuyCount,
+      target_reached: targetReached,
       data_leak_check: 'PASS — V6 engine uses only prediction-time data (entries, exhibition, odds, profiles). RaceResult used for scoring only.',
       errors: errors.slice(0, 10),
     });

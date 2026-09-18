@@ -837,9 +837,14 @@ export function buildSelectedTickets(activePred, allTri) {
 // ============================================================
 export async function getV6VerificationSummary() {
   const raw = await base44.entities.PredictionV6Verification.list("-verified_at", 1000).catch(() => []);
+
+  // バックテストサマリー取得
+  const summaryRecord = (raw || []).find((v) => v.race_id === "BACKTEST_SUMMARY_V6" && v.factor_snapshot);
+  const backtestSummary = summaryRecord?.factor_snapshot || null;
+
   const verifs = (raw || []).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
   const total = verifs.length;
-  if (total === 0) return { total: 0 };
+  if (total === 0 && !backtestSummary) return { total: 0, backtest_summary: null };
 
   const buyRecords = verifs.filter((v) => v.v6_final_judgment === "BUY");
   const watchRecords = verifs.filter((v) => v.v6_final_judgment === "WATCH");
@@ -895,6 +900,7 @@ export async function getV6VerificationSummary() {
     outcome,
     factor_linked: factorLinked,
     factor_link_rate: factorLinkRate,
+    backtest_summary: backtestSummary,
     records: buyRecords.slice(0, 100),
   };
 }
