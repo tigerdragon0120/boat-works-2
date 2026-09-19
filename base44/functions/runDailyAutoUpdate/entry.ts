@@ -4,6 +4,7 @@ import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResu
 import { upsertRace, upsertEntry, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
+import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
@@ -354,6 +355,24 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
       }
     }
 
+    // V6検証は既存エンジンの検証とは独立して実行する。
+    // BOATCAST/LOCALどちらで結果を保存した場合も、V6 FINALがあれば同じ結果で採点する。
+    if (resultSaved) {
+      try {
+        const savedResults = await sr.RaceResult.filter({ race_id: race.id }, '-finished_at', 1).catch(() => []);
+        const savedResult = savedResults?.[0];
+        if (savedResult?.result_trifecta) {
+          await verifyV6Prediction(base44, race, {
+            result_trifecta: savedResult.result_trifecta,
+            payout: savedResult.payout || 0,
+          });
+          logs.push(`${venueName} R${raceNumber}: V6検証完了`);
+        }
+      } catch (e: any) {
+        errors.push(`${venueName} R${raceNumber}: V6検証失敗 ${e.message}`);
+      }
+    }
+
     await sleep(300);
   }
 
@@ -614,7 +633,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
   const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
   const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
-  let oddsFetched = 0, finalGenerated = 0;
+  let oddsFetched = 0, finalGenerated = 0, v6FinalGenerated = 0;
 
   for (const race of races) {
     if (Date.now() - startTime > timeBudgetMs) break;
@@ -679,6 +698,20 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
         }
+
+        // V6はV1〜V5と完全独立。展示・直前オッズが揃った同じタイミングでFINALを生成する。
+        try {
+          const v6Result = await runAndSavePredictionV6(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          if (v6Result?.skipped) {
+            logs.push(`${venueName} R${raceNumber}: V6 FINALスキップ(${v6Result.reason || 'unknown'})`);
+          } else {
+            v6FinalGenerated++;
+            logs.push(`${venueName} R${raceNumber}: V6 FINAL予想生成 → ${v6Result?.prediction?.final_judgment || '判定保存'}`);
+          }
+        } catch (e: any) {
+          errors.push(`${venueName} R${raceNumber}: V6 FINAL予想失敗 ${e.message}`);
+        }
+
         // BOATCAST OD3で最終オッズ更新+期待値再計算(FINAL予想自体は変更しない)
         try {
           const refreshResult = await refreshFinalOdds(base44, race, settings);
@@ -698,7 +731,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     await sleep(300);
   }
 
-  return { total: races.length, odds_fetched: oddsFetched, final_generated: finalGenerated, errors };
+  return { total: races.length, odds_fetched: oddsFetched, final_generated: finalGenerated, v6_final_generated: v6FinalGenerated, errors };
 }
 
 // =====================================================
