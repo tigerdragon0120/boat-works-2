@@ -651,8 +651,12 @@ function computeV6SetMetrics(selected, trifectas, oddsMap) {
 
   const syntheticOdds = setProbability > 0 ? Math.round(100 / setProbability * 10) / 10 : null;
   const investment = selectedData.length * 100;
-  const expectedRecovery = avgPayout != null
-    ? Math.round((avgPayout * (setProbability / 100)) / investment * 100 * 10) / 10
+  // 確率と同じ買い目のオッズを掛け合わせる。平均オッズとの交差計算はしない。
+  const expectedRecovery = oddsValues.length === selectedData.length
+    ? Math.round((selectedData.reduce((sum, t) => {
+        const odds = oddsMap?.[t.combination];
+        return sum + (Number.isFinite(odds) ? t.probability * odds : 0);
+      }, 0) / selectedData.length) * 10) / 10
     : null;
 
   const bestEv = selectedData.reduce((best, t) => {
@@ -665,6 +669,7 @@ function computeV6SetMetrics(selected, trifectas, oddsMap) {
     set_probability: round2(setProbability),
     set_expected_recovery: expectedRecovery,
     synthetic_odds: syntheticOdds,
+    investment,
     min_payout: minPayout, avg_payout: avgPayout, max_payout: maxPayout,
     best_ev_ticket: bestEv?.combination || null,
   };
@@ -683,27 +688,35 @@ function judgeV6(setMetrics, firstProbs, scenarios, stage) {
   const setProb = setMetrics?.set_probability;
   const recovery = setMetrics?.set_expected_recovery;
   const firstConfidence = clamp(topProb + gap * 0.5, 0, 100);
-  const topScenarioProb = scenarios[0]?.probability || 0;
+  const topScenario = scenarios[0];
+  const topScenarioProb = topScenario?.probability || 0;
+  const weakScenario = ["2_MAKURI", "4_MAKURI", "4_MAKURIZASHI"].includes(topScenario?.scenario);
+  const investment = setMetrics?.investment || 0;
+  const minPayout = setMetrics?.min_payout;
+  const payoutSafe = minPayout != null && investment > 0 && minPayout >= investment * 1.2;
 
   if (stage === "FINAL") {
-    // BUY: 回収率110%+必須 + 1着信頼度 + セット確率 + シナリオ集中度
-    if (recovery != null && recovery >= 110 && firstConfidence >= 50 && setProb >= 20 && topScenarioProb >= 25) {
-      return { judgment: "BUY", reason: `利益型BUY(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・回収率${recovery}%・シナリオ${scenarios[0].label}${topScenarioProb}%)` };
+    if (weakScenario && firstConfidence >= 40 && setProb >= 15) {
+      return { judgment: "WATCH", reason: `弱シナリオ${topScenario.label}${topScenarioProb}% — 1着精度を優先して見送り` };
     }
-    // WATCH: 予測強いが期待値不足
-    if (firstConfidence >= 45 && setProb >= 18 && (recovery == null || recovery < 110)) {
-      return { judgment: "WATCH", reason: `予測強度${round1(firstConfidence)}・セット確率${setProb}%・回収率${recovery != null ? recovery + '%' : '不明'}<110% — 期待値不足` };
+    // BUY: 確率加重回収率115%+、1着精度、最低払戻の全条件を必須化。
+    if (recovery != null && recovery >= 115 && firstConfidence >= 55 &&
+        setProb >= 20 && topScenarioProb >= 28 && payoutSafe) {
+      return { judgment: "BUY", reason: `利益型BUY(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・確率加重回収率${recovery}%・最低払戻安全)` };
     }
-    // WATCH: 根拠不足
+    // WATCH: 予測は候補だが、期待値・最低払戻・1着精度のいずれかが不足。
+    if (firstConfidence >= 45 && setProb >= 18) {
+      return { judgment: "WATCH", reason: `BUY条件未達(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・確率加重回収率${recovery != null ? recovery + '%' : '不明'}・最低払戻${payoutSafe ? 'OK' : '不足'})` };
+    }
     if (firstConfidence >= 40 && setProb >= 15) {
       return { judgment: "WATCH", reason: `根拠不足(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・シナリオ集中度${topScenarioProb}%)` };
     }
     return { judgment: "SKIP", reason: `予測不安定(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%)` };
   }
 
-  // PRE: 回収率判定なし(オッズ未確定)
-  if (firstConfidence >= 50 && setProb >= 20 && topScenarioProb >= 25) {
-    return { judgment: "BUY", reason: `PRE利益型BUY(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・シナリオ${scenarios[0].label}${topScenarioProb}%)` };
+  // PRE: オッズ未確定でも、弱シナリオと1着精度不足はBUYにしない。
+  if (!weakScenario && firstConfidence >= 55 && setProb >= 20 && topScenarioProb >= 28) {
+    return { judgment: "BUY", reason: `PRE利益型BUY(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・シナリオ${topScenario.label}${topScenarioProb}%)` };
   }
   if (firstConfidence >= 40 && setProb >= 15) {
     return { judgment: "WATCH", reason: `PRE(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%)` };
