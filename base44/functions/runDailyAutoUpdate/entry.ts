@@ -5,6 +5,7 @@ import { upsertRace, upsertEntry, upsertResultAndVerify, upsertBoatcastResultAnd
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
 import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
+import { runAndSavePredictionV61, verifyV61Prediction } from '../../shared/predictionServiceV61.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
@@ -367,6 +368,12 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
             payout: savedResult.payout || 0,
           });
           logs.push(`${venueName} R${raceNumber}: V6検証完了`);
+
+          const v61Verified = await verifyV61Prediction(base44, race, {
+            result_trifecta: savedResult.result_trifecta,
+            payout: savedResult.payout || 0,
+          });
+          if (v61Verified) logs.push(`${venueName} R${raceNumber}: V6.1シャドー検証完了`);
         }
       } catch (e: any) {
         errors.push(`${venueName} R${raceNumber}: V6検証失敗 ${e.message}`);
@@ -710,6 +717,18 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: V6 FINAL予想失敗 ${e.message}`);
+        }
+
+        // V6.1は画面の買い目へは出さず、比較検証用のシャドー予想として保存する。
+        try {
+          const v61Result = await runAndSavePredictionV61(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          if (v61Result?.skipped) {
+            logs.push(`${venueName} R${raceNumber}: V6.1 FINALスキップ(${v61Result.reason || 'unknown'})`);
+          } else {
+            logs.push(`${venueName} R${raceNumber}: V6.1 FINALシャドー予想保存 → ${v61Result?.result?.final_judgment || '判定保存'}`);
+          }
+        } catch (e: any) {
+          errors.push(`${venueName} R${raceNumber}: V6.1 FINAL予想失敗 ${e.message}`);
         }
 
         // BOATCAST OD3で最終オッズ更新+期待値再計算(FINAL予想自体は変更しない)
