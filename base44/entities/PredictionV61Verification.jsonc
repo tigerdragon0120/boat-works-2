@@ -1,0 +1,116 @@
+{
+  "name": "PredictionV61Verification",
+  "type": "object",
+  "description": "V6.1 PROFIT Candidate\u691c\u8a3c\u7d50\u679c\u3002\u56de\u53ce\u7387110%+\u76ee\u6a19\u30fbHIT_PROFIT/HIT_LOW_VALUE/MISS\u5206\u985e\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "actual_result": {
+      "type": "string"
+    },
+    "actual_first_boat": {
+      "type": "number"
+    },
+    "v61_pre_prediction": {
+      "type": "string"
+    },
+    "v61_final_prediction": {
+      "type": "string"
+    },
+    "v61_pre_hit": {
+      "type": "boolean"
+    },
+    "v61_final_hit": {
+      "type": "boolean"
+    },
+    "v61_recommended_hit": {
+      "type": "boolean",
+      "description": "V6\u63a8\u5968\u8cb7\u3044\u76ee(6-8\u70b9)\u7684\u4e2d"
+    },
+    "v61_final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "v61_ticket_count": {
+      "type": "number"
+    },
+    "v61_selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "v61_payout": {
+      "type": "number"
+    },
+    "v61_investment": {
+      "type": "number"
+    },
+    "v61_recovery_rate": {
+      "type": "number"
+    },
+    "v61_first_boat": {
+      "type": "number",
+      "description": "V6\u4e88\u60f31\u7740\u8247\u756a"
+    },
+    "v61_escape_probability": {
+      "type": "number"
+    },
+    "v61_winning_scenario": {
+      "type": "string"
+    },
+    "outcome_class": {
+      "type": "string",
+      "enum": [
+        "HIT_PROFIT",
+        "HIT_LOW_VALUE",
+        "MISS_FIRST",
+        "MISS_SECOND",
+        "MISS_THIRD",
+        "MISS_OTHER"
+      ],
+      "description": "HIT_PROFIT=\u7684\u4e2d\u304b\u3064\u5229\u76ca\u3001HIT_LOW_VALUE=\u7684\u4e2d\u3060\u304c\u4f4e\u914d\u5f53\u3001MISS_*=\u4e0d\u7684\u4e2d"
+    },
+    "miss_reason_primary": {
+      "type": "string"
+    },
+    "miss_reason_secondary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "miss_analysis": {
+      "type": "object"
+    },
+    "factor_snapshot": {
+      "type": "object",
+      "description": "\u4e88\u60f3\u6642\u70b9\u306e\u8981\u56e0\u30b9\u30ca\u30c3\u30d7\u30b7\u30e7\u30c3\u30c8(PredictionV6\u304b\u3089\u30b3\u30d4\u30fc)"
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id"
+  ]
+}
