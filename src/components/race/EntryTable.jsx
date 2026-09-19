@@ -42,7 +42,7 @@ function formatRacerDisplayName(value) {
   return match ? `${match[1]}　${match[2]}${match[3]}` : raw;
 }
 
-export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode }) {
+export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode, predictionVersion = "v4" }) {
   const [subTab, setSubTab] = useState("出走表");
   const [filter, setFilter] = useState("選手成績");
   const roles = resolveRoleBoats(activePred, activeBoats);
@@ -85,7 +85,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
 
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-auto">
-        {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} race={race} />}
+        {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} race={race} predictionVersion={predictionVersion} />}
         {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />}
         {subTab === "直前情報" && <ExhibitionInfo entries={entries} race={race} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
@@ -325,7 +325,19 @@ function TrifectaView({ probRank, evRank, rankMode, setRankMode }) {
   );
 }
 
-function BetTicketView({ activePred, allTri, race }) {
+function BetTicketView({ activePred, allTri, race, predictionVersion }) {
+  if (predictionVersion === "v5") {
+    return (
+      <div className="p-4">
+        <div className="rounded-xl border border-cyan-300 bg-cyan-50 p-5 text-center">
+          <div className="text-sm font-black text-cyan-700 mb-2">V5は展開シナリオ予想です</div>
+          <div className="text-xs leading-relaxed text-slate-600">
+            V5にはBUY判定・買い目はありません。左側で各決まり手の確率と次候補を確認してください。
+          </div>
+        </div>
+      </div>
+    );
+  }
   // selected_trifectasを第一ソース、trifectas.filter(is_selected)をフォールバック
   const selected = buildSelectedTickets(activePred, allTri);
   // 欠場艇を含む買い目をフィルタ(安全策: エンジンで除外済みだが二重チェック)
@@ -336,15 +348,15 @@ function BetTicketView({ activePred, allTri, race }) {
         return !boats.some(b => scratchedBoats.includes(b));
       })
     : selected;
-  if (!filteredSelected.length) return <Empty msg="V4予想生成待ち — 買い目データがありません" />;
+  if (!filteredSelected.length) return <Empty msg={`${predictionVersion.toUpperCase()}予想生成待ち — 買い目データがありません`} />;
   const judgment = activePred?.final_judgment || "—";
   return (
     <div className="p-2 space-y-2">
       {/* 判定ヘッダー */}
       <div className="rounded-lg border border-slate-200 bg-white p-2.5">
         <div className="flex items-center justify-between mb-1">
-          <span className={cn("px-2 py-0.5 rounded text-xs font-black border", judgmentStyle[judgment] || judgmentStyle.SKIP)}>{judgment}</span>
-          <span className="text-xs text-slate-600">{selected.length}点 · {activePred?.ticket_strategy || ""}</span>
+          <div className="flex items-center gap-1.5"><span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-black text-slate-600">{predictionVersion.toUpperCase()}</span><span className={cn("px-2 py-0.5 rounded text-xs font-black border", judgmentStyle[judgment] || judgmentStyle.SKIP)}>{judgment}</span></div>
+          <span className="text-xs text-slate-600">{filteredSelected.length}点 · {activePred?.ticket_strategy || ""}</span>
         </div>
         <div className="text-[11px] text-slate-600 leading-relaxed">{activePred?.judgment_reason || ""}</div>
         {activePred?.expand_reason && <div className="text-[10px] text-amber-400/80 mt-1">拡張: {activePred.expand_reason}</div>}
