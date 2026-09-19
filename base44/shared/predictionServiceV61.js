@@ -11,7 +11,7 @@
 //   - outcome_class: HIT_PROFIT / HIT_LOW_VALUE / MISS_FIRST / MISS_SECOND / MISS_THIRD
 //   - factor_snapshotを予想時点から検証レコードへコピー
 // ============================================================
-import { runPredictionV611 } from "./predictionEngineV61.js";
+import { runPredictionV61 } from "./predictionEngineV61.js";
 
 const V61_VERSION = "v6.1";
 
