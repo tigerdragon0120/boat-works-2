@@ -7,6 +7,68 @@ import { resolveProductionOdds, getActiveBoatCount, getExpectedOddsCount } from 
 
 const V4_VERSION = "v4";
 
+const averageScore = (rows, key) => {
+  const values = (rows || []).map(row => Number(row?.[key])).filter(Number.isFinite);
+  return values.length ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10 : null;
+};
+
+function buildV4FactorSummary(record) {
+  const boats = record?.boat_scores || [];
+  const selected = (record?.trifectas || []).filter(t => t.is_selected);
+  const evValues = selected.map(t => Number(t.expected_value)).filter(Number.isFinite);
+  const avgEv = evValues.length
+    ? Math.round((evValues.reduce((sum, value) => sum + value, 0) / evValues.length) * 10) / 10
+    : null;
+  const exhibitionValues = boats
+    .map(b => Number.isFinite(Number(b.final_score)) && Number.isFinite(Number(b.pre_score))
+      ? Math.max(0, Math.min(100, 50 + (Number(b.final_score) - Number(b.pre_score)) * 5))
+      : null)
+    .filter(Number.isFinite);
+
+  return {
+    long_term: averageScore(boats, "past_score"),
+    mid_term: averageScore(boats, "pre_score"),
+    recent: averageScore(boats, "recent_score"),
+    course_venue: averageScore(boats.map(b => ({ value: Number(b.lane_prior) * 100 })), "value"),
+    section: averageScore(boats, "today_score"),
+    exhibition: exhibitionValues.length
+      ? Math.round((exhibitionValues.reduce((sum, value) => sum + value, 0) / exhibitionValues.length) * 10) / 10
+      : null,
+    odds: avgEv == null ? null : Math.max(0, Math.min(100, avgEv)),
+    confidence: Number.isFinite(Number(record?.first_confidence)) ? Number(record.first_confidence) : null,
+  };
+}
+
+async function upsertV4FactorAnalysis(sr, race, predictionId, record) {
+  const factorDoc = {
+    race_id: race.id,
+    race_key: race.race_key,
+    prediction_id: predictionId,
+    stage: "FINAL",
+    final_judgment: record.final_judgment,
+    selected_trifectas: record.selected_trifectas || [],
+    factor_summary: buildV4FactorSummary(record),
+    boat_factors: (record.boat_scores || []).map(b => ({
+      boat_number: b.boat_number,
+      long_term: b.past_score,
+      mid_term: b.pre_score,
+      recent: b.recent_score,
+      course_venue: Number.isFinite(Number(b.lane_prior)) ? Number(b.lane_prior) * 100 : null,
+      section: b.today_score,
+      exhibition: Number.isFinite(Number(b.final_score)) && Number.isFinite(Number(b.pre_score))
+        ? Math.max(0, Math.min(100, 50 + (Number(b.final_score) - Number(b.pre_score)) * 5))
+        : null,
+      confidence: b.first_probability,
+    })),
+    created_at: new Date().toISOString(),
+  };
+  const existing = await sr.PredictionFactorAnalysis.filter(
+    { race_id: race.id, stage: "FINAL" }, "-created_at", 1
+  ).catch(() => []);
+  if (existing?.[0]) return sr.PredictionFactorAnalysis.update(existing[0].id, factorDoc);
+  return sr.PredictionFactorAnalysis.create(factorDoc);
+}
+
 // ============================================================
 // combination正規化(共通)
 // 全角/半角・ハイフン種類・空白を吸収して "1-2-5" 形式へ統一
@@ -325,6 +387,13 @@ export async function runAndSavePredictionV4(client, race, entries, settings, st
       } catch (e) {
         console.warn(`[V4] learning snapshot save skipped race=${race.id}:`, e.message);
       }
+
+      // 検証画面の因子分析にも同じFINALスナップショットを保存する。
+      try {
+        await upsertV4FactorAnalysis(sr, race, predictionId, record);
+      } catch (e) {
+        console.warn(`[V4] factor snapshot save skipped race=${race.id}:`, e.message);
+      }
     }
 
     // ============================================================
@@ -528,6 +597,24 @@ export async function verifyV4Prediction(client, race, resultData) {
       await sr.PredictionLearningSample.update(sample.id, {
         actual_result: resultTrifecta,
         payout: resultData.payout || 0,
+      }).catch(() => {});
+    }
+
+    // 因子スナップショットにも結果を接続し、検証画面で的中/外れ別に集計可能にする。
+    const factorRows = await sr.PredictionFactorAnalysis.filter(
+      { race_id: race.id, stage: "FINAL" }, "-created_at", 10
+    ).catch(() => []);
+    const missLayer = v4RecommendedHit ? null
+      : missAnalysis.primary === "FIRST_WRONG" ? "1着"
+      : missAnalysis.primary === "SECOND_WRONG" || missAnalysis.primary === "SECOND_CONDITIONAL_ERROR" ? "2着"
+      : missAnalysis.primary === "THIRD_WRONG" ? "3着"
+      : "その他";
+    for (const factor of factorRows || []) {
+      await sr.PredictionFactorAnalysis.update(factor.id, {
+        actual_result: resultTrifecta,
+        hit: v4RecommendedHit,
+        miss_layer: missLayer,
+        resolved_at: new Date().toISOString(),
       }).catch(() => {});
     }
 
