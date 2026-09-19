@@ -13,6 +13,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { getSettings } from '../../shared/predictionService.js';
 import { runAndSavePredictionV6 } from '../../shared/predictionServiceV6.js';
 
+// V6 policy bundle v6.2: 本命・買い目・シナリオ整合 + 1号艇逃げ利益型BUY
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
