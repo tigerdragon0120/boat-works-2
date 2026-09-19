@@ -128,6 +128,16 @@ export default async function(req: Request) {
       return Response.json({ ok: true, message: 'No finished races found', processed: 0 });
     }
 
+    // 同一レースのRaceResult重複を除外する。最新順取得なので最初の1件を採用。
+    // これにより処理数・BUY数・投資額・払戻の二重計上を防ぐ。
+    const seenRaceIds = new Set<string>();
+    const uniqueResults = results.filter((result: any) => {
+      const key = String(result.race_id || '');
+      if (!key || seenRaceIds.has(key)) return false;
+      seenRaceIds.add(key);
+      return true;
+    });
+
     // 2. プロファイル・ローリング統計を一括取得(全レース共通)
     const [profiles, rolling, settings] = await Promise.all([
       sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []),
@@ -154,7 +164,7 @@ export default async function(req: Request) {
     const insufficientReasons: Record<string, number> = {};
     const errors: string[] = [];
 
-    for (const result of results) {
+    for (const result of uniqueResults) {
       processed++;
       try {
         // 100BUY到達で打ち切り
