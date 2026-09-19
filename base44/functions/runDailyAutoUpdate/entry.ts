@@ -5,6 +5,7 @@ import { upsertRace, upsertEntry, upsertResultAndVerify, upsertBoatcastResultAnd
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
 import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
+// V6 policy bundle v6.2: 本命・買い目・シナリオ整合 + 1号艇逃げ利益型BUY
 import { runAndSavePredictionV61, verifyV61Prediction } from '../../shared/predictionServiceV61.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
