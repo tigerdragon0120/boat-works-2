@@ -187,6 +187,7 @@ export default function RaceDetail() {
           activePred={activePred} activeBoats={activeBoats} allTri={allTri}
           probRank={probRank} evRank={evRank}
           rankMode={rankMode} setRankMode={setRankMode}
+          predictionVersion={predictionVersion}
         />
       </div>
     </div>
