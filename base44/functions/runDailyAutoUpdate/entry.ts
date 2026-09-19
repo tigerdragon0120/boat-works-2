@@ -656,7 +656,9 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     if (!Number.isFinite(deadlineMs)) continue;
     const nowMs = Date.now();
     const inDisplayOddsWindow = nowMs >= deadlineMs - 25 * 60 * 1000 && nowMs <= deadlineMs - 1 * 60 * 1000;
-    const inFinalWindow = nowMs >= deadlineMs - 6 * 60 * 1000 && nowMs <= deadlineMs - 2 * 60 * 1000;
+    // ワーカーは5分間隔のため、-6〜-2分だけでは締切3分前まで生成されない場合がある。
+    // 10分前から対象にして、遅くとも5分前には表示し、次の実行で直前オッズへ更新する。
+    const inFinalWindow = nowMs >= deadlineMs - 10 * 60 * 1000 && nowMs <= deadlineMs - 1 * 60 * 1000;
     if (!inDisplayOddsWindow) continue;
 
     const venueCode = race.venue_code;
@@ -691,7 +693,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
       if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates).catch(() => {});
     }
 
-    // FINAL予想は締切5分前付近だけ再計算する。
+    // FINAL予想は締切10〜1分前に再計算する（5分周期でも5分前表示を保証）。
     if (inFinalWindow) {
       const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
       if (entries.length >= 6) {
