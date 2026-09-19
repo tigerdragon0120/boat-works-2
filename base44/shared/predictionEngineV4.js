@@ -633,17 +633,34 @@ function selectHitTickets(trifectas, boatScores, firstProbs, suppressionResult, 
     }
   }
 
-  // 7-8点拡張: 確率上位で6点目と同等以上のものがあれば追加(最大8)
+  // 7-8点拡張: 確率だけで無条件に8点化しない。
+  // 7点目は的中補強、8点目は十分な期待値がある場合だけ追加する。
   const extensionCandidates = trifectas
     .filter(t => !selectedSet.has(t.combination))
     .sort((a, b) => b.probability - a.probability)
     .slice(0, 2);
-  for (const t of extensionCandidates) {
-    if (t.probability >= 1.5) {
-      selectedSet.add(t.combination);
-      selected.push(t.combination);
+
+  const seventh = extensionCandidates[0];
+  if (seventh) {
+    const odds = oddsMap?.[seventh.combination];
+    const ev = odds != null ? seventh.probability * odds : null;
+    const qualifies = seventh.probability >= 2.5 &&
+      (ev != null ? ev >= 100 : seventh.probability >= 3);
+    if (qualifies) {
+      selectedSet.add(seventh.combination);
+      selected.push(seventh.combination);
     }
-    if (selected.length >= 8) break;
+  }
+
+  const eighth = extensionCandidates[1];
+  if (selected.length === 7 && eighth) {
+    const odds = oddsMap?.[eighth.combination];
+    const ev = odds != null ? eighth.probability * odds : null;
+    const qualifies = eighth.probability >= 2 && ev != null && ev >= 120;
+    if (qualifies) {
+      selectedSet.add(eighth.combination);
+      selected.push(eighth.combination);
+    }
   }
 
   return { selected, strategy, firstAxis };
@@ -673,8 +690,13 @@ function computeV4SetMetrics(selectedTrifectas, trifectas, oddsMap, settings) {
 
   const syntheticOdds = setProbability > 0 ? Math.round(100 / setProbability * 10) / 10 : null;
   const investment = selectedData.length * 100;
-  const expectedRecovery = avgPayout != null
-    ? Math.round((avgPayout * (setProbability / 100)) / investment * 100 * 10) / 10
+  // 各買い目の確率×オッズを合算し、点数で割った実投資ベースの期待回収率。
+  // 「平均オッズ×合計確率」は高確率と高オッズを誤って組み合わせるため使わない。
+  const expectedRecovery = oddsValues.length === selectedData.length
+    ? Math.round((selectedData.reduce((sum, t) => {
+        const odds = oddsMap?.[t.combination];
+        return sum + (Number.isFinite(odds) ? t.probability * odds : 0);
+      }, 0) / selectedData.length) * 10) / 10
     : null;
 
   const bestEv = selectedData.reduce((best, t) => {
