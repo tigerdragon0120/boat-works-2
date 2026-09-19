@@ -544,7 +544,49 @@ export async function getVerificationSummary() {
   const v4LearningLinked = learningLinked;
   const v4LearningLinkRate = buyRecords.length ? Math.round((v4LearningLinked / buyRecords.length) * 1000) / 10 : 0;
 
-  const resolvedFactors = (factorRows || []).filter((f) => f.stage === 'FINAL' && f.actual_result && f.factor_summary);
+  // 旧V4レコードはPredictionFactorAnalysis未作成だったため、
+  // 保存済みのPredictionLearningSampleから因子を復元して0件表示を解消する。
+  const avgField = (rows, key) => {
+    const values = (rows || []).map(row => Number(row?.[key])).filter(Number.isFinite);
+    return values.length ? Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10 : null;
+  };
+  const persistedFactors = (factorRows || []).filter((f) => f.stage === 'FINAL' && f.actual_result && f.factor_summary);
+  const persistedRaceIds = new Set(persistedFactors.map(f => f.race_id));
+  const derivedFactors = (learningSamples || [])
+    .filter(s => s.prediction_version === 'v4' && s.stage === 'FINAL' && s.actual_result &&
+      !persistedRaceIds.has(s.race_id) && Array.isArray(s.snapshot?.boat_scores))
+    .map(s => {
+      const boats = s.snapshot.boat_scores || [];
+      const selected = new Set(s.snapshot.selected_trifectas || []);
+      const selectedTrifectas = (s.snapshot.trifectas || []).filter(t => selected.has(t.combination));
+      const evValues = selectedTrifectas.map(t => Number(t.expected_value)).filter(Number.isFinite);
+      const exhibitionValues = boats
+        .map(b => Number.isFinite(Number(b.final_score)) && Number.isFinite(Number(b.pre_score))
+          ? Math.max(0, Math.min(100, 50 + (Number(b.final_score) - Number(b.pre_score)) * 5))
+          : null)
+        .filter(Number.isFinite);
+      return {
+        race_id: s.race_id,
+        stage: 'FINAL',
+        actual_result: s.actual_result,
+        hit: selected.has(s.actual_result),
+        factor_summary: {
+          long_term: avgField(boats, 'past_score'),
+          mid_term: avgField(boats, 'pre_score'),
+          recent: avgField(boats, 'recent_score'),
+          course_venue: avgField(boats.map(b => ({ value: Number(b.lane_prior) * 100 })), 'value'),
+          section: avgField(boats, 'today_score'),
+          exhibition: exhibitionValues.length
+            ? Math.round((exhibitionValues.reduce((sum, value) => sum + value, 0) / exhibitionValues.length) * 10) / 10
+            : null,
+          odds: evValues.length
+            ? Math.max(0, Math.min(100, Math.round((evValues.reduce((sum, value) => sum + value, 0) / evValues.length) * 10) / 10))
+            : null,
+          confidence: Number.isFinite(Number(s.snapshot.first_confidence)) ? Number(s.snapshot.first_confidence) : null,
+        },
+      };
+    });
+  const resolvedFactors = [...persistedFactors, ...derivedFactors];
   const factorKeys = ['long_term','mid_term','recent','course_venue','section','exhibition','odds','confidence'];
   const factorImpact = factorKeys.map((key) => {
     const hitVals = resolvedFactors.filter((f) => f.hit).map((f) => Number(f.factor_summary?.[key])).filter(Number.isFinite);
@@ -569,7 +611,7 @@ export async function getVerificationSummary() {
     performance_profiles: (profiles || []).length,
     rolling_stats: (rollingStats || []).length,
     learning_samples: (learningSamples || []).length,
-    factor_samples: (factorRows || []).length,
+    factor_samples: resolvedFactors.length,
   };
 
   return {
