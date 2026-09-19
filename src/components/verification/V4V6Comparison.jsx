@@ -64,7 +64,8 @@ export default function V4V6Comparison() {
       {/* ヘッダー */}
       <div className="flex items-center justify-between">
         <div className="text-[11px] text-slate-400">
-          対象{bs.processed}R・生成{bs.generated}R・データ不足{bs.insufficient_data}R
+          対象{bs.processed}R・生成{bs.generated}R・判定{bs.classified_count ?? (bs.buy_count + bs.watch_count + bs.skip_count)}R・データ不足{bs.insufficient_data}R
+          {bs.policy_version && <span className="ml-2 font-bold text-violet-500">{bs.policy_version}</span>}
           <span className="ml-2 text-slate-300">|</span>
           <span className="ml-2">{bs.backtested_at ? new Date(bs.backtested_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""}</span>
         </div>
@@ -76,6 +77,16 @@ export default function V4V6Comparison() {
           {running ? <><RefreshCw className="w-3 h-3 animate-spin" />実行中</> : <><PlayCircle className="w-3 h-3" />再実行</>}
         </button>
       </div>
+
+      {/* 集計漏れ */}
+      {(bs.unclassified_count || 0) > 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-rose-500 flex-shrink-0" />
+          <div className="text-[11px] text-rose-700 font-medium">
+            生成済みのうち{bs.unclassified_count}Rが未分類です。集計処理を確認してください。
+          </div>
+        </div>
+      )}
 
       {/* 100BUY到達状況 */}
       {bs.buy_count < 100 && (
@@ -130,7 +141,7 @@ export default function V4V6Comparison() {
       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] text-slate-500">
         <span className="font-bold text-slate-600">データリーク:</span> V6エンジンは予想時点データ(出走表・展示・オッズ・選手プロファイル)のみ使用。結果は採点専用。
         <br />
-        <span className="font-bold text-slate-600">データ不足除外基準:</span> exhibition_ready=false / 展示データ4艇未満 / オッズ20組未満 → BACKTEST_INSUFFICIENT_DATA
+        <span className="font-bold text-slate-600">データ不足除外基準:</span> exhibition_ready=false / 展示データ4艇未満 / FINALオッズ20組未満 → BACKTEST_INSUFFICIENT_DATA
       </div>
     </div>
   );
