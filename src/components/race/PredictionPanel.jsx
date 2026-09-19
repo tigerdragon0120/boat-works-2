@@ -1,6 +1,6 @@
 import React from "react";
 import { cn } from "@/lib/utils";
-import { Crown, Shield, Sparkles, TrendingUp, Gauge, Trophy, Zap, Activity, Target, Calculator, Ticket, AlertCircle } from "lucide-react";
+import { Crown, Shield, Sparkles, TrendingUp, Gauge, Zap, Activity, Calculator, Ticket, AlertCircle } from "lucide-react";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import { buildSelectedTickets } from "@/lib/predictionService";
 import V5ScenarioPanel from "@/components/race/V5ScenarioPanel";
@@ -352,7 +352,7 @@ function TicketRow({ t }) {
   );
 }
 
-function Metric({ label, v, highlight }) {
+function Metric({ label, v, highlight = false }) {
   return (
     <div className={cn("rounded-md py-1.5", highlight ? "bg-emerald-500/10" : "bg-white")}>
       <div className={cn("font-bold text-sm", highlight ? "text-emerald-500" : "text-slate-900")}>{v}</div>
@@ -361,7 +361,7 @@ function Metric({ label, v, highlight }) {
   );
 }
 
-function TabBtn({ active, onClick, label }) {
+function TabBtn({ active, onClick = undefined, label }) {
   return (
     <button onClick={onClick} className={cn("px-3 h-7 rounded-md text-xs font-bold transition-colors", active ? "bg-[#f9c836] text-slate-950" : "bg-slate-100 text-slate-600 hover:text-slate-900")}>{label}</button>
   );
