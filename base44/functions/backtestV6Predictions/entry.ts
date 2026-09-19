@@ -29,6 +29,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { getSettings } from '../../shared/predictionService.js';
 import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
 
+// V6 policy bundle v6.2: 本命・買い目・シナリオ整合 + 1号艇逃げ利益型BUY
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
@@ -184,14 +186,13 @@ export default async function(req: Request) {
         const six = [...byBoat.values()].sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
         if (six.length < 1) continue;
 
-        // OddsSnapshot取得(予想時点データ)
+        // OddsSnapshot取得。FINAL検証でPREオッズを代用すると期待値と実払戻が
+        // 食い違うため、締切直前のFINALスナップショットだけを使用する。
         let oddsMap: any = {};
-        const oddsSnaps = await withRetry(() => sr.OddsSnapshot.filter({ race_id: race.id, stage: 'FINAL' }, '-captured_at', 5)).catch(() => []);
+        const oddsSnaps = await withRetry(() => sr.OddsSnapshot.filter(
+          { race_id: race.id, stage: 'FINAL' }, '-captured_at', 5
+        )).catch(() => []);
         if (oddsSnaps?.[0]?.odds_map) oddsMap = oddsSnaps[0].odds_map;
-        if (!oddsMap || Object.keys(oddsMap).length === 0) {
-          const preOdds = await withRetry(() => sr.OddsSnapshot.filter({ race_id: race.id, stage: 'PRE' }, '-captured_at', 5)).catch(() => []);
-          if (preOdds?.[0]?.odds_map) oddsMap = preOdds[0].odds_map;
-        }
 
         // =====================================================
         // データ十分性チェック
@@ -205,16 +206,15 @@ export default async function(req: Request) {
         }
 
         // V6予想生成(予想時点データのみ使用 — 結果は参照しない)
-        const genResult = await withRetry(() => runAndSavePredictionV6(base44, race, six, settings, 'FINAL', oddsMap, profileByReg, rollingByReg));
-        if (genResult?.skipped) continue;
-        generated++;
-
-        // 生成結果取得
-        const freshList = await withRetry(() => sr.PredictionV6.filter(
-          { race_id: race.id, stage: 'FINAL', prediction_version: 'v6' }, '-computed_at', 1
+        const genResult = await withRetry(() => runAndSavePredictionV6(
+          base44, race, six, settings, 'FINAL', oddsMap, profileByReg, rollingByReg
         ));
-        const fresh = freshList?.[0];
-        if (!fresh) continue;
+        if (genResult?.skipped || !genResult?.result) continue;
+
+        // 保存直後のDB再検索は反映遅延で空になることがあるため、
+        // 今回実行したエンジンの戻り値をそのまま集計する。
+        const fresh = genResult.result;
+        generated++;
 
         // チケット数集計(全予想)
         const tc = fresh.ticket_count || 6;
@@ -298,6 +298,9 @@ export default async function(req: Request) {
         MISS_OTHER: missOther,
         BACKTEST_INSUFFICIENT_DATA: insufficientDataCount,
       },
+      classified_count: buyCount + watchCount + skipCount,
+      unclassified_count: Math.max(0, generated - (buyCount + watchCount + skipCount)),
+      policy_version: 'v6.2-escape-profit',
       backtested_at: new Date().toISOString(),
     };
 
