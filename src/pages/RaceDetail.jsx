@@ -2,9 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import {
-  getRaceEntries, getSettings,
+  getRaceEntries,
   getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV6Prediction,
-  ensureV4Final, generateV4PredictionForRace,
+  generateV4PredictionForRace,
 } from "@/lib/predictionService";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
