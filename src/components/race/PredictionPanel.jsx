@@ -34,7 +34,7 @@ const groupStyle = {
   C: "text-slate-600 bg-slate-700/30 border-slate-600",
 };
 
-export default function PredictionPanel({ race, stage, run, busy, entries, activePred, activeBoats, allTri, compareData, pendingOdds, waitingFinalOdds }) {
+export default function PredictionPanel({ race, stage, run, busy, entries, activePred, activeBoats, allTri, compareData, pendingOdds, waitingFinalOdds, predictionVersion = "v4", onPredictionVersionChange }) {
   const hasPred = !!activePred;
   // WAITING_ODDS時は判定を表示しない(判定待ち)
   const judgment = waitingFinalOdds ? "PENDING" : (activePred?.final_judgment || "PENDING");
@@ -57,47 +57,85 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col h-full">
       {/* ヘッダー */}
-      <div className="px-3 sm:px-4 py-2.5 border-b border-slate-200 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="font-black text-slate-900 text-base sm:text-lg">{race.venue || "—"}</span>
-          <span className="text-xs text-slate-600">{race.race_number}R</span>
+      <div className="px-3 sm:px-4 py-2.5 border-b border-slate-200 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-black text-slate-900 text-base sm:text-lg">{race.venue || "—"}</span>
+            <span className="text-xs text-slate-600">{race.race_number}R</span>
+          </div>
+          <div className="flex gap-1 items-center">
+            {predictionVersion !== "v5" && stage === "PRE" && <TabBtn active label="PRE" />}
+            {predictionVersion !== "v5" && stage === "FINAL" && <TabBtn active label="FINAL" />}
+            {predictionVersion !== "v5" && stage === "FINAL" && activePred?.od3_status && (
+              <span className={cn("px-1.5 h-5 rounded text-[9px] font-bold border flex items-center ml-1",
+                activePred.od3_status === "READY"
+                  ? "bg-emerald-500/10 text-emerald-600 border-emerald-400/30"
+                  : activePred.od3_status === "ERROR"
+                  ? "bg-rose-500/10 text-rose-600 border-rose-400/30"
+                  : "bg-amber-500/10 text-amber-600 border-amber-400/30")}>
+                OD3 {activePred.od3_status}
+              </span>
+            )}
+          </div>
         </div>
-        <div className="flex gap-1 items-center">
-          {stage === "PRE" && <TabBtn active label="PRE" />}
-          {stage === "FINAL" && <TabBtn active label="FINAL" />}
-          {stage === "FINAL" && activePred?.od3_status && (
-            <span className={cn("px-1.5 h-5 rounded text-[9px] font-bold border flex items-center ml-1",
-              activePred.od3_status === "READY"
-                ? "bg-emerald-500/10 text-emerald-600 border-emerald-400/30"
-                : activePred.od3_status === "ERROR"
-                ? "bg-rose-500/10 text-rose-600 border-rose-400/30"
-                : "bg-amber-500/10 text-amber-600 border-amber-400/30")}>
-              OD3 {activePred.od3_status}
-            </span>
-          )}
+        <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1">
+          {["v4", "v5", "v6"].map((version) => (
+            <button
+              key={version}
+              type="button"
+              onClick={() => onPredictionVersionChange?.(version)}
+              className={cn(
+                "h-8 rounded-md text-xs font-black uppercase transition-colors",
+                predictionVersion === version
+                  ? version === "v4"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : version === "v5"
+                    ? "bg-cyan-500 text-slate-950 shadow-sm"
+                    : "bg-rose-500 text-white shadow-sm"
+                  : "text-slate-500 hover:bg-white hover:text-slate-900"
+              )}
+            >
+              {version.toUpperCase()}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* メイン */}
       <div className="flex-1 p-3 sm:p-4 bg-gradient-to-b from-[#1e232d] to-[#161a22] flex flex-col overflow-auto">
-        {!hasPred ? (
+        {predictionVersion === "v5" ? (
+          <div className="flex flex-col gap-3">
+            <V5ScenarioPanel entries={entries} activePred={activePred} />
+            <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-3 text-[10px] leading-relaxed text-cyan-100">
+              V5はレース展開を比較するシナリオ予想です。買い目とBUY判定はV4またはV6タブで確認できます。
+            </div>
+          </div>
+        ) : !hasPred ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center py-10">
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-3">
               <Zap className="w-8 h-8 text-[#f9c836]" />
             </div>
-            <div className="text-slate-700 font-semibold text-sm mb-1">V4予想生成待ち</div>
-            <div className="text-slate-500 text-xs mb-4">PredictionV4の生成を待っています<br />PRE/FINAL予想を実行すると表示されます</div>
-            <div className="flex gap-2 w-full max-w-xs">
-              <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
-                className="flex-1 h-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
-                <Zap className="w-4 h-4" /> PRE
-              </button>
-              <button onClick={() => run("FINAL")} disabled={busy || entries.length === 0}
-                className="flex-1 h-10 rounded-lg bg-[#f9c836] text-slate-950 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-amber-300 disabled:opacity-50">
-                <Gauge className="w-4 h-4" /> FINAL
-              </button>
+            <div className="text-slate-200 font-semibold text-sm mb-1">{predictionVersion.toUpperCase()}予想生成待ち</div>
+            <div className="text-slate-400 text-xs mb-4">
+              {predictionVersion === "v6"
+                ? "V6は締切直前の展示・オッズ取得後に自動生成されます"
+                : "PredictionV4の生成を待っています"}
             </div>
-            {busy && <div className="text-xs text-[#f9c836] mt-3 animate-pulse">計算中…</div>}
+            {predictionVersion === "v4" && (
+              <>
+                <div className="flex gap-2 w-full max-w-xs">
+                  <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
+                    className="flex-1 h-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
+                    <Zap className="w-4 h-4" /> PRE
+                  </button>
+                  <button onClick={() => run("FINAL")} disabled={busy || entries.length === 0}
+                    className="flex-1 h-10 rounded-lg bg-[#f9c836] text-slate-950 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-amber-300 disabled:opacity-50">
+                    <Gauge className="w-4 h-4" /> FINAL
+                  </button>
+                </div>
+                {busy && <div className="text-xs text-[#f9c836] mt-3 animate-pulse">計算中…</div>}
+              </>
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-3">
@@ -176,9 +214,6 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
                 )}
               </div>
             )}
-
-            {/* === 4. V5 データ駆動型 展開予測 === */}
-            <V5ScenarioPanel entries={entries} activePred={activePred} />
 
             {/* 既存エンジンの展開ラベル */}
             <div className="flex items-center gap-3">
@@ -267,26 +302,32 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
               </div>
             )}
 
-            {/* 再実行ボタン */}
-            <div className="flex gap-2 mt-1">
-              <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
-                className="flex-1 h-9 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
-                <Zap className="w-3.5 h-3.5" /> PRE再実行
-              </button>
-              <button onClick={() => run("FINAL")} disabled={busy || entries.length === 0}
-                className="flex-1 h-9 rounded-lg bg-[#f9c836] text-slate-950 font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-300 disabled:opacity-50">
-                <Gauge className="w-3.5 h-3.5" /> FINAL再実行
-              </button>
-            </div>
-            {busy && <div className="text-xs text-[#f9c836] text-center animate-pulse">計算中…</div>}
+            {/* V4のみ手動再実行。V6は自動生成された保存データを表示する。 */}
+            {predictionVersion === "v4" && (
+              <>
+                <div className="flex gap-2 mt-1">
+                  <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
+                    className="flex-1 h-9 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
+                    <Zap className="w-3.5 h-3.5" /> PRE再実行
+                  </button>
+                  <button onClick={() => run("FINAL")} disabled={busy || entries.length === 0}
+                    className="flex-1 h-9 rounded-lg bg-[#f9c836] text-slate-950 font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-300 disabled:opacity-50">
+                    <Gauge className="w-3.5 h-3.5" /> FINAL再実行
+                  </button>
+                </div>
+                {busy && <div className="text-xs text-[#f9c836] text-center animate-pulse">計算中…</div>}
+              </>
+            )}
           </div>
         )}
       </div>
 
       {/* フッター */}
       <div className="px-3 py-2 border-t border-slate-200 flex items-center justify-between text-[11px]">
-        <span className="text-slate-500">予想エンジン v5</span>
-        <span className="text-slate-500">{stage === "FINAL" ? "FINAL済" : stage === "PRE" ? "PRE済" : "予想待ち"}</span>
+        <span className="text-slate-500">予想エンジン {predictionVersion.toUpperCase()}</span>
+        <span className="text-slate-500">
+          {predictionVersion === "v5" ? "展開分析" : stage === "FINAL" ? "FINAL済" : stage === "PRE" ? "PRE済" : "予想待ち"}
+        </span>
       </div>
     </div>
   );
