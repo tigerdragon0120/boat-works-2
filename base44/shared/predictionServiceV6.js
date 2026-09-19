@@ -213,7 +213,7 @@ export async function runAndSavePredictionV6(client, race, entries, settings, st
 export async function verifyV6Prediction(client, race, resultData) {
   try {
     const sr = client.asServiceRole.entities;
-    const resultTrifecta = resultData.result_trifecta;
+    const resultTrifecta = normalizeCombination(resultData.result_trifecta);
     if (!resultTrifecta) return null;
 
     const resultParts = resultTrifecta.split("-").map(Number);
@@ -242,12 +242,14 @@ export async function verifyV6Prediction(client, race, resultData) {
     const v6PrePred = v6Pre?.[0];
     const v6FinalPred = v6Final?.[0];
 
-    // 的中判定
-    const v6PreHit = (v6PrePred?.selected_trifectas || []).includes(resultTrifecta) || v6PrePred?.top_trifecta === resultTrifecta;
-    const v6FinalHit = (v6FinalPred?.selected_trifectas || []).includes(resultTrifecta) || v6FinalPred?.top_trifecta === resultTrifecta;
+    // 的中判定(表記揺れを正規化)
+    const preSelected = (v6PrePred?.selected_trifectas || []).map(normalizeCombination).filter(Boolean);
+    const finalSelected = (v6FinalPred?.selected_trifectas || []).map(normalizeCombination).filter(Boolean);
+    const v6PreHit = preSelected.includes(resultTrifecta) || normalizeCombination(v6PrePred?.top_trifecta) === resultTrifecta;
+    const v6FinalHit = finalSelected.includes(resultTrifecta) || normalizeCombination(v6FinalPred?.top_trifecta) === resultTrifecta;
     let v6RecommendedHit = false, v6Investment = 0;
     if (v6FinalPred) {
-      v6RecommendedHit = (v6FinalPred.selected_trifectas || []).includes(resultTrifecta);
+      v6RecommendedHit = finalSelected.includes(resultTrifecta);
       if (v6FinalPred.final_judgment === "BUY") v6Investment = (v6FinalPred.ticket_count || 6) * 100;
     }
     const v6Payout = v6RecommendedHit ? (resultData.payout || 0) : 0;
@@ -266,34 +268,34 @@ export async function verifyV6Prediction(client, race, resultData) {
     let missPrimary = null;
     const missSecondary = [];
 
+    const selectedParts = finalSelected
+      .map(combo => combo.split("-").map(Number))
+      .filter(parts => parts.length === 3 && parts.every(Number.isFinite));
+    const predictedFirsts = [...new Set(selectedParts.map(parts => parts[0]))];
+    const actualFirstTickets = selectedParts.filter(parts => parts[0] === actualFirst);
+    const predictedSeconds = [...new Set(actualFirstTickets.map(parts => parts[1]))];
+    const actualFirstSecondTickets = actualFirstTickets.filter(parts => parts[1] === actualSecond);
+    const predictedThirds = [...new Set(actualFirstSecondTickets.map(parts => parts[2]))];
+
     if (v6RecommendedHit) {
       // 的中
       outcomeClass = v6Recovery >= LOW_VALUE_RECOVERY_THRESHOLD ? "HIT_PROFIT" : "HIT_LOW_VALUE";
     } else if (v6FinalPred) {
-      // 不的中 — どの着で外れたか
-      const predicted1st = v6FinalPred.honmei_boat;
-      const firstRanking = v6FinalPred.first_ranking || [];
-      const secondRanking = v6FinalPred.second_ranking || [];
-      const predicted2nd = secondRanking[0];
-      const thirdRanking = v6FinalPred.third_ranking || [];
-      const predicted3rd = thirdRanking[0];
-
-      if (predicted1st != null && actualFirst !== predicted1st) {
+      // 不的中 — ランキングではなく、実際に選んだ買い目のどの着で外れたかを判定
+      if (!predictedFirsts.includes(actualFirst)) {
         outcomeClass = "MISS_FIRST";
         missPrimary = "MISS_FIRST";
-        missSecondary.push(`1着予想${predicted1st}→実際${actualFirst}`);
-        // 外枠A1過大評価チェック
-        if (predicted1st >= 5) missSecondary.push("FIFTY_SIX_OVERVALUED");
-        // 内過小評価チェック
-        if (actualFirst === 1 && predicted1st >= 3) missSecondary.push("INSIDE_UNDERVALUED");
-      } else if (predicted2nd != null && actualSecond !== predicted2nd) {
+        missSecondary.push(`1着買い目[${predictedFirsts.join("・") || "なし"}]→実際${actualFirst}`);
+        if (predictedFirsts.some(boat => boat >= 5)) missSecondary.push("FIFTY_SIX_OVERVALUED");
+        if (actualFirst === 1 && predictedFirsts.some(boat => boat >= 3)) missSecondary.push("INSIDE_UNDERVALUED");
+      } else if (!predictedSeconds.includes(actualSecond)) {
         outcomeClass = "MISS_SECOND";
         missPrimary = "MISS_SECOND";
-        missSecondary.push(`2着予想${predicted2nd}→実際${actualSecond}`);
-      } else if (predicted3rd != null && actualThird !== predicted3rd) {
+        missSecondary.push(`2着買い目[${predictedSeconds.join("・") || "なし"}]→実際${actualSecond}`);
+      } else if (!predictedThirds.includes(actualThird)) {
         outcomeClass = "MISS_THIRD";
         missPrimary = "MISS_THIRD";
-        missSecondary.push(`3着予想${predicted3rd}→実際${actualThird}`);
+        missSecondary.push(`3着買い目[${predictedThirds.join("・") || "なし"}]→実際${actualThird}`);
       } else {
         outcomeClass = "MISS_OTHER";
         missPrimary = "TICKET_NARROW";
@@ -320,9 +322,10 @@ export async function verifyV6Prediction(client, race, resultData) {
       miss_reason_primary: missPrimary,
       miss_reason_secondary: missSecondary,
       miss_analysis: {
-        predicted_1st: v6FinalPred?.honmei_boat, actual_1st: actualFirst,
-        predicted_2nd: v6FinalPred?.second_ranking?.[0], actual_2nd: actualSecond,
-        predicted_3rd: v6FinalPred?.third_ranking?.[0], actual_3rd: actualThird,
+        predicted_1st: predictedFirsts, actual_1st: actualFirst,
+        predicted_2nd: predictedSeconds, actual_2nd: actualSecond,
+        predicted_3rd: predictedThirds, actual_3rd: actualThird,
+        selected_trifectas: finalSelected,
         escape_probability: v6FinalPred?.escape_probability,
         winning_scenario: v6FinalPred?.winning_scenario,
       },
