@@ -690,36 +690,31 @@ function judgeV6(setMetrics, firstProbs, scenarios, stage) {
   const firstConfidence = clamp(topProb + gap * 0.5, 0, 100);
   const topScenario = scenarios[0];
   const topScenarioProb = topScenario?.probability || 0;
-  const weakScenario = ["2_MAKURI", "4_MAKURI", "4_MAKURIZASHI"].includes(topScenario?.scenario);
+  const provenEscape = topScenario?.key === "1_ESCAPE" && topScenario?.first_boat === 1;
   const investment = setMetrics?.investment || 0;
   const minPayout = setMetrics?.min_payout;
-  const payoutSafe = minPayout != null && investment > 0 && minPayout >= investment * 1.2;
+  const payoutSafe = minPayout != null && investment > 0 && minPayout >= investment * 1.5;
 
   if (stage === "FINAL") {
-    if (weakScenario && firstConfidence >= 40 && setProb >= 15) {
-      return { judgment: "WATCH", reason: `弱シナリオ${topScenario.label}${topScenarioProb}% — 1着精度を優先して見送り` };
+    // 1000R検証で利益が確認できた1号艇逃げだけをBUY対象にする。
+    if (provenEscape && recovery != null && recovery >= 130 && firstConfidence >= 50 &&
+        setProb >= 30 && topScenarioProb >= 28 && payoutSafe) {
+      return { judgment: "BUY", reason: `検証済み逃げBUY(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・確率加重回収率${recovery}%・最低払戻150%以上)` };
     }
-    // BUY: 確率加重回収率115%+、1着精度、最低払戻の全条件を必須化。
-    if (recovery != null && recovery >= 115 && firstConfidence >= 55 &&
-        setProb >= 20 && topScenarioProb >= 28 && payoutSafe) {
-      return { judgment: "BUY", reason: `利益型BUY(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・確率加重回収率${recovery}%・最低払戻安全)` };
-    }
-    // WATCH: 予測は候補だが、期待値・最低払戻・1着精度のいずれかが不足。
-    if (firstConfidence >= 45 && setProb >= 18) {
-      return { judgment: "WATCH", reason: `BUY条件未達(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・確率加重回収率${recovery != null ? recovery + '%' : '不明'}・最低払戻${payoutSafe ? 'OK' : '不足'})` };
+    if (!provenEscape && firstConfidence >= 40 && setProb >= 15) {
+      return { judgment: "WATCH", reason: `検証未達シナリオ${topScenario?.label || "不明"} — 予想は表示するがBUY対象外` };
     }
     if (firstConfidence >= 40 && setProb >= 15) {
-      return { judgment: "WATCH", reason: `根拠不足(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・シナリオ集中度${topScenarioProb}%)` };
+      return { judgment: "WATCH", reason: `逃げBUY条件未達(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・確率加重回収率${recovery != null ? recovery + '%' : '不明'}・最低払戻${payoutSafe ? 'OK' : '不足'})` };
     }
     return { judgment: "SKIP", reason: `予測不安定(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%)` };
   }
 
-  // PRE: オッズ未確定でも、弱シナリオと1着精度不足はBUYにしない。
-  if (!weakScenario && firstConfidence >= 55 && setProb >= 20 && topScenarioProb >= 28) {
-    return { judgment: "BUY", reason: `PRE利益型BUY(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・シナリオ${topScenario.label}${topScenarioProb}%)` };
-  }
+  // PREはオッズ確定前なので購入判定を出さず、強い逃げ候補もWATCHで待機する。
   if (firstConfidence >= 40 && setProb >= 15) {
-    return { judgment: "WATCH", reason: `PRE(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%)` };
+    return { judgment: "WATCH", reason: provenEscape
+      ? `PRE逃げ候補(1着信頼度${round1(firstConfidence)}・セット確率${setProb}%) — 最終オッズ待ち`
+      : `PRE検証未達シナリオ${topScenario?.label || "不明"} — BUY対象外` };
   }
   return { judgment: "SKIP", reason: `PRE予測不安定(1着信頼度${round1(firstConfidence)})` };
 }
@@ -800,6 +795,15 @@ export function runPredictionV6(entries, race, settings, options = {}) {
     b.first_score = round1(clamp((b.final_score ?? b.pre_score ?? 50) + (firstProbs[i] - 16) * 0.3, 5, 100));
   });
 
+  // 集約した1着本命と、買い目・判定・表示に使うシナリオを一致させる。
+  const primaryFirstBoat = boatScores
+    .map((b, i) => ({ boat: b.boat_number, probability: firstProbs[i] }))
+    .sort((a, b) => b.probability - a.probability)[0]?.boat;
+  const alignedScenarios = [
+    ...scenarios.filter(s => s.first_boat === primaryFirstBoat),
+    ...scenarios.filter(s => s.first_boat !== primaryFirstBoat),
+  ];
+
   // 5. 条件付き2着 P(2着|1着) — シナリオ別
   const secondProbs = computeSecondProbsV6(boatScores, scenarios);
 
@@ -807,13 +811,13 @@ export function runPredictionV6(entries, race, settings, options = {}) {
   const trifectas = computeTrifectasV6(boatScores, firstProbs, secondProbs, stage);
 
   // 7. 6/7/8点選択(EVベース)
-  const { selected, ticketCount, expandReason, strategy } = selectTicketsV6(trifectas, firstProbs, scenarios, oddsMap);
+  const { selected, ticketCount, expandReason, strategy } = selectTicketsV6(trifectas, firstProbs, alignedScenarios, oddsMap);
 
   // 8. セット期待値
   const setMetrics = computeV6SetMetrics(selected, trifectas, oddsMap);
 
   // 9. 判定(EVベース)
-  const { judgment, reason } = judgeV6(setMetrics, firstProbs, scenarios, stage);
+  const { judgment, reason } = judgeV6(setMetrics, firstProbs, alignedScenarios, stage);
 
   // ランキング
   const sortedByFirst = boatScores.map((b, i) => ({ b, i, prob: firstProbs[i] }))
@@ -841,7 +845,6 @@ export function runPredictionV6(entries, race, settings, options = {}) {
   const topOdds = oddsMap?.[topTrifecta.combination] || null;
   const topEv = topOdds != null ? Math.round(topTrifecta.probability * topOdds * 10) / 10 : null;
 
-  const topProb = firstProbs[0];
   const firstProbSorted = [...firstProbs].sort((a, b) => b - a);
   const firstConfidence = clamp(firstProbSorted[0] + (firstProbSorted[0] - firstProbSorted[1]) * 0.5, 0, 100);
   const firstProbabilityGap = round2(firstProbSorted[0] - firstProbSorted[1]);
@@ -849,7 +852,7 @@ export function runPredictionV6(entries, race, settings, options = {}) {
 
   // 要因スナップショット
   const factorSnapshot = buildFactorSnapshot(
-    boatScores, race, scenarios, oddsMap, escapeProb, round1(firstConfidence), setMetrics?.set_probability, stage
+    boatScores, race, alignedScenarios, oddsMap, escapeProb, round1(firstConfidence), setMetrics?.set_probability, stage
   );
 
   // trifectasにodds/EV付与
@@ -886,8 +889,8 @@ export function runPredictionV6(entries, race, settings, options = {}) {
     first_probability_gap: firstProbabilityGap,
     first_confidence: round1(firstConfidence),
     escape_probability: escapeProb,
-    winning_scenario: scenarios[0]?.key || null,
-    scenario_scores: scenarios.map(s => ({
+    winning_scenario: alignedScenarios[0]?.key || null,
+    scenario_scores: alignedScenarios.map(s => ({
       key: s.key, label: s.label, first_boat: s.first_boat,
       probability: s.probability, score: round1(s.score),
       second_followers: s.second_followers, reason: s.reason,
