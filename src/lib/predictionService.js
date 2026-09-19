@@ -660,6 +660,41 @@ export function mapV4ToUI(v4Pred, stage) {
   return { pred: v4Pred, boats, trifectas };
 }
 
+// V6予想取得。V4とは別レコードを読み、画面切替時だけ表示する。
+export async function getV6Prediction(raceId, stage, raceKey) {
+  let list = await withRetry(() => base44.entities.PredictionV6.filter({
+    race_id: raceId, stage, prediction_version: "v6",
+  }, "-computed_at", 1)).catch(() => []);
+  if ((!list || !list.length) && raceKey) {
+    list = await withRetry(() => base44.entities.PredictionV6.filter({
+      race_key: raceKey, stage, prediction_version: "v6",
+    }, "-computed_at", 1)).catch(() => []);
+  }
+  return list && list[0];
+}
+
+// V6もV4と同じ埋め込み形式なので、共通のUI形状へ変換できる。
+export function mapV6ToUI(v6Pred, stage) {
+  return mapV4ToUI(v6Pred, stage);
+}
+
+// V6はFINAL優先、なければPREを表示する。V4への自動フォールバックはしない。
+export async function resolveV6Prediction(raceId, raceKey) {
+  const finalV6 = await getV6Prediction(raceId, "FINAL", raceKey);
+  if (finalV6 && (finalV6.status === "COMPLETED" || !finalV6.status)) {
+    const mapped = mapV6ToUI(finalV6, "FINAL");
+    if (mapped) return { stage: "FINAL", ...mapped };
+  }
+
+  const preV6 = await getV6Prediction(raceId, "PRE", raceKey);
+  if (preV6 && (preV6.status === "COMPLETED" || !preV6.status)) {
+    const mapped = mapV6ToUI(preV6, "PRE");
+    if (mapped) return { stage: "PRE", ...mapped };
+  }
+
+  return { stage: null, pred: null, boats: [], trifectas: [] };
+}
+
 // ============================================================
 // V4予想生成(単一レース) — UIからの「PRE/FINAL再実行」「更新」で呼ぶ
 // バックエンド関数 generateV4PredictionForRace を呼び出す
