@@ -689,7 +689,6 @@ function computeV4SetMetrics(selectedTrifectas, trifectas, oddsMap, settings) {
     : null;
 
   const syntheticOdds = setProbability > 0 ? Math.round(100 / setProbability * 10) / 10 : null;
-  const investment = selectedData.length * 100;
   // 各買い目の確率×オッズを合算し、点数で割った実投資ベースの期待回収率。
   // 「平均オッズ×合計確率」は高確率と高オッズを誤って組み合わせるため使わない。
   const expectedRecovery = oddsValues.length === selectedData.length
