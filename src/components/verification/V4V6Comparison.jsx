@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { getV6VerificationSummary } from "@/lib/predictionService";
-import { Target, Coins, TrendingUp, CheckCircle2, XCircle, RefreshCw, TicketCheck, AlertTriangle, DollarSign, Percent, BarChart3, PlayCircle } from "lucide-react";
+import { Target, Coins, CheckCircle2, RefreshCw, AlertTriangle, DollarSign, PlayCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function V4V6Comparison() {
