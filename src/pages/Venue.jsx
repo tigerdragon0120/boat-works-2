@@ -131,6 +131,34 @@ export default function Venue() {
   };
   useEffect(() => { loadDetail(); }, [selectedId, races.length]);
 
+  // 締切直前にバックエンドで生成されたFINAL予想を、ページを開いたままでも反映する。
+  // loadDetailのように表示を一度クリアせず、予想部分だけを静かに更新する。
+  const refreshPredictions = async () => {
+    if (!selectedId) return;
+    const selectedRace = races.find((x) => x.id === selectedId);
+    if (!selectedRace || selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
+
+    const [resolved, resolvedV6] = await Promise.all([
+      resolveCurrentPrediction(selectedId, selectedRace.race_key),
+      resolveV6Prediction(selectedId, selectedRace.race_key),
+    ]);
+    setCurrent(resolved);
+    setV6Current(resolvedV6);
+  };
+
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const intervalId = window.setInterval(() => {
+      refreshPredictions().catch((e) => console.warn("[Venue] prediction refresh failed:", e?.message || e));
+    }, 15000);
+    return () => window.clearInterval(intervalId);
+  }, [selectedId, races]);
+
+  const refreshAll = async () => {
+    await loadList();
+    await refreshPredictions();
+  };
+
   const run = async (stage) => {
     if (!race) return;
     setBusy(true);
@@ -184,7 +212,7 @@ export default function Venue() {
             <div className="text-[9px] sm:text-[10px] tracking-widest text-slate-500">VENUE {String(code).padStart(2, "0")}</div>
           </div>
         </div>
-        <button onClick={loadList} className="ml-auto h-9 min-w-9 px-3 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 flex items-center justify-center gap-2 text-xs font-semibold">
+        <button onClick={refreshAll} className="ml-auto h-9 min-w-9 px-3 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 flex items-center justify-center gap-2 text-xs font-semibold">
           <RefreshCw className="w-4 h-4" /><span className="hidden sm:inline">更新</span>
         </button>
       </div>
