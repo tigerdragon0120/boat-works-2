@@ -11,6 +11,7 @@ import { resolveRaceResult, mergeResultProtect } from "./resultResolver.js";
 import { runAndSavePredictionV2, verifyV2Prediction } from "./predictionServiceV2.js";
 import { runAndSavePredictionV3, verifyV3Prediction } from "./predictionServiceV3.js";
 import { runAndSavePredictionV4, verifyV4Prediction } from "./predictionServiceV4.js";
+import { verifyEnsemblePrediction } from "./predictionServiceEnsemble.js";
 
 const VERSION = "v3";
 
@@ -894,6 +895,9 @@ export async function upsertResultAndVerify(client, race, resultData) {
 
   // V4検証(V1/V2/V3に影響しない)
   await verifyV4Prediction(client, race, resultData).catch(() => {});
+
+  // V4・V5・V6合成FINALを、保存済み買い目のまま結果照合する。
+  await verifyEnsemblePrediction(client, race, resultData).catch(() => {});
 
   return { result: saved, verification };
 }
