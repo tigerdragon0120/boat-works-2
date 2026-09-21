@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
-import { upsertRace, upsertEntry, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
+import { upsertRace, upsertEntry, dedupRace, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
 import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
@@ -83,8 +83,19 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
 
     const venueCode = venue.venue_code;
     const venueName = venue.venue_name;
-    const existingRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 30).catch(() => []);
-    const existingEntries = await sr.RaceEntry.filter({ race_date: raceDate, venue_code: venueCode }, 'boat_number', 200).catch(() => []);
+    let existingRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 500).catch(() => []);
+    const raceKeyCounts = new Map<string, number>();
+    for (const race of existingRaces) {
+      const key = String(race.race_key || buildRaceKey(raceDate, venueCode, race.race_number));
+      raceKeyCounts.set(key, (raceKeyCounts.get(key) || 0) + 1);
+    }
+    for (const [key, count] of raceKeyCounts) {
+      if (count > 1) await withRateLimitRetry(() => dedupRace(base44, key), 4).catch((e: any) => errors.push(`${venueName}: Race重複統合 ${key} ${e.message}`));
+    }
+    if ([...raceKeyCounts.values()].some((count) => count > 1)) {
+      existingRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 500).catch(() => existingRaces);
+    }
+    const existingEntries = await sr.RaceEntry.filter({ race_date: raceDate, venue_code: venueCode }, 'boat_number', 5000).catch(() => []);
     const entryCountByRace: Record<string, number> = {};
     for (const e of existingEntries) {
       const rn = String(e.race_number);
@@ -154,8 +165,7 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     if (!parsedCards.length) continue;
 
     const existingRaceByNo = new Map(existingRaces.map((r: any) => [Number(r.race_number), r]));
-    const raceCreates: any[] = [];
-    const raceUpdates: any[] = [];
+    const raceByNo = new Map<number, any>();
 
     for (const { rno, race } of parsedCards) {
       const raceKey = buildRaceKey(raceDate, venueCode, rno);
@@ -168,20 +178,14 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
         venue_name: venueName,
         race_number: rno,
         sync_source: 'online_auto',
+        status: existingRaceByNo.get(rno)?.status || 'scheduled',
       };
       if (race.race_name) doc.race_name = race.race_name;
       if (race.race_type) doc.race_type = race.race_type;
       if (t) doc.deadline = `${raceDate}T${t}:00+09:00`;
-      const old = existingRaceByNo.get(rno);
-      if (old) raceUpdates.push({ id: old.id, ...doc });
-      else raceCreates.push({ ...doc, status: 'scheduled' });
+      const saved = await withRateLimitRetry(() => upsertRace(base44, doc));
+      raceByNo.set(rno, saved);
     }
-
-    if (raceCreates.length) await withRateLimitRetry(() => sr.Race.bulkCreate(raceCreates));
-    if (raceUpdates.length) await withRateLimitRetry(() => sr.Race.bulkUpdate(raceUpdates));
-
-    const savedRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 30).catch(() => []);
-    const raceByNo = new Map(savedRaces.map((r: any) => [Number(r.race_number), r]));
     const existingEntryByKey = new Map(existingEntries.map((e: any) => [`${Number(e.race_number)}_${Number(e.boat_number)}`, e]));
     const entryCreates: any[] = [];
     const entryUpdates: any[] = [];
