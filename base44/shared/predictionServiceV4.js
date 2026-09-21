@@ -583,7 +583,9 @@ export async function verifyV4Prediction(client, race, resultData) {
     };
 
     // upsert
-    const existing = await sr.PredictionV4Verification.filter({ race_id: race.id }, "-verified_at", 1).catch(() => []);
+    const existing = await sr.PredictionV4Verification.filter(
+      race.race_key ? { race_key: race.race_key } : { race_id: race.id }, "-verified_at", 1
+    ).catch(() => []);
     let saved;
     if (existing?.[0]) saved = await sr.PredictionV4Verification.update(existing[0].id, verifDoc);
     else saved = await sr.PredictionV4Verification.create(verifDoc);
