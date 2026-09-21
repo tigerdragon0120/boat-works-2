@@ -115,34 +115,42 @@ export default function LanePast10Table({ entries, race }) {
 
       const statsByKey = {};
       for (const r of data.racers) {
-        const entry = entries.find((e) => Number(e.boat_number) === r.lane);
+        const lane = safeLaneNumber(r.lane);
+        if (lane == null) continue;
+        const entry = entries.find((e) => Number(e.boat_number) === lane);
         const reg = String(entry?.register_number || entry?.registration_number || "");
-        const recent10 = r.past10.map((p) => {
-          const { finish_order, finish_status } = normalizeWaku10Finish(p.finish);
-          // BOATCAST WAKU10形式: 進入コース欄が空欄=艇番と同じ(デフォルト進入)。
-          // BOATCAST本家準拠: 空欄時は艇番をデフォルト進入コースとして表示する。
-          const course = safeLaneNumber(p.course);
+        if (!reg) continue;
+
+        // BOATCASTは「前走→10走前」の順で返すため、画面用に「10走前→前走」へ反転する。
+        // 進入欄の空欄は枠なり進入を意味するので、現在の枠番で確実に補完する。
+        const newestFirst = Array.isArray(r.past10) ? r.past10.slice(0, 10) : [];
+        const recent10 = newestFirst.map((p) => {
+          const { finish_order, finish_status } = normalizeWaku10Finish(p?.finish);
+          const course = safeLaneNumber(p?.course) ?? lane;
           return {
-            course: course != null ? course : r.lane,
+            course,
             finish_order,
             finish_status,
             st: null,
             start_order: null,
             is_disqualified: false,
-            is_absent: p.finish === "欠",
+            is_absent: p?.finish === "欠",
           };
         }).reverse();
-        statsByKey[`${reg}_${r.lane}`] = {
+        while (recent10.length < 10) recent10.unshift(null);
+
+        statsByKey[`${reg}_${lane}`] = {
           registration_number: reg,
-          lane: r.lane,
-          winning_rate: r.winRate,
-          avg_st: r.avgSt,
-          avg_start_order: r.stRank,
-          sample_count: r.past10.filter((p) => p.finish !== "欠").length,
-          total_lane_count: 10,
+          lane,
+          winning_rate: Number.isFinite(Number(r.winRate)) ? Number(r.winRate) : null,
+          avg_st: Number.isFinite(Number(r.avgSt)) ? Number(r.avgSt) : null,
+          avg_start_order: Number.isFinite(Number(r.stRank)) ? Number(r.stRank) : null,
+          sample_count: newestFirst.filter((p) => p?.finish && p.finish !== "欠").length,
+          total_lane_count: newestFirst.length,
           recent10,
           profile: {},
-          status: "ok",
+          status: newestFirst.length > 0 ? "ok" : "error",
+          error: newestFirst.length > 0 ? null : "BOATCAST WAKU10データなし",
         };
       }
       return statsByKey;
@@ -252,7 +260,14 @@ export default function LanePast10Table({ entries, race }) {
 
   return (
     <div className="bg-slate-900 overflow-x-auto [-webkit-overflow-scrolling:touch] pb-4">
-      <table className="border-collapse min-w-[760px] w-full">
+      <table className="border-collapse min-w-[808px] w-full table-fixed">
+        <colgroup>
+          <col className="w-[200px]" />
+          {Array.from({ length: 10 }).map((_, i) => <col key={`history-col-${i}`} className="w-[44px]" />)}
+          <col className="w-[56px]" />
+          <col className="w-[56px]" />
+          <col className="w-[56px]" />
+        </colgroup>
         {/* ヘッダー: 2段 */}
         <thead>
           <tr className="bg-slate-800">
@@ -296,9 +311,9 @@ export default function LanePast10Table({ entries, race }) {
                   {Array.from({ length: 10 }).map((_, i) => (
                     <CourseCell key={i} h={recent10[i]} loading={isLoading} isError={isError} />
                   ))}
-                  <StatCell rowSpan={2} value={Number.isFinite(stats?.winning_rate) ? Number(stats.winning_rate).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} highlight />
-                  <StatCell rowSpan={2} value={Number.isFinite(stats?.avg_st) ? Number(stats.avg_st).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} mono />
-                  <StatCell rowSpan={2} value={Number.isFinite(stats?.avg_start_order) ? Number(stats.avg_start_order).toFixed(1) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} />
+                  <StatCell rowSpan={2} value={stats?.winning_rate != null && Number.isFinite(Number(stats.winning_rate)) ? Number(stats.winning_rate).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} highlight />
+                  <StatCell rowSpan={2} value={stats?.avg_st != null && Number.isFinite(Number(stats.avg_st)) ? Number(stats.avg_st).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} mono />
+                  <StatCell rowSpan={2} value={stats?.avg_start_order != null && Number.isFinite(Number(stats.avg_start_order)) ? Number(stats.avg_start_order).toFixed(1) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} />
                 </tr>
                 {/* 下段: 着順 */}
                 <tr className="bg-slate-800/40">
@@ -355,7 +370,7 @@ function RacerInfo({ e, reg, profile, sampleCount }) {
 function CourseCell({ h, loading, isError }) {
   if (loading) return <td className="border border-slate-700 text-center text-slate-700 animate-pulse text-[10px] py-0.5">…</td>;
   if (isError || !h) return <td className="border border-slate-700 bg-slate-900/50 text-center text-slate-700 text-[10px] py-0.5">—</td>;
-  const course = Number.isFinite(h.course) ? h.course : null;
+  const course = safeLaneNumber(h.course);
   return (
     <td className={cn("border border-slate-700 text-center font-black text-[11px] py-0.5", course != null ? (courseBg[course] || "bg-slate-700 text-slate-300") : "bg-slate-900/50 text-slate-700")}>
       {course != null ? course : "—"}
