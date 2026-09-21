@@ -51,15 +51,69 @@ export async function getSettings() {
 }
 
 // 今日のレース一覧(終了済みは別途)
+function raceDisplayScore(r) {
+  let score = 0;
+  if (r?.has_final) score += 40;
+  if (r?.exhibition_ready) score += 30;
+  if (r?.has_pre) score += 20;
+  if (r?.prediction_grade) score += 5;
+  if (r?.deadline) score += 2;
+  if (r?.status === "finished") score += 1;
+  return score;
+}
+
+function dedupeRacesForDisplay(races) {
+  const byKey = new Map();
+  for (const race of races || []) {
+    const key = race.race_key || `${race.race_date}_${String(race.venue_code || "").padStart(2, "0")}_${String(race.race_number || "").padStart(2, "0")}`;
+    const current = byKey.get(key);
+    if (!current || raceDisplayScore(race) > raceDisplayScore(current) ||
+        (raceDisplayScore(race) === raceDisplayScore(current) &&
+         String(race.updated_date || "") > String(current.updated_date || ""))) {
+      byKey.set(key, race);
+    }
+  }
+  return [...byKey.values()];
+}
+
+// 今日のレース一覧。同一race_keyが重複していても画面には1Rにつき1件だけ返す。
 export async function listTodayRaces({ includeFinished = false } = {}) {
   const races = await withRetry(() => base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500));
-  if (!includeFinished) return (races || []).filter((r) => r.status !== "finished" && r.status !== "cancelled");
-  return races || [];
+  const unique = dedupeRacesForDisplay(races || []);
+  if (!includeFinished) return unique.filter((r) => r.status !== "finished" && r.status !== "cancelled");
+  return unique;
 };
 
-// レース詳細(エントリー一覧)
-export async function getRaceEntries(raceId) {
-  return await withRetry(() => base44.entities.RaceEntry.filter({ race_id: raceId }, "boat_number", 6));
+function entryCompleteness(e) {
+  return (e?.registration_number || e?.register_number ? 20 : 0) +
+    (e?.player_name || e?.racer_name ? 10 : 0) +
+    (e?.exhibition_time != null ? 8 : 0) +
+    (e?.national_win_rate != null ? 4 : 0) +
+    (e?.section_points != null || e?.section_finishes ? 2 : 0);
+}
+
+function dedupeEntries(entries) {
+  const byBoat = new Map();
+  for (const entry of entries || []) {
+    const boat = Number(entry.boat_number);
+    if (!Number.isFinite(boat) || boat < 1 || boat > 6) continue;
+    const current = byBoat.get(boat);
+    if (!current || entryCompleteness(entry) > entryCompleteness(current) ||
+        (entryCompleteness(entry) === entryCompleteness(current) &&
+         String(entry.updated_date || "") > String(current.updated_date || ""))) {
+      byBoat.set(boat, entry);
+    }
+  }
+  return [...byBoat.values()].sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
+}
+
+// レース詳細。race_idに紐づく行が欠けている場合は共通race_keyから6艇を復元する。
+export async function getRaceEntries(raceId, raceKey = null) {
+  const byId = await withRetry(() => base44.entities.RaceEntry.filter({ race_id: raceId }, "boat_number", 50));
+  const uniqueById = dedupeEntries(byId);
+  if (uniqueById.length >= 6 || !raceKey) return uniqueById;
+  const byKey = await withRetry(() => base44.entities.RaceEntry.filter({ race_key: raceKey }, "-updated_date", 100));
+  return dedupeEntries([...(byId || []), ...(byKey || [])]);
 }
 
 // 既存予想取得(race_id+stage+versionで1件)
