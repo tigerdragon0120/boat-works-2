@@ -78,8 +78,8 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
             )}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1">
-          {["v4", "v5", "v6"].map((version) => (
+        <div className="grid grid-cols-4 gap-1 rounded-lg bg-slate-100 p-1">
+          {["mix", "v4", "v5", "v6"].map((version) => (
             <button
               key={version}
               type="button"
@@ -87,7 +87,9 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
               className={cn(
                 "h-8 rounded-md text-xs font-black uppercase transition-colors",
                 predictionVersion === version
-                  ? version === "v4"
+                  ? version === "mix"
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : version === "v4"
                     ? "bg-blue-600 text-white shadow-sm"
                     : version === "v5"
                     ? "bg-cyan-500 text-slate-950 shadow-sm"
@@ -95,7 +97,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
                   : "text-slate-500 hover:bg-white hover:text-slate-900"
               )}
             >
-              {version.toUpperCase()}
+              {version === "mix" ? "合成" : version.toUpperCase()}
             </button>
           ))}
         </div>
@@ -139,7 +141,13 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {/* === FINAL オッズ取得待ちバナー === */}
+            {predictionVersion === "mix" && (
+              <div className="rounded-xl border border-violet-400/40 bg-violet-500/10 p-2.5 text-[11px] font-semibold text-violet-200">
+                V4的中型 × V5展開型 × V6利益型の合成FINAL
+                {activePred?.consensus_score != null && <span className="ml-2">一致度 {activePred.consensus_score}%</span>}
+              </div>
+            )}
+            {/* === FINAL オッズ取得待ちバナー === */
             {pendingOdds && (
               <div className="rounded-xl border-2 border-amber-400/60 bg-amber-500/10 p-2.5 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
