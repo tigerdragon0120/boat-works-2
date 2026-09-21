@@ -87,7 +87,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
               className={cn(
                 "h-8 rounded-md text-xs font-black uppercase transition-colors",
                 predictionVersion === version
-                  ? ({ mix: "bg-violet-600 text-white shadow-sm", v4: "bg-blue-600 text-white shadow-sm", v5: "bg-cyan-500 text-slate-950 shadow-sm", v6: "bg-rose-500 text-white shadow-sm" }[version])
+                  ? "bg-blue-600 text-white shadow-sm"
                   : "text-slate-500 hover:bg-white hover:text-slate-900"
               )}
             >
