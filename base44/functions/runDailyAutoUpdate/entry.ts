@@ -5,6 +5,7 @@ import { upsertRace, upsertEntry, dedupRace, upsertResultAndVerify, upsertBoatca
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
 import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
+import { runAndSaveEnsemble } from '../../shared/predictionServiceEnsemble.js';
 // V6 policy bundle v6.2: 本命・買い目・シナリオ整合 + 1号艇逃げ利益型BUY
 import { runAndSavePredictionV61, verifyV61Prediction } from '../../shared/predictionServiceV61.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
@@ -765,6 +766,18 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: V6 FINAL予想失敗 ${e.message}`);
+        }
+
+        // V4・V5展開・V6を合成した最終判断。画面と検証の主判定に使う。
+        try {
+          const ensembleResult = await runAndSaveEnsemble(base44, race, entries);
+          if (ensembleResult?.skipped) {
+            logs.push(`${venueName} R${raceNumber}: 合成FINALスキップ(${ensembleResult.reason || 'unknown'})`);
+          } else {
+            logs.push(`${venueName} R${raceNumber}: 合成FINAL生成 → ${ensembleResult?.prediction?.final_judgment || '判定保存'}`);
+          }
+        } catch (e: any) {
+          errors.push(`${venueName} R${raceNumber}: 合成FINAL予想失敗 ${e.message}`);
         }
 
         // V6.1は画面の買い目へは出さず、比較検証用のシャドー予想として保存する。
