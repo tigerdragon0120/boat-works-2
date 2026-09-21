@@ -89,7 +89,7 @@ export default function Venue() {
         console.warn("節間成績の自動取得に失敗", sectionKey, err);
       }
     }
-    // 締切60分前〜5分後で展示が未取得なら、画面を開いた時にも1回だけ即時取得する。
+    // 締切60分前〜30分後で展示が未取得なら、画面を開いた時にも1回だけ即時取得する。
     // 5分周期ワーカーが大量の重複Raceで対象レースまで到達できない場合の安全網。
     const activeEntries = (es || []).filter((e) => !e.is_absent && !e.is_scratched);
     const hasCompleteExhibition = activeEntries.length > 0 && activeEntries.every((e) =>
@@ -98,7 +98,7 @@ export default function Venue() {
     const deadlineMs = r.deadline ? new Date(r.deadline).getTime() : NaN;
     const nowMs = Date.now();
     const inExhibitionWindow = Number.isFinite(deadlineMs) &&
-      nowMs >= deadlineMs - 60 * 60 * 1000 && nowMs <= deadlineMs + 5 * 60 * 1000;
+      nowMs >= deadlineMs - 60 * 60 * 1000 && nowMs <= deadlineMs + 30 * 60 * 1000;
     if (!hasCompleteExhibition && inExhibitionWindow && !exhibitionFetchTried.current.has(sectionKey)) {
       exhibitionFetchTried.current.add(sectionKey);
       try {
