@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { cn } from "@/lib/utils";
+import { dedupeVerifications } from "@/lib/verificationUtils";
 import { Target, AlertCircle, CheckCircle2, XCircle, Anchor } from "lucide-react";
 
 const TARGET_HIT_RATE = 30;
@@ -25,7 +26,9 @@ export default function V3V4Comparison() {
         base44.entities.PredictionV3Verification.list('-verified_at', 500).catch(() => []),
         base44.entities.PredictionV4Verification.list('-verified_at', 500).catch(() => []),
       ]);
-      setSummary(computeSummary(v3Verifs || [], v4Verifs || [], period));
+      setSummary(computeSummary(
+        dedupeVerifications(v3Verifs), dedupeVerifications(v4Verifs), period
+      ));
     } catch (e) {
       console.error("V3V4Comparison fetch error:", e);
     } finally {
