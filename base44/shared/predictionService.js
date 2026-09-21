@@ -115,7 +115,7 @@ function raceCompleteness(r, entryCount, hasResult) {
 // race_keyの重複Raceを安全に統合。子レコード(RaceEntry/RaceResult/RacePrediction等)のrace_idを正規Raceへ付け替え、重複を削除。
 export async function dedupRace(client, raceKey) {
   const sr = client.asServiceRole.entities;
-  const all = await sr.Race.filter({ race_key: raceKey }, "created_date", 50).catch(() => []);
+  const all = await sr.Race.filter({ race_key: raceKey }, "created_date", 500).catch(() => []);
   if (!all || all.length <= 1) return all[0] || null;
   // 子レコード数と結果の有無を集計
   const entryCounts = {};
@@ -147,8 +147,17 @@ export async function dedupRace(client, raceKey) {
     await sr.RaceEntry.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
     await sr.RaceResult.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
     await sr.RacePrediction.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV2.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV3.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV4.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV6.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
     await sr.OddsSnapshot.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
     await sr.PredictionVerification.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV2Verification.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV3Verification.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV4Verification.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV6Verification.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
+    await sr.PredictionV61Verification.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
     await sr.PredictionLearningSample.updateMany({ race_id: l.id }, { $set: { race_id: winner.id } }).catch(() => {});
     await sr.Race.delete(l.id).catch(() => {});
   }
@@ -189,18 +198,20 @@ export async function dedupEntriesForRace(client, raceId, raceKey) {
 // race_keyでRaceをupsert(保護付き + 作成後デデアップ安全網)
 export async function upsertRace(client, raceData) {
   const sr = client.asServiceRole.entities;
-  const existing = await sr.Race.filter({ race_key: raceData.race_key }, "-updated_date", 1);
+  const existing = await sr.Race.filter({ race_key: raceData.race_key }, "-updated_date", 2);
   if (existing && existing[0]) {
-    const merged = mergeProtect(existing[0], raceData);
-    if (existing[0].status === "final" && (merged.status === "scheduled" || merged.status === "pre")) merged.status = "final";
-    if (existing[0].status === "finished") merged.status = "finished";
-    return await sr.Race.update(existing[0].id, merged);
+    const target = existing.length > 1
+      ? (await dedupRace(client, raceData.race_key).catch(() => null)) || existing[0]
+      : existing[0];
+    const merged = mergeProtect(target, raceData);
+    if (target.status === "final" && (merged.status === "scheduled" || merged.status === "pre")) merged.status = "final";
+    if (target.status === "finished") merged.status = "finished";
+    return await sr.Race.update(target.id, merged);
   }
   const created = await sr.Race.create(raceData);
-  // 通常は作成したRaceをそのまま返す。旧実装では直後のdedupRaceが
-  // レート制限等で検索失敗→nullを返し、呼出側でrace.id参照エラーになっていた。
-  // 重複整理は既存の整合性ガード/専用処理に任せる。
-  return created;
+  // 2つの5分周期ワーカーが同時に作成しても、race_key単位で直後に1件へ統合する。
+  const canonical = await dedupRace(client, raceData.race_key).catch(() => null);
+  return canonical || created;
 }
 
 // race_key+boat_numberでRaceEntryをupsert(保護付き + 作成後デデアップ安全網)
