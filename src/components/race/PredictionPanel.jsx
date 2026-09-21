@@ -141,13 +141,6 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            <div className={cn(
-              "rounded-xl border border-violet-400/40 bg-violet-500/10 p-2.5 text-[11px] font-semibold text-violet-200",
-              predictionVersion !== "mix" && "hidden"
-            )}>
-              V4的中型 × V5展開型 × V6利益型の合成FINAL
-              <span className="ml-2">一致度 {activePred?.consensus_score ?? "—"}%</span>
-            </div>
             {/* === FINAL オッズ取得待ちバナー === */
             {pendingOdds && (
               <div className="rounded-xl border-2 border-amber-400/60 bg-amber-500/10 p-2.5 flex items-center gap-2">
