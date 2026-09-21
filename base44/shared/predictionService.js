@@ -379,7 +379,17 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   if (stage === "FINAL" && result.set_metrics?.odds_mapping_error) {
     const missing = result.set_metrics.missing_odds || [];
     console.error(`[ODDS_MAPPING_ERROR] race=${race.id} key=${race.race_key} missing=${missing.join(",")}`);
-    const { id: errPredId } = await getOrCreatePrediction(client, race.id, race.race_key, stage);
+    const { id: errPredId, existing: existingErrPred } = await getOrCreatePrediction(client, race.id, race.race_key, stage);
+    // 一度COMPLETEDになったFINALは、後続の一時的なオッズ欠損でMISSINGへ戻さない。
+    if (existingErrPred?.status === "COMPLETED") {
+      return {
+        predictionId: errPredId,
+        result,
+        skipped: true,
+        reason: "FINAL_ALREADY_COMPLETED_KEEP_STATUS",
+        missing_odds: missing,
+      };
+    }
     await client.asServiceRole.entities.RacePrediction.update(errPredId, {
       race_id: race.id, race_key: race.race_key, stage, prediction_version: VERSION,
       computed_at: new Date().toISOString(),
