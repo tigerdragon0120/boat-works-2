@@ -392,7 +392,7 @@ function FinishCell({ h, loading, isError }) {
 }
 
 // 右端集計セル(rowSpan=2)
-function StatCell({ value, loading, isError, isNoData, highlight, mono, rowSpan }) {
+function StatCell({ value, loading, isError, isNoData, highlight = false, mono = false, rowSpan }) {
   const cls = cn(
     "border border-slate-700 bg-slate-800/60 text-center font-bold py-1",
     mono ? "font-mono text-[10px]" : "text-[11px]",
