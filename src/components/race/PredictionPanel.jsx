@@ -87,7 +87,11 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
               className={cn(
                 "h-8 rounded-md text-xs font-black uppercase transition-colors",
                 predictionVersion === version
-                  ? "bg-blue-600 text-white shadow-sm"
+                  ? version === "v4"
+                    ? "bg-blue-600 text-white shadow-sm"
+                    : version === "v5"
+                    ? "bg-cyan-500 text-slate-950 shadow-sm"
+                    : "bg-rose-500 text-white shadow-sm"
                   : "text-slate-500 hover:bg-white hover:text-slate-900"
               )}
             >
@@ -135,7 +139,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
           </div>
         ) : (
           <div className="flex flex-col gap-3">
-            {/* === FINAL オッズ取得待ちバナー === */
+            {/* === FINAL オッズ取得待ちバナー === */}
             {pendingOdds && (
               <div className="rounded-xl border-2 border-amber-400/60 bg-amber-500/10 p-2.5 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
