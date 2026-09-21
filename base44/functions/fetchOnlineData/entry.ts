@@ -10,6 +10,28 @@ const num = (v: any) => {
 };
 const str = (v: any) => (v != null ? String(v).trim() : '');
 
+function entryQuality(e: any) {
+  return (e?.registration_number || e?.register_number ? 20 : 0) +
+    (e?.player_name || e?.racer_name ? 10 : 0) +
+    (e?.exhibition_time != null ? 8 : 0) +
+    (e?.section_points != null || e?.section_finishes ? 2 : 0);
+}
+
+function uniqueEntriesByBoat(entries: any[]) {
+  const byBoat = new Map<number, any>();
+  for (const entry of entries || []) {
+    const boat = Number(entry.boat_number);
+    if (!Number.isFinite(boat) || boat < 1 || boat > 6) continue;
+    const current = byBoat.get(boat);
+    if (!current || entryQuality(entry) > entryQuality(current) ||
+        (entryQuality(entry) === entryQuality(current) &&
+         String(entry.updated_date || '') > String(current.updated_date || ''))) {
+      byBoat.set(boat, entry);
+    }
+  }
+  return [...byBoat.values()].sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
+}
+
 // === エラー繰り返し防止: 直近5分以内の同レース同fetch_typeの失敗をスキップ ===
 async function shouldSkipRecentFailure(base44: any, fetchType: string, raceDate: string, venueCode: string, raceNumber: number): Promise<boolean> {
   const sr = base44.asServiceRole.entities;
@@ -34,7 +56,8 @@ async function processSection(base44: any, race: any, parsed: any) {
   const sr = base44.asServiceRole.entities;
   const raceData = parsed?.venues?.[0]?.races?.[0];
   const parsedEntries = raceData?.entries || [];
-  const existingEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+  const entryRows = await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []);
+  const existingEntries = uniqueEntriesByBoat(entryRows);
   const entryByBoat = new Map(existingEntries.map((e: any) => [Number(e.boat_number), e]));
   let updated = 0;
 
@@ -60,8 +83,9 @@ async function processSection(base44: any, race: any, parsed: any) {
 async function processExhibition(base44: any, race: any, parsed: any) {
   const sr = base44.asServiceRole.entities;
   const parsedEntries = parsed.entries || [];
-  const existingEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
-  const entryByBoat = new Map(existingEntries.map((e: any) => [e.boat_number, e]));
+  const entryRows = await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []);
+  const existingEntries = uniqueEntriesByBoat(entryRows);
+  const entryByBoat = new Map(existingEntries.map((e: any) => [Number(e.boat_number), e]));
 
   let updated = 0;
   for (const pe of parsedEntries) {
@@ -137,7 +161,8 @@ async function processOdds(base44: any, race: any, parsed: any) {
   // FINAL生成条件: 展示データあり + 6艇 + オッズ120組(全組)あり
   // 展示取得済みでFINAL未生成の場合、FINAL予想を生成
   if (race.exhibition_ready && !race.has_final && oddsCount >= 120) {
-    const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+    const entryRows = await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []);
+    const entries = uniqueEntriesByBoat(entryRows);
     if (entries.length >= 6) {
       try {
         const settings = await getSettings(base44);
