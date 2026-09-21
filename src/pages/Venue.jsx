@@ -29,6 +29,7 @@ export default function Venue() {
   const [busy, setBusy] = useState(false);
   const [rankMode, setRankMode] = useState("prob");
   const sectionFetchTried = useRef(new Set());
+  const exhibitionFetchTried = useRef(new Set());
 
   const loadList = async () => {
     setLoading(true);
@@ -86,6 +87,28 @@ export default function Venue() {
         es = await getRaceEntries(selectedId, r.race_key);
       } catch (err) {
         console.warn("節間成績の自動取得に失敗", sectionKey, err);
+      }
+    }
+    // 締切60分前〜5分後で展示が未取得なら、画面を開いた時にも1回だけ即時取得する。
+    // 5分周期ワーカーが大量の重複Raceで対象レースまで到達できない場合の安全網。
+    const activeEntries = (es || []).filter((e) => !e.is_absent && !e.is_scratched);
+    const hasCompleteExhibition = activeEntries.length > 0 && activeEntries.every((e) =>
+      e.exhibition_time != null && e.exhibition_st != null
+    );
+    const deadlineMs = r.deadline ? new Date(r.deadline).getTime() : NaN;
+    const nowMs = Date.now();
+    const inExhibitionWindow = Number.isFinite(deadlineMs) &&
+      nowMs >= deadlineMs - 60 * 60 * 1000 && nowMs <= deadlineMs + 5 * 60 * 1000;
+    if (!hasCompleteExhibition && inExhibitionWindow && !exhibitionFetchTried.current.has(sectionKey)) {
+      exhibitionFetchTried.current.add(sectionKey);
+      try {
+        const exhibitionResult = await fetchOnlineData("exhibition", r.race_date, r.venue_code, r.race_number, r.id);
+        es = await getRaceEntries(selectedId, r.race_key);
+        if (exhibitionResult?.data?.exhibition_ready === true) {
+          setRace((prev) => prev ? { ...prev, exhibition_ready: true } : prev);
+        }
+      } catch (err) {
+        console.warn("展示データの即時取得に失敗", sectionKey, err);
       }
     }
     setEntries(es || []);
