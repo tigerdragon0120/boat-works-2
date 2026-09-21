@@ -78,8 +78,8 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
             )}
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-1 rounded-lg bg-slate-100 p-1">
-          {["mix", "v4", "v5", "v6"].map((version) => (
+        <div className="grid grid-cols-3 gap-1 rounded-lg bg-slate-100 p-1">
+          {["v4", "v5", "v6"].map((version) => (
             <button
               key={version}
               type="button"
@@ -91,7 +91,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
                   : "text-slate-500 hover:bg-white hover:text-slate-900"
               )}
             >
-              {version === "mix" ? "合成" : version.toUpperCase()}
+              {version.toUpperCase()}
             </button>
           ))}
         </div>
