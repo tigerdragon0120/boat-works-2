@@ -72,7 +72,7 @@ export default function Venue() {
     const r = races.find((x) => x.id === selectedId);
     setRace(r);
     if (!r) return;
-    let es = await getRaceEntries(selectedId);
+    let es = await getRaceEntries(selectedId, r.race_key);
 
     // 節間成績が未取得なら、そのレースの公式racelistから自動補完する。
     const hasSection = (es || []).some((e) =>
@@ -83,7 +83,7 @@ export default function Venue() {
       sectionFetchTried.current.add(sectionKey);
       try {
         await fetchOnlineData("section", r.race_date, r.venue_code, r.race_number, r.id);
-        es = await getRaceEntries(selectedId);
+        es = await getRaceEntries(selectedId, r.race_key);
       } catch (err) {
         console.warn("節間成績の自動取得に失敗", sectionKey, err);
       }
