@@ -36,7 +36,7 @@ export default function RaceDetail() {
 
     const r = await base44.entities.Race.get(id);
     setRace(r);
-    const es = await getRaceEntries(id);
+    const es = await getRaceEntries(id, r?.race_key);
     setEntries(es || []);
 
     // === V4 FINAL自動生成保証 ===
