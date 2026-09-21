@@ -7,27 +7,37 @@ function toHalfWidth(s: string): string {
 
 // waku10テキスト解析(本関数固有の処理)
 function parseWaku10(text: string) {
-  const lines = text.split('\n').filter(l => l.trim() && l !== 'data=');
-  const racerLines = lines.slice(1); // "1\t0" ヘッダーをスキップ
+  const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim() && l.trim() !== 'data=');
+  const racerLines = lines.slice(1, 7); // "1\t0" ヘッダーを除き、1〜6号艇だけを読む
 
   return racerLines.map((line: string, idx: number) => {
+    const lane = idx + 1;
     const parts = line.split('\t');
-    const name = parts[0].replace(/[\s　]/g, '');
-    const winRate = parseFloat(parts[1]);
-    const avgSt = parseFloat(parts[2]);
-    const stRank = parseFloat(parts[3]);
+    const name = String(parts[0] || '').replace(/[\s　]/g, '');
+    const parsedWinRate = Number.parseFloat(toHalfWidth(parts[1] || ''));
+    const parsedAvgSt = Number.parseFloat(toHalfWidth(parts[2] || ''));
+    const parsedStRank = Number.parseFloat(toHalfWidth(parts[3] || ''));
 
+    // 1走につき「着順・進入・区分」の3列。必ず直近10走だけを返す。
+    // 進入の空欄は枠なり進入なので、対象枠番で補完する。
     const pastData = parts.slice(4);
-    const past10: any[] = [];
-    for (let i = 0; i < pastData.length; i += 3) {
-      const finishRaw = toHalfWidth(pastData[i] || '').trim();
-      const courseRaw = toHalfWidth(pastData[i + 1] || '').trim();
-      const code = (pastData[i + 2] || '').trim();
-      past10.push({ finish: finishRaw, course: courseRaw, code });
-    }
+    const past10 = Array.from({ length: 10 }, (_, i) => {
+      const offset = i * 3;
+      const finish = toHalfWidth(pastData[offset] || '').trim();
+      const rawCourse = toHalfWidth(pastData[offset + 1] || '').trim();
+      const code = String(pastData[offset + 2] || '').trim();
+      return { finish, course: rawCourse || String(lane), code, course_inferred: !rawCourse };
+    });
 
-    return { lane: idx + 1, name, winRate, avgSt, stRank, past10 };
-  });
+    return {
+      lane,
+      name,
+      winRate: Number.isFinite(parsedWinRate) ? parsedWinRate : null,
+      avgSt: Number.isFinite(parsedAvgSt) ? parsedAvgSt : null,
+      stRank: Number.isFinite(parsedStRank) ? parsedStRank : null,
+      past10,
+    };
+  }).filter((r) => r.name);
 }
 
 export default async function (req: Request) {
@@ -58,6 +68,15 @@ export default async function (req: Request) {
     }
 
     const racers = parseWaku10(result.text);
+    const complete = racers.length === 6 && racers.every((r) => r.past10.length === 10);
+    if (!complete) {
+      return Response.json({
+        ok: false,
+        error: `WAKU10 parse incomplete: racers=${racers.length}`,
+        racers,
+        metadata: result.metadata,
+      }, { status: 502 });
+    }
     return Response.json({ ok: true, racers, metadata: result.metadata });
   } catch (e: any) {
     return Response.json({ ok: false, error: e.message }, { status: 500 });
