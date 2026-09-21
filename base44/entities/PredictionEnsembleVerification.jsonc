@@ -1,0 +1,69 @@
+{
+  "name": "PredictionEnsembleVerification",
+  "type": "object",
+  "description": "V4/V5/V6\u5408\u6210FINAL\u306e\u691c\u8a3c\u7d50\u679c\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "actual_result": {
+      "type": "string"
+    },
+    "final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "recommended_hit": {
+      "type": "boolean"
+    },
+    "ticket_count": {
+      "type": "number"
+    },
+    "selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "payout": {
+      "type": "number"
+    },
+    "investment": {
+      "type": "number"
+    },
+    "recovery_rate": {
+      "type": "number"
+    },
+    "consensus_score": {
+      "type": "number"
+    },
+    "engine_votes": {
+      "type": "object"
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id",
+    "race_key"
+  ]
+}

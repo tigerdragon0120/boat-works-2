@@ -1,0 +1,100 @@
+{
+  "name": "PredictionEnsemble",
+  "type": "object",
+  "description": "V4\u7684\u4e2d\u578b\u30fbV5\u5c55\u958b\u578b\u30fbV6\u5229\u76ca\u578b\u3092\u4e88\u6e2c\u6642\u70b9\u3067\u5408\u6210\u3057\u305f\u6700\u7d42\u5224\u65ad\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "FINAL"
+      ]
+    },
+    "prediction_version": {
+      "type": "string",
+      "default": "ensemble_v1"
+    },
+    "computed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "judgment_reason": {
+      "type": "string"
+    },
+    "ticket_count": {
+      "type": "number"
+    },
+    "selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "trifectas": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "honmei_boat": {
+      "type": "number"
+    },
+    "taiko_boat": {
+      "type": "number"
+    },
+    "ana_boat": {
+      "type": "number"
+    },
+    "top_trifecta": {
+      "type": "string"
+    },
+    "top_probability": {
+      "type": "number"
+    },
+    "consensus_score": {
+      "type": "number"
+    },
+    "engine_votes": {
+      "type": "object"
+    },
+    "v5_scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "v5_verdict": {
+      "type": "string"
+    },
+    "source_prediction_ids": {
+      "type": "object"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "COMPLETED",
+        "MISSING"
+      ],
+      "default": "COMPLETED"
+    }
+  },
+  "required": [
+    "race_id",
+    "race_key",
+    "stage",
+    "prediction_version"
+  ]
+}
