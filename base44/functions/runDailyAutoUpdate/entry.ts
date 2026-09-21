@@ -601,12 +601,12 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     if (race.exhibition_ready) continue;
     if (race.status === 'finished' || race.status === 'cancelled') continue;
 
-    // 直前情報は締切の60分前〜締切5分後だけ取得する。
+    // 直前情報は締切の60分前〜締切30分後まで取得する（遅延・復旧時も回収）。
     if (!race.deadline) continue;
     const deadlineMs = new Date(race.deadline).getTime();
     if (!Number.isFinite(deadlineMs)) continue;
     const nowMs = Date.now();
-    if (nowMs < deadlineMs - 60 * 60 * 1000 || nowMs > deadlineMs + 5 * 60 * 1000) continue;
+    if (nowMs < deadlineMs - 60 * 60 * 1000 || nowMs > deadlineMs + 30 * 60 * 1000) continue;
 
     const venueCode = race.venue_code;
     const raceNumber = race.race_number;
