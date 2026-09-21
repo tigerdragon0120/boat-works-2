@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { cn } from "@/lib/utils";
+import { dedupeVerifications } from "@/lib/verificationUtils";
 import { Target, TrendingUp, TrendingDown, Trophy, DollarSign, AlertCircle, CheckCircle2, XCircle } from "lucide-react";
 
 // KPI目標値
@@ -31,7 +32,9 @@ export default function V2V3Comparison() {
         // フォールバック: クライアントサイド集計
         const v2Verifs = await base44.entities.PredictionV2Verification.list('-verified_at', 500).catch(() => []);
         const v3Verifs = await base44.entities.PredictionV3Verification.list('-verified_at', 500).catch(() => []);
-        const computed = computeSummaryClient(v2Verifs, v3Verifs, period);
+        const computed = computeSummaryClient(
+          dedupeVerifications(v2Verifs), dedupeVerifications(v3Verifs), period
+        );
         setSummary(computed);
       }
     } catch (e) {
