@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { cn } from "@/lib/utils";
+import { dedupeVerifications } from "@/lib/verificationUtils";
 import { AlertTriangle, CheckCircle2, Scale, Target, XCircle } from "lucide-react";
 
 const TARGET_HIT = 16;
@@ -80,7 +81,7 @@ export default function V2V5Comparison() {
     setLoading(true);
     try {
       const data = await base44.entities.PredictionV2Verification.list("-verified_at", 500).catch(() => []);
-      setRows((data || []).filter(v =>
+      setRows(dedupeVerifications(data).filter(v =>
         v.v2_final_judgment === "BUY" && v.v2_recommended_hit != null
       ));
     } finally {
