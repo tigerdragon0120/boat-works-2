@@ -1,5 +1,6 @@
 // 予想の保存・取得・照合をEntity経由で行うサービス層
 import { base44 } from "@/api/base44Client";
+import { dedupeVerifications } from "@/lib/verificationUtils";
 import { runPrediction, judgeTrifecta } from "@/lib/predictionEngine";
 
 const VERSION = "v3";
@@ -536,7 +537,7 @@ export async function getVerificationSummary() {
   // レース画面と同じ現行V4 FINALだけを検証対象にする。
   // 旧PredictionVerification(V1)を混ぜると、画面の買い目と検証の買い目が別物になる。
   const raw = await base44.entities.PredictionV4Verification.list("-verified_at", 500);
-  const verifs = (raw || [])
+  const verifs = dedupeVerifications(raw)
     .filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")))
     .map((v) => ({
       ...v,
