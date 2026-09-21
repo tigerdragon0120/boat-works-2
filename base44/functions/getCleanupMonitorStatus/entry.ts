@@ -24,6 +24,9 @@ export default async function(req: Request) {
 
     // === Race重複(race_keyごと) ===
     const todayRaces = await sr.Race.filter({ race_date: today }, 'race_number', 500).catch(() => []);
+    const todayRaceIds = new Set(todayRaces.map((r: any) => String(r.id || '')).filter(Boolean));
+    const todayRaceKeys = new Set(todayRaces.map((r: any) => String(r.race_key || '')).filter(Boolean));
+    const raceById = new Map(todayRaces.map((r: any) => [String(r.id || ''), r]));
     const raceByKey: Record<string, number> = {};
     for (const r of todayRaces) {
       const k = r.race_key || 'NO_KEY';
@@ -41,28 +44,44 @@ export default async function(req: Request) {
     const entryDuplicates = Object.entries(entryByKey).filter(([, v]) => v > 1);
 
     // === RaceResult重複(race_idごと) ===
-    const allResults = await sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []);
+    const resultCandidates = await sr.RaceResult.filter({}, '-finished_at', 1000).catch(() => []);
+    const allResults = resultCandidates.filter((r: any) =>
+      todayRaceIds.has(String(r.race_id || '')) || todayRaceKeys.has(String(r.race_key || ''))
+    );
     const resultByRace: Record<string, number> = {};
     for (const r of allResults) {
-      const k = r.race_id || 'NO_RACE';
+      const k = String(r.race_key || r.race_id || 'NO_RACE');
       resultByRace[k] = (resultByRace[k] || 0) + 1;
     }
     const resultDuplicates = Object.entries(resultByRace).filter(([, v]) => v > 1);
 
     // === FINAL予想重複(race_idごと) ===
-    const allFinals = await sr.RacePrediction.filter({ stage: 'FINAL' }, '-computed_at', 500).catch(() => []);
-    const finalByRace: Record<string, number> = {};
+    const finalCandidates = await sr.RacePrediction.filter({ stage: 'FINAL' }, '-computed_at', 1000).catch(() => []);
+    const allFinals = finalCandidates.filter((f: any) =>
+      todayRaceIds.has(String(f.race_id || '')) || todayRaceKeys.has(String(f.race_key || ''))
+    );
+    const finalByRaceVersion: Record<string, number> = {};
     for (const f of allFinals) {
-      const k = f.race_id || 'NO_RACE';
-      finalByRace[k] = (finalByRace[k] || 0) + 1;
+      // V4/V5/V6などバージョン違いは正常。同一race×versionだけを重複として扱う。
+      const raceIdentity = String(f.race_key || f.race_id || 'NO_RACE');
+      const version = String(f.prediction_version || 'NO_VERSION');
+      const k = `${raceIdentity}_${version}`;
+      finalByRaceVersion[k] = (finalByRaceVersion[k] || 0) + 1;
     }
-    const finalDuplicates = Object.entries(finalByRace).filter(([, v]) => v > 1);
+    const finalDuplicates = Object.entries(finalByRaceVersion).filter(([, v]) => v > 1);
 
     // === RESULT_CONFLICT ===
     const resultConflicts = allResults.filter((r: any) => r.conflict_log).length;
 
     // === MISSING逆戻り(COMPLETED→MISSING) ===
-    const missingFinals = allFinals.filter((f: any) => f.status === 'MISSING').length;
+    const missingFinals = allFinals.filter((f: any) => {
+      if (f.status !== 'MISSING') return false;
+      const race = raceById.get(String(f.race_id || ''));
+      // 単なる直前データ待ちは逆戻りではない。
+      // Race側が一度FINAL確定済み(has_final/status final/finished)なのに
+      // 予想だけMISSINGになった場合のみ逆戻りとして数える。
+      return !!race && (race.has_final === true || race.status === 'final' || race.status === 'finished');
+    }).length;
 
     // === BOATCAST vs LOCAL取得元集計 ===
     const boatcastResults = allResults.filter((r: any) => r.source === 'BOATCAST').length;
@@ -99,6 +118,7 @@ export default async function(req: Request) {
     return Response.json({
       ok: true,
       today,
+      scope: 'TODAY_ONLY',
       anomalies,
       all_zero: allZero,
       result_sources: {
