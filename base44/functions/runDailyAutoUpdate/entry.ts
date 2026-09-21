@@ -57,6 +57,47 @@ function nowJSTTime(): string {
   return new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' });
 }
 
+function raceQuality(r: any) {
+  return (r?.has_final ? 40 : 0) + (r?.exhibition_ready ? 30 : 0) +
+    (r?.has_pre ? 20 : 0) + (r?.prediction_grade ? 5 : 0) + (r?.deadline ? 2 : 0);
+}
+
+function uniqueRacesByKey(races: any[]) {
+  const byKey = new Map<string, any>();
+  for (const race of races || []) {
+    const key = String(race.race_key || buildRaceKey(race.race_date, race.venue_code, race.race_number));
+    const current = byKey.get(key);
+    if (!current || raceQuality(race) > raceQuality(current) ||
+        (raceQuality(race) === raceQuality(current) &&
+         String(race.updated_date || '') > String(current.updated_date || ''))) {
+      byKey.set(key, race);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
+}
+
+function entryQuality(e: any) {
+  return (e?.registration_number || e?.register_number ? 20 : 0) +
+    (e?.player_name || e?.racer_name ? 10 : 0) +
+    (e?.exhibition_time != null ? 8 : 0) +
+    (e?.section_points != null || e?.section_finishes ? 2 : 0);
+}
+
+function uniqueEntriesByBoat(entries: any[]) {
+  const byBoat = new Map<number, any>();
+  for (const entry of entries || []) {
+    const boat = Number(entry.boat_number);
+    if (!Number.isFinite(boat) || boat < 1 || boat > 6) continue;
+    const current = byBoat.get(boat);
+    if (!current || entryQuality(entry) > entryQuality(current) ||
+        (entryQuality(entry) === entryQuality(current) &&
+         String(entry.updated_date || '') > String(current.updated_date || ''))) {
+      byBoat.set(boat, entry);
+    }
+  }
+  return [...byBoat.values()].sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
+}
+
 // =====================================================
 // STEP 1&6: 指定日付の番組表取得・保存
 // =====================================================
@@ -245,7 +286,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
   const startTime = Date.now();
 
   // 当日全Race取得
-  const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
+  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   if (!races.length) {
     return { total: 0, fetched: 0, skipped: 0, errors };
   }
@@ -412,7 +453,7 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
   const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
-  const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
+  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   const existingPrePreds = await sr.RacePrediction.filter({ stage: 'PRE' }, '-computed_at', 1000).catch(() => []);
   const completePreKeys = new Set(
     existingPrePreds.filter((p: any) => isCompletePrePrediction(p)).map((p: any) => String(p.race_key || ''))
@@ -552,7 +593,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
   const sr = base44.asServiceRole.entities;
   const startTime = Date.now();
 
-  const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
+  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   let fetched = 0;
 
   for (const race of races) {
@@ -578,7 +619,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const parsed = parseBeforeInfo(res.html);
     if (!parsed.ok || !parsed.data?.entries?.length) continue;
 
-    const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+    const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
     const entryByBoat = new Map(entries.map((e: any) => [e.boat_number, e]));
 
     let updated = 0;
@@ -644,7 +685,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
   const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
   const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
-  const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
+  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   let oddsFetched = 0, finalGenerated = 0, v6FinalGenerated = 0;
 
   for (const race of races) {
@@ -699,7 +740,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
 
     // FINAL予想は締切10〜1分前に再計算する（5分周期でも5分前表示を保証）。
     if (inFinalWindow) {
-      const entries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
+      const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
       if (entries.length >= 6) {
         try {
           const finResult = await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
@@ -765,7 +806,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
 // =====================================================
 async function checkCompleteness(base44: any, raceDate: string, logs: string[]) {
   const sr = base44.asServiceRole.entities;
-  const races = await sr.Race.filter({ race_date: raceDate }, 'race_number', 300).catch(() => []);
+  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   const entries = await sr.RaceEntry.filter({ race_date: raceDate }, 'boat_number', 5000).catch(() => []);
   const results = await sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []);
   const raceIdsWithResult = new Set(results.map((r: any) => r.race_id));
