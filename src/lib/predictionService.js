@@ -792,6 +792,32 @@ export async function resolveV6Prediction(raceId, raceKey) {
   return { stage: null, pred: null, boats: [], trifectas: [] };
 }
 
+
+// V4・V5展開・V6を締切前データだけで合成した最終予想。
+export async function resolveEnsemblePrediction(raceId, raceKey) {
+  let list = await withRetry(() => base44.entities.PredictionEnsemble.filter({
+    race_id: raceId, stage: "FINAL",
+  }, "-computed_at", 1)).catch(() => []);
+  if ((!list || !list.length) && raceKey) {
+    list = await withRetry(() => base44.entities.PredictionEnsemble.filter({
+      race_key: raceKey, stage: "FINAL",
+    }, "-computed_at", 1)).catch(() => []);
+  }
+  const pred = list?.[0];
+  if (!pred || (pred.status && pred.status !== "COMPLETED")) {
+    return { stage: null, pred: null, boats: [], trifectas: [] };
+  }
+  const trifectas = (pred.trifectas || []).map((t, i) => ({
+    ...t,
+    rank: t.rank || i + 1,
+    probability: t.probability ?? 0,
+    current_odds: t.actual_odds ?? null,
+    is_selected: true,
+    ticket_rank: t.ticket_rank || i + 1,
+  }));
+  return { stage: "FINAL", pred, boats: [], trifectas };
+}
+
 // ============================================================
 // V4予想生成(単一レース) — UIからの「PRE/FINAL再実行」「更新」で呼ぶ
 // バックエンド関数 generateV4PredictionForRace を呼び出す
