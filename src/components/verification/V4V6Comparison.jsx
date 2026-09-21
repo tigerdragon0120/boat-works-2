@@ -34,7 +34,25 @@ export default function V4V6Comparison() {
 
   if (loading) return <div className="text-center py-8 text-slate-400 text-sm">V6集計中…</div>;
 
-  const bs = data?.backtest_summary;
+  const storedSummary = data?.backtest_summary;
+  const bs = storedSummary && data ? {
+    ...storedSummary,
+    buy_count: data.buy_count,
+    watch_count: data.watch_count,
+    skip_count: data.skip_count,
+    classified_count: data.buy_count + data.watch_count + data.skip_count,
+    hit_count: data.hit_count,
+    hit_rate: data.hit_rate,
+    recovery_rate: data.recovery_rate,
+    total_investment: data.total_investment,
+    total_return: data.total_return,
+    profit: data.total_return - data.total_investment,
+    avg_ticket_count: data.avg_ticket_count,
+    tickets_6: data.tickets_6,
+    tickets_7: data.tickets_7,
+    tickets_8: data.tickets_8,
+    outcome: { ...(storedSummary.outcome || {}), ...(data.outcome || {}) },
+  } : null;
 
   if (!bs) {
     return (
@@ -64,7 +82,8 @@ export default function V4V6Comparison() {
       {/* ヘッダー */}
       <div className="flex items-center justify-between">
         <div className="text-[11px] text-slate-400">
-          対象{bs.processed}R・生成{bs.generated}R・判定{bs.classified_count ?? (bs.buy_count + bs.watch_count + bs.skip_count)}R・データ不足{bs.insufficient_data}R
+          重複除外後 {data.total}R・判定{bs.classified_count}R
+          {bs.insufficient_data != null && <span>・前回データ不足{bs.insufficient_data}R</span>}
           {bs.policy_version && <span className="ml-2 font-bold text-violet-500">{bs.policy_version}</span>}
           <span className="ml-2 text-slate-300">|</span>
           <span className="ml-2">{bs.backtested_at ? new Date(bs.backtested_at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" }) : ""}</span>
