@@ -33,7 +33,7 @@ export default function Verification() {
       <div>
         <Header onReload={load} />
         <div className="text-center py-20 text-slate-400 text-sm bg-white rounded-2xl border border-dashed border-slate-200">
-          まだ検証できる確定結果がありません。<br />結果が入ると、BUY予想の的中・回収・学習反映を自動集計します。
+          まだ合成FINALの検証結果がありません。<br />次の結果確定から、V4・V5・V6合成BUYの的中率と回収率を自動集計します。
         </div>
       </div>
     );
@@ -67,8 +67,8 @@ export default function Verification() {
       <section>
         <div className="flex items-end justify-between gap-3 mb-2">
           <div>
-            <div className="text-[11px] font-bold text-sky-600">BUY PERFORMANCE</div>
-            <h2 className="font-display font-black text-slate-900 text-lg">BUY予想の成績</h2>
+            <div className="text-[11px] font-bold text-violet-600">V4 × V5 × V6 ENSEMBLE</div>
+            <h2 className="font-display font-black text-slate-900 text-lg">合成BUY予想の成績</h2>
           </div>
           <div className="text-[10px] text-slate-400">確定結果 {summary.total}Rのうち BUY {summary.buy_count}R</div>
         </div>
