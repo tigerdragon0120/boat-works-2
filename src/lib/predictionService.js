@@ -534,25 +534,25 @@ export async function listTodayRaceStatus() {
 
 // 検証集計: 「BUYしたレースが当たったか」を中心に、次の予想ロジック改善へ繋げる
 export async function getVerificationSummary() {
-  // レース画面と同じ現行V4 FINALだけを検証対象にする。
-  // 旧PredictionVerification(V1)を混ぜると、画面の買い目と検証の買い目が別物になる。
-  const raw = await base44.entities.PredictionV4Verification.list("-verified_at", 500);
+  // 主画面と同じV4・V5・V6合成FINALだけを主成績として集計する。
+  // V4単体の成績は比較セクションに残し、ここへ混ぜない。
+  const raw = await base44.entities.PredictionEnsembleVerification.list("-verified_at", 500).catch(() => []);
   const verifs = dedupeVerifications(raw)
     .filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")))
     .map((v) => ({
       ...v,
-      final_judgment: v.v4_final_judgment,
-      recommended_hit: !!v.v4_recommended_hit,
-      investment: Number(v.v4_investment || 0),
-      payout: Number(v.v4_payout || 0),
-      recovery_rate: Number(v.v4_recovery_rate || 0),
-      ticket_count: Number(v.v4_ticket_count || 0),
-      selected_trifectas: v.v4_selected_trifectas || [],
-      pre_prediction: v.v4_pre_prediction || "",
-      final_prediction: v.v4_final_prediction || "",
-      pre_hit: !!v.v4_pre_hit,
-      final_hit: !!v.v4_final_hit,
-      miss_reason: v.miss_reason_primary || null,
+      final_judgment: v.final_judgment,
+      recommended_hit: !!v.recommended_hit,
+      investment: Number(v.investment || 0),
+      payout: Number(v.payout || 0),
+      recovery_rate: Number(v.recovery_rate || 0),
+      ticket_count: Number(v.ticket_count || 0),
+      selected_trifectas: v.selected_trifectas || [],
+      pre_prediction: "",
+      final_prediction: v.selected_trifectas?.[0] || "",
+      pre_hit: false,
+      final_hit: !!v.recommended_hit,
+      miss_reason: null,
     }));
   const total = verifs.length;
   if (total === 0) return { total: 0, records: [] };
