@@ -165,16 +165,18 @@ export default async function(req: Request) {
     let totalReturn = 0;
     const insufficientReasons: Record<string, number> = {};
     const errors: string[] = [];
+    const seenRaceKeys = new Set<string>();
 
     for (const result of uniqueResults) {
-      processed++;
       try {
         // 100BUY到達で打ち切り
         if (buyCount >= targetBuyCount) break;
 
-        // Race取得
+        // Race取得。Race IDが重複していても論理レースはrace_keyで1件にする。
         const race = await withRetry(() => sr.Race.get(result.race_id)).catch(() => null);
-        if (!race || !race.race_key) continue;
+        if (!race || !race.race_key || seenRaceKeys.has(race.race_key)) continue;
+        seenRaceKeys.add(race.race_key);
+        processed++;
 
         // RaceEntry取得
         const entries = await withRetry(() => sr.RaceEntry.filter({ race_key: race.race_key }, 'boat_number', 20));
