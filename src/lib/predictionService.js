@@ -974,7 +974,7 @@ export async function getV6VerificationSummary() {
   const summaryRecord = (raw || []).find((v) => v.race_id === "BACKTEST_SUMMARY_V6" && v.factor_snapshot);
   const backtestSummary = summaryRecord?.factor_snapshot || null;
 
-  const verifs = (raw || []).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
+  const verifs = dedupeVerifications(raw).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
   const total = verifs.length;
   if (total === 0 && !backtestSummary) return { total: 0, backtest_summary: null };
 
@@ -1043,7 +1043,7 @@ export async function getV6VerificationSummary() {
 // ============================================================
 export async function getV2VerificationSummary() {
   const raw = await base44.entities.PredictionV2Verification.list("-verified_at", 500).catch(() => []);
-  const verifs = (raw || []).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
+  const verifs = dedupeVerifications(raw).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
   const total = verifs.length;
   if (total === 0) return { total: 0, v1: {}, v2: {}, comparison: {}, records: [] };
 
