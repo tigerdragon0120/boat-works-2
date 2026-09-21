@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Waves } from "lucide-react";
 import {
   listTodayRaces, getRaceEntries,
-  getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV6Prediction,
+  getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV6Prediction, resolveEnsemblePrediction,
   generateV4PredictionForRace,
 } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
@@ -24,7 +24,8 @@ export default function Venue() {
   // currentPrediction: resolveCurrentPredictionの結果(FINAL優先)
   const [current, setCurrent] = useState(null);
   const [v6Current, setV6Current] = useState(null);
-  const [predictionVersion, setPredictionVersion] = useState("v4");
+  const [ensembleCurrent, setEnsembleCurrent] = useState(null);
+  const [predictionVersion, setPredictionVersion] = useState("mix");
   const [preBoats, setPreBoats] = useState([]);
   const [busy, setBusy] = useState(false);
   const [rankMode, setRankMode] = useState("prob");
@@ -135,13 +136,15 @@ export default function Venue() {
       }
     }
 
-    // V4とV6を同時に取得し、タブ切替時に即座に表示する。
-    const [resolved, resolvedV6] = await Promise.all([
+    // V4・V6・合成FINALを同時に取得し、タブ切替時に即座に表示する。
+    const [resolved, resolvedV6, resolvedEnsemble] = await Promise.all([
       resolveCurrentPrediction(selectedId, r?.race_key),
       resolveV6Prediction(selectedId, r?.race_key),
+      resolveEnsemblePrediction(selectedId, r?.race_key),
     ]);
     setCurrent(resolved);
     setV6Current(resolvedV6);
+    setEnsembleCurrent(resolvedEnsemble);
 
     // FINAL表示時のみPRE boat_scoresを取得(PRE→FINAL比較用)
     if (resolved.stage === "FINAL") {
@@ -161,12 +164,14 @@ export default function Venue() {
     const selectedRace = races.find((x) => x.id === selectedId);
     if (!selectedRace || selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
 
-    const [resolved, resolvedV6] = await Promise.all([
+    const [resolved, resolvedV6, resolvedEnsemble] = await Promise.all([
       resolveCurrentPrediction(selectedId, selectedRace.race_key),
       resolveV6Prediction(selectedId, selectedRace.race_key),
+      resolveEnsemblePrediction(selectedId, selectedRace.race_key),
     ]);
     setCurrent(resolved);
     setV6Current(resolvedV6);
+    setEnsembleCurrent(resolvedEnsemble);
   };
 
   useEffect(() => {
@@ -199,10 +204,13 @@ export default function Venue() {
   if (loading) return <div className="py-24 text-center text-slate-500">読み込み中…</div>;
   if (!raceList.length) return <div className="space-y-4"><Link to="/" className="text-blue-400 text-sm">← レース場一覧へ</Link><div className="py-24 text-center text-slate-500">本日のレースはありません</div></div>;
 
-  // V4/V5はV4予想を基礎にし、V6選択時だけV6保存レコードへ切り替える。
-  const displayedCurrent = predictionVersion === "v6" ? v6Current : current;
+  // 合成を主表示にし、V4/V5/V6は根拠確認用の内訳として残す。
+  const displayedCurrent = predictionVersion === "mix"
+    ? (ensembleCurrent?.pred ? ensembleCurrent : current)
+    : predictionVersion === "v6" ? v6Current : current;
   const activePred = displayedCurrent?.pred;
-  const activeBoats = [...(displayedCurrent?.boats || [])].sort((a, b) => a.boat_number - b.boat_number);
+  const boatSource = predictionVersion === "mix" ? (current?.boats || []) : (displayedCurrent?.boats || []);
+  const activeBoats = [...boatSource].sort((a, b) => a.boat_number - b.boat_number);
   const allTri = displayedCurrent?.trifectas || [];
   const stage = displayedCurrent?.stage;
   const pendingOdds = predictionVersion === "v4" ? displayedCurrent?.pendingOdds : false;
