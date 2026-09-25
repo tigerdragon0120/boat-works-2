@@ -32,7 +32,7 @@ const judgmentStyle = {
 };
 
 const subTabs = ["買い目", "出走表", "直前情報", "オッズ", "3連単", "6艇評価"];
-const filterTabs = ["選手成績", "枠番過去10走", "節間成績", "モーター履歴", "全国成績", "当地成績"];
+const filterTabs = ["選手成績", "得点率早見", "枠番過去10走", "節間成績", "モーター履歴", "全国成績", "当地成績"];
 
 const racerBranchPattern = /^(.*?)[\s　]*(北海道|青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|東京|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|京都|大阪|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)(\/.+)$/;
 
@@ -102,6 +102,10 @@ const filterCols = {
   "選手成績": {
     gridCls: "grid-cols-[28px_1fr_28px_40px_64px_64px_40px] sm:grid-cols-[32px_1fr_36px_48px_76px_76px_52px]",
     headers: ["FL", "ST", "全国勝率", "当地勝率"],
+  },
+  "得点率早見": {
+    gridCls: "grid-cols-[28px_1fr_36px_42px_34px_34px_34px_34px_34px_34px_40px] sm:grid-cols-[32px_1fr_42px_48px_40px_40px_40px_40px_40px_40px_52px]",
+    headers: ["順位", "得点率", "1着", "2着", "3着", "4着", "5着", "6着"],
   },
   "節間成績": {
     gridCls: "grid-cols-[28px_1fr_42px_42px_1fr_46px_40px] sm:grid-cols-[32px_1fr_48px_48px_1fr_56px_52px]",
@@ -210,6 +214,12 @@ function renderDataCols(filter, e) {
   const pct = (v) => (v != null ? `${v}%` : "—");
 
   switch (filter) {
+    case "得点率早見":
+      return [
+        <div key="qr" className="text-center font-black text-slate-900">{e.qualifying_rank != null ? e.qualifying_rank : (e.series_rank ?? "—")}</div>,
+        <div key="qp" className="text-center font-black text-amber-600">{num(e.qualifying_point_rate ?? e.point_rate)}</div>,
+        ...[1,2,3,4,5,6].map(n => <div key={`if${n}`} className="text-center font-semibold text-slate-700">{num(e[`point_rate_if_${n}st`] ?? e[`point_rate_if_${n}nd`] ?? e[`point_rate_if_${n}rd`] ?? e[`point_rate_if_${n}th`])}</div>),
+      ];
     case "節間成績":
       return [
         <div key="pts" className="text-center font-bold text-slate-900">{e.section_points != null ? e.section_points : "—"}</div>,
