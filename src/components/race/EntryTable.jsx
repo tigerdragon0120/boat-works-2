@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import StartTimingPanel from "@/components/race/StartTimingPanel";
 import LanePast10Table from "@/components/race/LanePast10Table";
 import { buildSelectedTickets } from "@/lib/predictionService";
+import { base44 } from "@/api/base44Client";
 
 
 const boatColors = {
@@ -45,6 +46,28 @@ function formatRacerDisplayName(value) {
 export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode, predictionVersion = "v4" }) {
   const [subTab, setSubTab] = useState("出走表");
   const [filter, setFilter] = useState("選手成績");
+  const [tokutenEntries, setTokutenEntries] = useState(entries);
+  const [tokutenLoading, setTokutenLoading] = useState(false);
+  useEffect(() => { setTokutenEntries(entries); }, [entries]);
+  useEffect(() => {
+    if (subTab !== "出走表" || filter !== "得点率早見" || !race?.race_date || !race?.venue_code) return;
+    let alive = true;
+    (async () => {
+      setTokutenLoading(true);
+      try {
+        await base44.functions.invoke("fetchBoatcastTokutenHayami", {
+          race_date: race.race_date,
+          venue_code: String(race.venue_code),
+          race_number: Number(race.race_number || 1),
+        });
+        const fresh = await base44.entities.RaceEntry.filter({ race_id: race.id });
+        if (alive && Array.isArray(fresh) && fresh.length) setTokutenEntries(fresh);
+      } catch (e) {
+        console.error("得点率早見取得失敗", e);
+      } finally { if (alive) setTokutenLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [subTab, filter, race?.id, race?.race_date, race?.venue_code, race?.race_number]);
   const roles = resolveRoleBoats(activePred, activeBoats);
   const displayPred = activePred ? { ...activePred, honmei_boat: roles.honmei, taiko_boat: roles.taiko, ana_boat: roles.ana } : activePred;
 
@@ -86,7 +109,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-auto">
         {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} race={race} predictionVersion={predictionVersion} />}
-        {subTab === "出走表" && <EntryGrid entries={entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />}
+        {subTab === "出走表" && <><EntryGrid entries={filter === "得点率早見" ? tokutenEntries : entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />}{filter === "得点率早見" && tokutenLoading && <div className="px-3 py-2 text-[11px] text-amber-600 font-bold">BOATCAST 得点率早見を取得中…</div>}</>}
         {subTab === "直前情報" && <ExhibitionInfo entries={entries} race={race} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
         {subTab === "3連単" && <TrifectaView probRank={probRank} evRank={evRank} rankMode={rankMode} setRankMode={setRankMode} />}
