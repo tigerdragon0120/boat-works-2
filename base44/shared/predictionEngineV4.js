@@ -243,6 +243,21 @@ function computeV4BoatScores(entries, race, stage) {
     const recent = computeRecentScore(entry);
     const today = isFinal ? computeTodayScore(entry, activeEntries, race) : { score: null, components: {}, isOutside: false };
 
+    // 今節の予選状況を「選手の勝負度」としてスコアへ反映。
+    // 順位だけで決めず、BOATCAST得点率早見が取得済みの時だけ使用する。
+    const qRank = Number(entry.qualifying_rank ?? entry.series_rank);
+    const qRate = Number(entry.qualifying_point_rate ?? entry.point_rate);
+    const hasQualifying = Number.isFinite(qRank) && Number.isFinite(qRate);
+    let motivationAdjustment = 0;
+    let motivationLabel = null;
+    if (hasQualifying) {
+      if (qRank <= 6) { motivationAdjustment = -1.5; motivationLabel = "上位安全圏"; }
+      else if (qRank <= 12) { motivationAdjustment = 0; motivationLabel = "準優圏"; }
+      else if (qRank <= 18) { motivationAdjustment = 4.0; motivationLabel = "ボーダー勝負"; }
+      else if (qRank <= 30) { motivationAdjustment = 2.5; motivationLabel = "勝負がけ"; }
+      else { motivationAdjustment = 0; motivationLabel = "厳しい位置"; }
+    }
+
     let pre_score;
     if (today.score != null) {
       pre_score = clamp(
@@ -257,6 +272,8 @@ function computeV4BoatScores(entries, race, stage) {
       );
     }
 
+    pre_score = clamp(pre_score + motivationAdjustment, 0, 100);
+
     return {
       boat_number: entry.boat_number,
       entry,
@@ -270,15 +287,24 @@ function computeV4BoatScores(entries, race, stage) {
       recent_components: recent.components,
       today_components: today.components,
       isOutside: today.isOutside || entry.boat_number >= 5,
-      reasons: [],
-      notes: [],
+      reasons: hasQualifying ? [`今節: ${motivationLabel}（予選${qRank}位・得点率${qRate.toFixed(2)}）`] : [],
+      notes: hasQualifying && motivationAdjustment !== 0 ? [`勝負度補正 ${motivationAdjustment > 0 ? "+" : ""}${motivationAdjustment}pt`] : [],
     };
   });
 
   if (isFinal) {
     for (const b of boats) {
+      const qRank = Number(b.entry.qualifying_rank ?? b.entry.series_rank);
+      const qRate = Number(b.entry.qualifying_point_rate ?? b.entry.point_rate);
+      let motivationAdjustment = 0;
+      if (Number.isFinite(qRank) && Number.isFinite(qRate)) {
+        if (qRank <= 6) motivationAdjustment = -1.5;
+        else if (qRank <= 12) motivationAdjustment = 0;
+        else if (qRank <= 18) motivationAdjustment = 4.0;
+        else if (qRank <= 30) motivationAdjustment = 2.5;
+      }
       const finalScore = clamp(
-        b.past_score * V4_WEIGHTS.past + b.recent_score * V4_WEIGHTS.recent + b.today_score * V4_WEIGHTS.today,
+        b.past_score * V4_WEIGHTS.past + b.recent_score * V4_WEIGHTS.recent + b.today_score * V4_WEIGHTS.today + motivationAdjustment,
         0, 100
       );
       b.final_score = round1(finalScore);
