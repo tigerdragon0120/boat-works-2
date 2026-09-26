@@ -247,15 +247,25 @@ function computeV4BoatScores(entries, race, stage) {
     // 順位だけで決めず、BOATCAST得点率早見が取得済みの時だけ使用する。
     const qRank = Number(entry.qualifying_rank ?? entry.series_rank);
     const qRate = Number(entry.qualifying_point_rate ?? entry.point_rate);
+    const scenarioScore = Number(entry.qualifying_scenario_score ?? entry.gamble_level);
     const hasQualifying = Number.isFinite(qRank) && Number.isFinite(qRate);
     let motivationAdjustment = 0;
-    let motivationLabel = null;
+    let motivationLabel = entry.qualifying_scenario_label || null;
     if (hasQualifying) {
-      if (qRank <= 6) { motivationAdjustment = -1.5; motivationLabel = "上位安全圏"; }
-      else if (qRank <= 12) { motivationAdjustment = 0; motivationLabel = "準優圏"; }
-      else if (qRank <= 18) { motivationAdjustment = 4.0; motivationLabel = "ボーダー勝負"; }
-      else if (qRank <= 30) { motivationAdjustment = 2.5; motivationLabel = "勝負がけ"; }
-      else { motivationAdjustment = 0; motivationLabel = "厳しい位置"; }
+      // 得点率早見の1〜6着シナリオを優先。順位だけの旧補正はフォールバック。
+      if (Number.isFinite(scenarioScore)) {
+        if (scenarioScore >= 95) motivationAdjustment = 5.0;
+        else if (scenarioScore >= 85) motivationAdjustment = 4.0;
+        else if (scenarioScore >= 65) motivationAdjustment = 2.5;
+        else if (scenarioScore <= 15) motivationAdjustment = -2.0;
+        else if (scenarioScore <= 25) motivationAdjustment = -1.5;
+      } else {
+        if (qRank <= 6) { motivationAdjustment = -1.5; motivationLabel = "上位安全圏"; }
+        else if (qRank <= 12) { motivationAdjustment = 0; motivationLabel = "準優圏"; }
+        else if (qRank <= 18) { motivationAdjustment = 4.0; motivationLabel = "ボーダー勝負"; }
+        else if (qRank <= 30) { motivationAdjustment = 2.5; motivationLabel = "勝負がけ"; }
+        else { motivationAdjustment = 0; motivationLabel = "厳しい位置"; }
+      }
     }
 
     let pre_score;
@@ -296,12 +306,21 @@ function computeV4BoatScores(entries, race, stage) {
     for (const b of boats) {
       const qRank = Number(b.entry.qualifying_rank ?? b.entry.series_rank);
       const qRate = Number(b.entry.qualifying_point_rate ?? b.entry.point_rate);
+      const scenarioScore = Number(b.entry.qualifying_scenario_score ?? b.entry.gamble_level);
       let motivationAdjustment = 0;
       if (Number.isFinite(qRank) && Number.isFinite(qRate)) {
-        if (qRank <= 6) motivationAdjustment = -1.5;
-        else if (qRank <= 12) motivationAdjustment = 0;
-        else if (qRank <= 18) motivationAdjustment = 4.0;
-        else if (qRank <= 30) motivationAdjustment = 2.5;
+        if (Number.isFinite(scenarioScore)) {
+          if (scenarioScore >= 95) motivationAdjustment = 5.0;
+          else if (scenarioScore >= 85) motivationAdjustment = 4.0;
+          else if (scenarioScore >= 65) motivationAdjustment = 2.5;
+          else if (scenarioScore <= 15) motivationAdjustment = -2.0;
+          else if (scenarioScore <= 25) motivationAdjustment = -1.5;
+        } else {
+          if (qRank <= 6) motivationAdjustment = -1.5;
+          else if (qRank <= 12) motivationAdjustment = 0;
+          else if (qRank <= 18) motivationAdjustment = 4.0;
+          else if (qRank <= 30) motivationAdjustment = 2.5;
+        }
       }
       const finalScore = clamp(
         b.past_score * V4_WEIGHTS.past + b.recent_score * V4_WEIGHTS.recent + b.today_score * V4_WEIGHTS.today + motivationAdjustment,
