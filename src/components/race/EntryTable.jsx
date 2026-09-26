@@ -167,8 +167,17 @@ function resolveRoleBoats(activePred, activeBoats = []) {
 }
 
 function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
-  if (!entries.length) return <Empty msg="出走表データがありません" />;
-  if (filter === "枠番過去10走") return <LanePast10Table entries={entries} race={race} />;
+  // 外部データ更新でRaceEntryが一時重複しても、画面は1〜6号艇を各1件だけ表示する。
+  const uniqueEntries = Array.from(
+    new Map(
+      [...(entries || [])]
+        .filter((e) => Number(e?.boat_number) >= 1 && Number(e?.boat_number) <= 6)
+        .sort((a, b) => new Date(a.updated_date || a.created_date || 0) - new Date(b.updated_date || b.created_date || 0))
+        .map((e) => [Number(e.boat_number), e])
+    ).values()
+  ).sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
+  if (!uniqueEntries.length) return <Empty msg="出走表データがありません" />;
+  if (filter === "枠番過去10走") return <LanePast10Table entries={uniqueEntries} race={race} />;
   const scratchedBoats = race?.scratched_boats || [];
   const isScratched = (n) => scratchedBoats.includes(n);
   const roleOf = (n) => {
@@ -190,7 +199,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
         {cfg.headers.map((h) => <div key={h} className="text-center">{h}</div>)}
         <div className="text-center">評価</div>
       </div>
-      {entries.map((e) => {
+      {uniqueEntries.map((e) => {
         const bp = bpOf(e.boat_number);
         const role = roleOf(e.boat_number);
         const scratched = isScratched(e.boat_number) || e.is_scratched || e.is_absent;
