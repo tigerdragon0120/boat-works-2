@@ -295,6 +295,30 @@
     "qualifying_status": {
       "type": "string",
       "description": "\u5b89\u5168\u570f/\u6e96\u512a\u570f/\u30dc\u30fc\u30c0\u30fc/\u52dd\u8ca0\u304c\u3051/\u53b3\u3057\u3044 \u7b49"
+    },
+    "qualifying_need_finish": {
+      "type": "number",
+      "description": "\u6e96\u512a\u30dc\u30fc\u30c0\u30fc\u5230\u9054\u306b\u5fc5\u8981\u3068\u63a8\u5b9a\u3059\u308b\u6700\u4f4e\u7740\u9806(1-6)"
+    },
+    "qualifying_scenario_label": {
+      "type": "string",
+      "description": "\u5f97\u70b9\u7387\u65e9\u898b\u304b\u3089\u7b97\u51fa\u3057\u305f\u52dd\u8ca0\u6761\u4ef6\u30e9\u30d9\u30eb"
+    },
+    "qualifying_scenario_score": {
+      "type": "number",
+      "description": "\u5f97\u70b9\u7387\u65e9\u898b\u304b\u3089\u7b97\u51fa\u3057\u305f\u52dd\u8ca0\u5ea60-100"
+    },
+    "qualifying_safe_even_6th": {
+      "type": "boolean",
+      "description": "6\u7740\u6642\u60f3\u5b9a\u3067\u3082\u73fe\u5728\u306e\u6e96\u512a\u570f\u76ee\u5b89\u3092\u7dad\u6301"
+    },
+    "qualifying_must_win": {
+      "type": "boolean",
+      "description": "1\u7740\u6642\u306e\u307f\u6e96\u512a\u570f\u76ee\u5b89\u306b\u5c4a\u304f"
+    },
+    "qualifying_eliminated_like": {
+      "type": "boolean",
+      "description": "1\u7740\u6642\u3067\u3082\u6e96\u512a\u570f\u76ee\u5b89\u306b\u5c4a\u304d\u306b\u304f\u3044"
     }
   },
   "required": [
