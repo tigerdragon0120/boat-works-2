@@ -19,6 +19,43 @@ const round2 = (n) => Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 // V4重み配分(V3と同一)
 const V4_WEIGHTS = { past: 0.25, recent: 0.35, today: 0.40 };
 
+// 開催日程・レース種別で予想思想そのものを切り替える。
+// 5日目一般/最終日一般は「番組構成」、準優/優勝は「ガチンコ」を強く見る。
+function resolveRaceLogic(race = {}) {
+  const day = Number(race.series_day || 0);
+  const name = String(race.race_name || race.race_phase || race.race_type || '');
+  const isSemi = /準優/.test(name);
+  const isFinal = /優勝/.test(name) && !isSemi;
+  const isSpecial = /特選|選抜/.test(name);
+  const isGeneral = /一般/.test(name);
+  if (isSemi) return { mode:'SEMIFINAL', program:5, pressure:5, strength:90 };
+  if (isFinal) return { mode:'FINAL', program:0, pressure:0, strength:100 };
+  if (day >= 6 && isSpecial) return { mode:'SPECIAL_SELECTION', program:10, pressure:0, strength:90 };
+  if (day >= 6 && isGeneral) return { mode:'PROGRAM_GENERAL', program:55, pressure:0, strength:45 };
+  if (day === 5 && isGeneral) return { mode:'PROGRAM_GENERAL', program:60, pressure:5, strength:35 };
+  if (day >= 4) return { mode:'QUALIFYING_LATE', program:10, pressure:45, strength:45 };
+  if (day >= 1) return { mode:'QUALIFYING', program:5, pressure:20, strength:75 };
+  return { mode:'STANDARD', program:0, pressure:20, strength:80 };
+}
+
+function programIntentAdjustment(entry, allEntries, race, logic) {
+  if (logic.mode !== 'PROGRAM_GENERAL') return { adjustment:0, label:null };
+  const lane = Number(entry.boat_number);
+  const cls = String(entry.grade_class || '').toUpperCase();
+  const win = Number(entry.national_win_rate || 0);
+  const others = (allEntries || []).filter(x => x !== entry);
+  const avgOther = others.length ? others.reduce((s,x)=>s+Number(x.national_win_rate||0),0)/others.length : win;
+  let a=0, why=[];
+  // 番組構成者が内枠へ明確な格上を置いた「軸を作る番組」を評価。
+  if (lane === 1 && cls === 'A1' && win >= avgOther + 0.8) { a += 5; why.push('1枠A1・力量差'); }
+  else if (lane === 1 && (cls === 'A1' || cls === 'A2')) { a += 2.5; why.push('内枠上位級'); }
+  // 5・6枠のA1は単純に頭固定せず「外から何をさせたい番組か」の信号として控えめに加点。
+  if (lane >= 5 && cls === 'A1' && win >= avgOther + 1.0) { a += 2; why.push('外枠A1配置'); }
+  // B級の1枠は「逃がす番組」と決めつけず減点し、外の攻め筋を相対的に上げる。
+  if (lane === 1 && (cls === 'B1' || cls === 'B2') && win < avgOther - 0.5) { a -= 4; why.push('1枠力量劣勢'); }
+  return { adjustment:a, label:why.join('・') || null };
+}
+
 // ============================================================
 // Lane Prior: 実績1着分布(直近350R)
 // 1号艇52%, 2号艇14.3%, 3号艇14.6%, 4号艇10.9%, 5号艇5.4%, 6号艇2.9%
