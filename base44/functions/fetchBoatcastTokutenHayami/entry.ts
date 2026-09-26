@@ -24,13 +24,34 @@ export default async function handler(req) {
       if (!bc) continue;
       matched++;
       const fs=bc.finish_scenarios||{};
-      let status='通常';
       const rank=Number(bc.rank);
-      if (Number.isFinite(rank)) {
-        if (rank<=6) status='上位安全圏';
-        else if (rank<=12) status='準優圏';
-        else if (rank<=18) status='ボーダー';
-        else status='勝負がけ';
+      // 18位を準優ボーダーの基準順位として、同じ開催の現在18位得点率を基準値にする。
+      // 早見の1〜6着シナリオと比較して「何着が必要か」を推定する。
+      const sortedRates = normalized.racers
+        .filter(x => Number.isFinite(Number(x.rank)) && Number.isFinite(Number(x.point_rate)))
+        .sort((a,b)=>Number(a.rank)-Number(b.rank));
+      const borderRacer = sortedRates.find(x => Number(x.rank) >= 18) || sortedRates[sortedRates.length-1];
+      const borderRate = Number(borderRacer?.point_rate);
+      const scenarios=[fs.first,fs.second,fs.third,fs.fourth,fs.fifth,fs.sixth].map(Number);
+      let needFinish=null;
+      if (Number.isFinite(borderRate)) {
+        for(let i=5;i>=0;i--) if(Number.isFinite(scenarios[i]) && scenarios[i]>=borderRate) { needFinish=i+1; break; }
+      }
+      const safeEven6th = needFinish===6;
+      const mustWin = needFinish===1;
+      const eliminatedLike = Number.isFinite(borderRate) && (!Number.isFinite(scenarios[0]) || scenarios[0] < borderRate);
+      let status='通常', scenarioLabel='通常', scenarioScore=35;
+      if (eliminatedLike) { status='厳しい'; scenarioLabel='1着でもボーダー未満'; scenarioScore=15; }
+      else if (safeEven6th) { status='安全圏'; scenarioLabel='6着でも準優圏目安'; scenarioScore=10; }
+      else if (needFinish===5 || needFinish===4) { status='準優圏'; scenarioLabel=`${needFinish}着以内で準優圏目安`; scenarioScore=45; }
+      else if (needFinish===3) { status='ボーダー'; scenarioLabel='3着以内が目安'; scenarioScore=70; }
+      else if (needFinish===2) { status='勝負がけ'; scenarioLabel='2着以内が目安'; scenarioScore=90; }
+      else if (needFinish===1) { status='勝負がけ'; scenarioLabel='1着が必要'; scenarioScore=100; }
+      else if (Number.isFinite(rank)) {
+        if(rank<=6){status='上位安全圏';scenarioLabel='上位安全圏';scenarioScore=20;}
+        else if(rank<=12){status='準優圏';scenarioLabel='準優圏';scenarioScore=40;}
+        else if(rank<=18){status='ボーダー';scenarioLabel='ボーダー';scenarioScore=75;}
+        else {status='勝負がけ';scenarioLabel='勝負がけ';scenarioScore=70;}
       }
       await base44.asServiceRole.entities.RaceEntry.update(e.id,{
         qualifying_rank:bc.rank,
@@ -45,8 +66,14 @@ export default async function handler(req) {
         point_rate_if_6th:fs.sixth,
         next_race_number: bc._raw_latest_section_race ? Number(bc._raw_latest_section_race) || null : null,
         qualifying_status:status,
-        rank_pressure_score: rank<=6?20:rank<=12?40:rank<=18?80:70,
-        gamble_level: rank<=6?25:rank<=12?45:rank<=18?90:75
+        qualifying_need_finish:needFinish,
+        qualifying_scenario_label:scenarioLabel,
+        qualifying_scenario_score:scenarioScore,
+        qualifying_safe_even_6th:safeEven6th,
+        qualifying_must_win:mustWin,
+        qualifying_eliminated_like:eliminatedLike,
+        rank_pressure_score:scenarioScore,
+        gamble_level:scenarioScore
       });
       updated++;
     }
