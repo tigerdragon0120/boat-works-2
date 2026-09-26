@@ -46,6 +46,22 @@ function programIntentAdjustment(entry, allEntries, race, logic) {
   const others = (allEntries || []).filter(x => x !== entry);
   const avgOther = others.length ? others.reduce((s,x)=>s+Number(x.national_win_rate||0),0)/others.length : win;
   let a=0, why=[];
+  const qRank = Number(entry.qualifying_rank ?? entry.series_rank);
+  const semifinalMissed = Number.isFinite(qRank) && qRank > 18;
+  const c1 = Number(entry.c1_win_rate);
+  const motor2 = Number(entry.motor_2rate ?? entry.motor_f2_rate);
+  const sectionMomentum = Number(entry.series_momentum_score ?? entry.section_momentum);
+  // 準優漏れB1の1号艇を独立パターンとして評価。
+  // 「B1だから買い」ではなく、イン実績・今節内容・機力・相手差が伴う時だけ強くする。
+  if (lane === 1 && cls === 'B1' && semifinalMissed) {
+    let signal = 0;
+    if (Number.isFinite(c1) && c1 >= 45) signal += 2.5;
+    if (Number.isFinite(sectionMomentum) && sectionMomentum >= 55) signal += 1.5;
+    if (Number.isFinite(motor2) && motor2 >= 35) signal += 1.0;
+    if (win >= avgOther - 0.3) signal += 1.5;
+    if (signal >= 4) { a += signal; why.push('準優漏れB1・1枠買い型'); }
+    else why.push('準優漏れB1・1枠要注意');
+  }
   // 番組構成者が内枠へ明確な格上を置いた「軸を作る番組」を評価。
   if (lane === 1 && cls === 'A1' && win >= avgOther + 0.8) { a += 5; why.push('1枠A1・力量差'); }
   else if (lane === 1 && (cls === 'A1' || cls === 'A2')) { a += 2.5; why.push('内枠上位級'); }
