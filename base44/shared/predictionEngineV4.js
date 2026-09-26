@@ -269,6 +269,7 @@ function computeTodayScore(entry, allEntries, race) {
 // ============================================================
 function computeV4BoatScores(entries, race, stage) {
   const isFinal = stage === "FINAL";
+  const raceLogic = resolveRaceLogic(race);
   const scratchedBoats = race?.scratched_boats || [];
   const activeEntries = entries.filter(e =>
     !e.is_absent && !e.is_scratched && e.boat_number &&
@@ -319,7 +320,9 @@ function computeV4BoatScores(entries, race, stage) {
       );
     }
 
-    pre_score = clamp(pre_score + motivationAdjustment, 0, 100);
+    const programIntent = programIntentAdjustment(entry, activeEntries, race, raceLogic);
+    const pressureAdj = raceLogic.pressure > 0 ? motivationAdjustment : 0;
+    pre_score = clamp(pre_score + pressureAdj + programIntent.adjustment, 0, 100);
 
     return {
       boat_number: entry.boat_number,
@@ -334,8 +337,15 @@ function computeV4BoatScores(entries, race, stage) {
       recent_components: recent.components,
       today_components: today.components,
       isOutside: today.isOutside || entry.boat_number >= 5,
-      reasons: hasQualifying ? [`今節: ${motivationLabel}（予選${qRank}位・得点率${qRate.toFixed(2)}）`] : [],
-      notes: hasQualifying && motivationAdjustment !== 0 ? [`勝負度補正 ${motivationAdjustment > 0 ? "+" : ""}${motivationAdjustment}pt`] : [],
+      reasons: [
+        ...(hasQualifying && raceLogic.pressure > 0 ? [`今節: ${motivationLabel}（予選${qRank}位・得点率${qRate.toFixed(2)}）`] : []),
+        ...(programIntent.label ? [`番組意図: ${programIntent.label}`] : []),
+        `ロジック: ${raceLogic.mode}`
+      ],
+      notes: [
+        ...(hasQualifying && pressureAdj !== 0 ? [`勝負度補正 ${pressureAdj > 0 ? "+" : ""}${pressureAdj}pt`] : []),
+        ...(programIntent.adjustment !== 0 ? [`番組構成補正 ${programIntent.adjustment > 0 ? "+" : ""}${programIntent.adjustment}pt`] : [])
+      ],
     };
   });
 
@@ -359,8 +369,10 @@ function computeV4BoatScores(entries, race, stage) {
           else if (qRank <= 30) motivationAdjustment = 2.5;
         }
       }
+      const programIntent = programIntentAdjustment(b.entry, activeEntries, race, raceLogic);
+      const pressureAdj = raceLogic.pressure > 0 ? motivationAdjustment : 0;
       const finalScore = clamp(
-        b.past_score * V4_WEIGHTS.past + b.recent_score * V4_WEIGHTS.recent + b.today_score * V4_WEIGHTS.today + motivationAdjustment,
+        b.past_score * V4_WEIGHTS.past + b.recent_score * V4_WEIGHTS.recent + b.today_score * V4_WEIGHTS.today + pressureAdj + programIntent.adjustment,
         0, 100
       );
       b.final_score = round1(finalScore);
