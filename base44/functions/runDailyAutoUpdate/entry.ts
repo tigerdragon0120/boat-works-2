@@ -1,7 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
-import { upsertRace, upsertEntry, dedupRace, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
+import { upsertRace, upsertEntry, dedupRace, dedupEntriesForRace, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
 import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
@@ -270,6 +270,18 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
 
     if (entryCreates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkCreate(entryCreates));
     if (entryUpdates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkUpdate(entryUpdates));
+
+    // BOAT WORKS同期と本処理が重なって同じ艇が二重作成されても、
+    // race_key + boat_numberごとに展示値を持つ完全な行へ統合する。
+    for (const { rno } of parsedCards) {
+      const savedRace: any = raceByNo.get(rno);
+      if (!savedRace?.id) continue;
+      const raceKey = buildRaceKey(raceDate, venueCode, rno);
+      await withRateLimitRetry(
+        () => dedupEntriesForRace(base44, savedRace.id, raceKey),
+        4,
+      ).catch((e: any) => errors.push(`${venueName} R${rno}: RaceEntry重複統合 ${e.message}`));
+    }
 
     totalRaces += parsedCards.length;
     totalEntries += parsedCards.length * 6;
