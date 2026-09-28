@@ -161,13 +161,28 @@ export default function Venue() {
   // loadDetailのように表示を一度クリアせず、予想部分だけを静かに更新する。
   const refreshPredictions = async () => {
     if (!selectedId) return;
-    const selectedRace = races.find((x) => x.id === selectedId);
-    if (!selectedRace || selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
 
+    // 展示・オッズは締切直前にバックエンドで更新されるため、
+    // 予想だけでなくRace/RaceEntryも再読込して開いたままの画面へ反映する。
+    const latestAll = await listTodayRaces({ includeFinished: true });
+    const latestList = (latestAll || [])
+      .filter((r) => String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
+      .sort((a, b) => a.race_number - b.race_number);
+    const selectedRace = latestList.find((x) => x.id === selectedId)
+      || latestList.find((x) => x.race_key === race?.race_key);
+    if (!selectedRace) return;
+
+    setRaces(latestList);
+    setRace(selectedRace);
+
+    const freshEntries = await getRaceEntries(selectedRace.id, selectedRace.race_key);
+    setEntries(freshEntries || []);
+
+    if (selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
     const [resolved, resolvedV6, resolvedEnsemble] = await Promise.all([
-      resolveCurrentPrediction(selectedId, selectedRace.race_key),
-      resolveV6Prediction(selectedId, selectedRace.race_key),
-      resolveEnsemblePrediction(selectedId, selectedRace.race_key),
+      resolveCurrentPrediction(selectedRace.id, selectedRace.race_key),
+      resolveV6Prediction(selectedRace.id, selectedRace.race_key),
+      resolveEnsemblePrediction(selectedRace.id, selectedRace.race_key),
     ]);
     setCurrent(resolved);
     setV6Current(resolvedV6);
