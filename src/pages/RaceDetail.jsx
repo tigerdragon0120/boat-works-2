@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import {
   getRaceEntries,
-  getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV6Prediction,
+  getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV31Prediction, resolveV6Prediction,
   generateV4PredictionForRace,
 } from "@/lib/predictionService";
 import PredictionPanel from "@/components/race/PredictionPanel";
@@ -17,6 +17,7 @@ export default function RaceDetail() {
   // currentPrediction: resolveCurrentPredictionの結果(FINAL優先)
   // { stage, pred, boats, trifectas } — UIの唯一の表示ソース
   const [current, setCurrent] = useState(null);
+  const [v31Current, setV31Current] = useState(null);
   const [v6Current, setV6Current] = useState(null);
   const [predictionVersion, setPredictionVersion] = useState("v4");
   // preBoats: PRE→FINAL比較用のみ(FINAL表示時にPREのboat_scoresを保持)
@@ -30,6 +31,7 @@ export default function RaceDetail() {
       setLoading(true);
       // 前レースのstateを完全クリア(mergeではなくreplace)
       setCurrent(null);
+      setV31Current(null);
       setV6Current(null);
       setPreBoats([]);
     }
@@ -60,11 +62,13 @@ export default function RaceDetail() {
 
     // === Current Prediction Resolver ===
     // FINAL優先で予想を1本化取得。UIの唯一の表示ソース。
-    const [resolved, resolvedV6] = await Promise.all([
+    const [resolved, resolvedV31, resolvedV6] = await Promise.all([
       resolveCurrentPrediction(id, r?.race_key),
+      resolveV31Prediction(id, r?.race_key),
       resolveV6Prediction(id, r?.race_key),
     ]);
     setCurrent(resolved);
+    setV31Current(resolvedV31);
     setV6Current(resolvedV6);
 
     // FINAL表示時のみPRE boat_scoresを取得(PRE→FINAL比較用)
@@ -145,7 +149,7 @@ export default function RaceDetail() {
   if (!race) return <div className="py-20 text-center text-slate-500">レースが見つかりません</div>;
 
   // V4/V5はV4予想を基礎にし、V6選択時だけV6保存レコードへ切り替える。
-  const displayedCurrent = predictionVersion === "v6" ? v6Current : current;
+  const displayedCurrent = predictionVersion === "v31" ? v31Current : predictionVersion === "v6" ? v6Current : current;
   const activePred = displayedCurrent?.pred;
   const activeBoats = [...(displayedCurrent?.boats || [])].sort((a, b) => a.boat_number - b.boat_number);
   const allTri = displayedCurrent?.trifectas || [];

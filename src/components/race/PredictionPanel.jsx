@@ -78,8 +78,8 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
             )}
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-1 rounded-lg bg-slate-100 p-1">
-          {["mix", "v4", "v5", "v6"].map((version) => (
+        <div className="grid grid-cols-5 gap-1 rounded-lg bg-slate-100 p-1">
+          {["mix", "v31", "v4", "v5", "v6"].map((version) => (
             <button
               key={version}
               type="button"
@@ -87,7 +87,9 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
               className={cn(
                 "h-8 rounded-md text-xs font-black uppercase transition-colors",
                 predictionVersion === version
-                  ? version === "v4"
+                  ? version === "v31"
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : version === "v4"
                     ? "bg-blue-600 text-white shadow-sm"
                     : version === "v5"
                     ? "bg-cyan-500 text-slate-950 shadow-sm"
@@ -95,7 +97,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
                   : "text-slate-500 hover:bg-white hover:text-slate-900"
               )}
             >
-              {version === "mix" ? "合成" : version.toUpperCase()}
+              {version === "mix" ? "合成" : version === "v31" ? "V3.1" : version.toUpperCase()}
             </button>
           ))}
         </div>
@@ -115,11 +117,9 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-3">
               <Zap className="w-8 h-8 text-[#f9c836]" />
             </div>
-            <div className="text-slate-200 font-semibold text-sm mb-1">{predictionVersion.toUpperCase()}予想生成待ち</div>
+            <div className="text-slate-200 font-semibold text-sm mb-1">{predictionVersion === "v31" ? "V3.1" : predictionVersion.toUpperCase()}予想生成待ち</div>
             <div className="text-slate-400 text-xs mb-4">
-              {predictionVersion === "v6"
-                ? "V6は締切直前の展示・オッズ取得後に自動生成されます"
-                : "PredictionV4の生成を待っています"}
+              {predictionVersion === "v31" ? "V3.1 Candidateの生成を待っています" : predictionVersion === "v6" ? "V6は締切直前の展示・オッズ取得後に自動生成されます" : "PredictionV4の生成を待っています"}
             </div>
             {predictionVersion === "v4" && (
               <>
@@ -324,7 +324,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
 
       {/* フッター */}
       <div className="px-3 py-2 border-t border-slate-200 flex items-center justify-between text-[11px]">
-        <span className="text-slate-500">予想エンジン {predictionVersion.toUpperCase()}</span>
+        <span className="text-slate-500">予想エンジン {predictionVersion === "v31" ? "V3.1" : predictionVersion.toUpperCase()}</span>
         <span className="text-slate-500">
           {predictionVersion === "v5" ? "展開分析" : stage === "FINAL" ? "FINAL済" : stage === "PRE" ? "PRE済" : "予想待ち"}
         </span>

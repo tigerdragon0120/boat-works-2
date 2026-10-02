@@ -757,6 +757,60 @@ export function mapV4ToUI(v4Pred, stage) {
   return { pred: v4Pred, boats, trifectas };
 }
 
+// V3.1 Candidate予想取得・UIマッピング。
+// 本番の合成BUYには混ぜず、検証用タブで独立表示する。
+export async function getV31Prediction(raceId, stage, raceKey) {
+  let list = await withRetry(() => base44.entities.PredictionV31.filter({
+    race_id: raceId, stage, prediction_version: "v3.1",
+  }, "-computed_at", 1)).catch(() => []);
+  if ((!list || !list.length) && raceKey) {
+    list = await withRetry(() => base44.entities.PredictionV31.filter({
+      race_key: raceKey, stage, prediction_version: "v3.1",
+    }, "-computed_at", 1)).catch(() => []);
+  }
+  return list && list[0];
+}
+
+export function mapV31ToUI(pred, stage) {
+  if (!pred) return null;
+  const boats = (pred.boat_scores || []).map(b => ({
+    boat_number: b.boat_number,
+    total_power: b.final_score ?? b.base_score ?? b.first_score ?? 0,
+    first_power: b.first_score ?? 0,
+    second_power: b.second_score ?? 0,
+    third_power: b.third_score ?? 0,
+    ana_potential: b.attack_power ?? 0,
+    start_edge: b.start_edge ?? null,
+    reasons: b.reasons || [],
+  }));
+  const selected = new Set(pred.selected_trifectas || []);
+  const trifectas = (pred.trifectas || []).map((t, i) => ({
+    combination: t.combination,
+    rank: t.rank || i + 1,
+    probability: t.race_probability ?? t.probability ?? 0,
+    actual_odds: t.actual_odds ?? null,
+    current_odds: t.actual_odds ?? null,
+    expected_value: t.expected_value ?? null,
+    is_selected: selected.has(t.combination) || !!t.is_selected,
+    ticket_rank: t.ticket_rank ?? (selected.has(t.combination) ? [...selected].indexOf(t.combination) + 1 : null),
+  }));
+  return { pred, boats, trifectas };
+}
+
+export async function resolveV31Prediction(raceId, raceKey) {
+  const fin = await getV31Prediction(raceId, "FINAL", raceKey);
+  if (fin && (fin.status === "COMPLETED" || !fin.status)) {
+    const mapped = mapV31ToUI(fin, "FINAL");
+    return { stage: "FINAL", ...mapped };
+  }
+  const pre = await getV31Prediction(raceId, "PRE", raceKey);
+  if (pre && (pre.status === "COMPLETED" || !pre.status)) {
+    const mapped = mapV31ToUI(pre, "PRE");
+    return { stage: "PRE", ...mapped };
+  }
+  return { stage: null, pred: null, boats: [], trifectas: [] };
+}
+
 // V6予想取得。V4とは別レコードを読み、画面切替時だけ表示する。
 export async function getV6Prediction(raceId, stage, raceKey) {
   let list = await withRetry(() => base44.entities.PredictionV6.filter({
