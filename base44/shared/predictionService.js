@@ -10,6 +10,7 @@ import { resolveProductionOdds, shouldFetchOdds } from "./oddsResolver.js";
 import { resolveRaceResult, mergeResultProtect } from "./resultResolver.js";
 import { runAndSavePredictionV2, verifyV2Prediction } from "./predictionServiceV2.js";
 import { runAndSavePredictionV3, verifyV3Prediction } from "./predictionServiceV3.js";
+import { runAndSavePredictionV31 } from "./predictionServiceV31.js";
 import { runAndSavePredictionV4, verifyV4Prediction } from "./predictionServiceV4.js";
 import { verifyEnsemblePrediction } from "./predictionServiceEnsemble.js";
 
@@ -519,6 +520,7 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   // V3 Candidate予想(並行計算・V1/V2に影響しない)
   try {
     await runAndSavePredictionV3(client, race, entries, settings, stage, effectiveOddsMap || oddsMap, profileByReg, rollingByReg);
+    await runAndSavePredictionV31(client, race, entries, settings, stage, effectiveOddsMap || oddsMap, profileByReg, rollingByReg);
   } catch (e) { /* V3エラーはV1/V2に影響しない */ }
 
   // V4 HIT Candidate予想(並行計算・V1/V2/V3に影響しない)

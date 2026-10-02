@@ -1,11 +1,11 @@
 // ============================================================
-// Prediction Service V3 (サーバー側)
+// Prediction Service V3.1 (サーバー側)
 // V3.1 Candidate予想をDBへ保存。V1/V2とは完全独立。
 // V1/V2の処理に影響を与えない。エラー時はV3のみスキップ。
 // ============================================================
 import { runPredictionV31 } from "./predictionEngineV31.js";
 
-const V3_VERSION = "v3";
+const V3_VERSION = "v3.1";
 
 // 既存V3予想取得(重複作成防止)
 async function getOrCreateV3Prediction(client, raceId, raceKey, stage) {
@@ -67,7 +67,7 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
     // V3予想レコード保存
     const { id: predictionId, existing } = await getOrCreateV3Prediction(client, race.id, race.race_key, stage);
     if (!predictionId) {
-      console.error("[V3] Failed to create prediction record");
+      console.error("[V3.1] Failed to create prediction record");
       return { skipped: true, reason: "CREATE_FAILED" };
     }
 
@@ -124,12 +124,12 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
     };
 
     await sr.PredictionV31.update(predictionId, record).catch(e => {
-      console.error("[V3] Failed to save prediction:", e.message);
+      console.error("[V3.1] Failed to save prediction:", e.message);
     });
 
     return { predictionId, result, skipped: false };
   } catch (e) {
-    console.error(`[V3] runAndSavePredictionV31 error race=${race?.id} stage=${stage}:`, e.message);
+    console.error(`[V3.1] runAndSavePredictionV31 error race=${race?.id} stage=${stage}:`, e.message);
     return { skipped: true, reason: "V3_ERROR", error: e.message };
   }
 }
@@ -257,7 +257,7 @@ export async function verifyV3Prediction(client, race, resultData) {
 
     return saved;
   } catch (e) {
-    console.error(`[V3] verifyV3Prediction error race=${race?.id}:`, e.message);
+    console.error(`[V3.1] verifyV3Prediction error race=${race?.id}:`, e.message);
     return null;
   }
 }

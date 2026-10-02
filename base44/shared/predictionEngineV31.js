@@ -465,13 +465,50 @@ function computeFirstScore(entry, baseScore, allEntries, stage) {
     [baseScore, 0.55], [courseWin, 0.20], [stScore, 0.10], [exStScore, 0.10],
   ]);
 
-  return clamp(firstScore + kimariteBonus + insideBonus + attackBonus, 5, 100);
+  const startEdge = computeStartEdgeScore(entry, allEntries, stage);
+  const startEdgeBonus = (startEdge.score - 50) * 0.10;
+  return clamp(firstScore + kimariteBonus + insideBonus + attackBonus + startEdgeBonus, 5, 100);
+}
+
+// ============================================================
+// 【V3.1】START_EDGE_SCORE
+// 展示ST単独ではなく、平均ST・今節ST・枠別直近ST・展示STを合成。
+// 展示STは他のST指標と方向が一致した時だけ強く反映する。
+// ============================================================
+function computeStartEdgeScore(entry, allEntries, stage) {
+  const lane = entry._laneRecent;
+  const avgSt = isValid(entry.avg_st) ? Number(entry.avg_st) : null;
+  const sectionSt = isValid(entry.section_st) ? Number(entry.section_st) : null;
+  const laneSt = isValid(lane?.avg_st) ? Number(lane.avg_st) : null;
+  const exSt = stage === "FINAL" && isValid(entry.exhibition_st) ? Number(entry.exhibition_st) : null;
+  const historical = [avgSt, sectionSt, laneSt].filter(isValid);
+  const histAvg = historical.length ? historical.reduce((a,b)=>a+b,0)/historical.length : null;
+  const exAgrees = exSt != null && histAvg != null && Math.abs(exSt - histAvg) <= 0.05;
+  const fCount = isValid(entry.f_count) ? Number(entry.f_count) : 0;
+  let score = weightedAvg([
+    [avgSt != null ? stToScore(avgSt) : null, 0.25],
+    [sectionSt != null ? stToScore(sectionSt) : null, 0.25],
+    [laneSt != null ? stToScore(laneSt) : null, 0.30],
+    [exSt != null ? stToScore(exSt, 0.10) : null, exAgrees ? 0.20 : 0.08],
+  ]);
+  if (fCount > 0) score -= Math.min(12, fCount * 6);
+  const peer = allEntries.map(e => {
+    const v = isValid(e.exhibition_st) && stage === "FINAL" ? Number(e.exhibition_st)
+      : isValid(e._laneRecent?.avg_st) ? Number(e._laneRecent.avg_st)
+      : isValid(e.avg_st) ? Number(e.avg_st) : null;
+    return { boat: e.boat_number, st: v };
+  }).filter(x => x.st != null).sort((a,b)=>a.st-b.st);
+  const rank = peer.findIndex(x => x.boat === entry.boat_number) + 1;
+  if (rank === 1) score += 6;
+  else if (rank === 2) score += 3;
+  else if (rank >= 5) score -= 5;
+  return { score: clamp(score, 5, 100), rank: rank || null, exhibition_agrees: exAgrees, historical_st: round2(histAvg) };
 }
 
 // ============================================================
 // 【V3新規】2着適性スコア
 // ============================================================
-function computeSecondScore(entry, baseScore, stage) {
+function computeSecondScore(entry, baseScore, stage, allEntries = [], predictedFirst = null) {
   const profile = entry._profile;
   const laneRecent = entry._laneRecent;
 
@@ -489,11 +526,24 @@ function computeSecondScore(entry, baseScore, stage) {
     if (cs.sample_size >= 3 && isValid(cs.second_rate)) courseSecond = clamp(cs.second_rate, 0, 100);
   }
 
+  const startEdge = computeStartEdgeScore(entry, allEntries, stage);
+  let firstFlowBonus = 0;
+  if (predictedFirst != null) {
+    const first = Number(predictedFirst);
+    const lane = Number(entry.boat_number);
+    // 1着艇の勝ち方から2着残りを補正。内逃げ時は2-4の差し/追走、
+    // センター攻撃時は内残りと隣接追走を優先する。
+    if (first === 1 && lane >= 2 && lane <= 4) firstFlowBonus += 5;
+    if (first >= 3 && first <= 4 && lane < first) firstFlowBonus += 7;
+    if (Math.abs(lane - first) === 1) firstFlowBonus += 3;
+    if (lane >= 5 && first === 1) firstFlowBonus -= 3;
+  }
   const score = weightedAvg([
-    [baseScore, 0.40], [waku10Top2, 0.20], [nationalF2, 0.15], [localF2, 0.15], [courseSecond, 0.10],
+    [baseScore, 0.30], [waku10Top2, 0.20], [nationalF2, 0.12], [localF2, 0.12],
+    [courseSecond, 0.11], [startEdge.score, 0.15],
   ]);
 
-  return clamp(score, 5, 100);
+  return clamp(score + firstFlowBonus, 5, 100);
 }
 
 // ============================================================
@@ -571,7 +621,7 @@ export function computeV3BoatScores(entries, race, stage) {
 
     // 【V3新規】1着・2着・3着適性スコア
     const first_score = computeFirstScore(entry, baseScore, activeEntries, stage);
-    const second_score = computeSecondScore(entry, baseScore, stage);
+    const second_score = computeSecondScore(entry, baseScore, stage, activeEntries);
     const third_score = computeThirdScore(entry, baseScore, stage);
 
     // 【V3新規】攻撃力・イン逃げ信頼度
@@ -596,6 +646,7 @@ export function computeV3BoatScores(entries, race, stage) {
       final_delta,
       final_score: final_score != null ? round1(final_score) : null,
       first_score: round1(first_score),
+      start_edge: computeStartEdgeScore(entry, activeEntries, stage),
       second_score: round1(second_score),
       third_score: round1(third_score),
       attack_power,
