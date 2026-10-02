@@ -10,7 +10,7 @@ import { resolveProductionOdds, shouldFetchOdds } from "./oddsResolver.js";
 import { resolveRaceResult, mergeResultProtect } from "./resultResolver.js";
 import { runAndSavePredictionV2, verifyV2Prediction } from "./predictionServiceV2.js";
 import { runAndSavePredictionV3, verifyV3Prediction } from "./predictionServiceV3.js";
-import { runAndSavePredictionV31 } from "./predictionServiceV31.js";
+import { runAndSavePredictionV31, verifyV31Prediction } from "./predictionServiceV31.js";
 import { runAndSavePredictionV4, verifyV4Prediction } from "./predictionServiceV4.js";
 import { verifyEnsemblePrediction } from "./predictionServiceEnsemble.js";
 
@@ -832,6 +832,7 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
 
   // V3検証(V1/V2に影響しない)
   await verifyV3Prediction(client, race, result).catch(() => {});
+  await verifyV31Prediction(client, race, result).catch(() => {});
 
   // V4検証(V1/V2/V3に影響しない)
   await verifyV4Prediction(client, race, result).catch(() => {});
@@ -904,6 +905,7 @@ export async function upsertResultAndVerify(client, race, resultData) {
 
   // V3検証(V1/V2に影響しない)
   await verifyV3Prediction(client, race, resultData).catch(() => {});
+  await verifyV31Prediction(client, race, resultData).catch(() => {});
 
   // V4検証(V1/V2/V3に影響しない)
   await verifyV4Prediction(client, race, resultData).catch(() => {});

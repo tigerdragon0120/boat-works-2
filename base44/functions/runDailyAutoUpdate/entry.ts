@@ -3,6 +3,7 @@ import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 import { upsertRace, upsertEntry, dedupRace, dedupEntriesForRace, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
+import { runAndSavePredictionV31 } from '../../shared/predictionServiceV31.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
 import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
 import { runAndSaveEnsemble } from '../../shared/predictionServiceEnsemble.js';
@@ -553,6 +554,7 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
         const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
         if (entries.length < 6) continue;
         await runAndSavePredictionV3(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+        await runAndSavePredictionV31(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
         v3Generated++;
         logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V3 PRE生成`);
       } catch (e: any) {

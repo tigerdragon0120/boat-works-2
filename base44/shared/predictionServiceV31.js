@@ -149,7 +149,7 @@ async function getCalibrationFactors(client) {
 // V3検証(結果確定後)
 // V2検証と同条件で評価。17種の外れ原因 + 勝ちパターン分析。
 // ============================================================
-export async function verifyV3Prediction(client, race, resultData) {
+export async function verifyV31Prediction(client, race, resultData) {
   try {
     const sr = client.asServiceRole.entities;
     const resultTrifecta = resultData.result_trifecta;
@@ -257,7 +257,7 @@ export async function verifyV3Prediction(client, race, resultData) {
 
     return saved;
   } catch (e) {
-    console.error(`[V3.1] verifyV3Prediction error race=${race?.id}:`, e.message);
+    console.error(`[V3.1] verifyV31Prediction error race=${race?.id}:`, e.message);
     return null;
   }
 }
