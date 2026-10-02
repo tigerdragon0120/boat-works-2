@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import V1V2Comparison from "@/components/verification/V1V2Comparison";
 import V2V3Comparison from "@/components/verification/V2V3Comparison";
 import V3V4Comparison from "@/components/verification/V3V4Comparison";
+import V3V31Comparison from "@/components/verification/V3V31Comparison";
 import V2V5Comparison from "@/components/verification/V2V5Comparison";
 import V4V6Comparison from "@/components/verification/V4V6Comparison";
 
@@ -91,6 +92,18 @@ export default function Verification() {
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
           <V2V3Comparison />
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-end justify-between gap-2 mb-2">
+          <div>
+            <div className="text-[10px] font-bold text-violet-600">V3.1 CANDIDATE</div>
+            <h2 className="font-display font-black text-slate-900 text-lg">V3 vs V3.1 — ST・2着補正版</h2>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <V3V31Comparison />
         </div>
       </section>
 

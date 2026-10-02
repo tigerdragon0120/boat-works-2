@@ -141,7 +141,7 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
 // ============================================================
 async function getCalibrationFactors(client) {
   // 直近100件の検証データから算出
-  // TODO: PredictionV311Verification蓄積後に実装
+  // TODO: PredictionV31Verification蓄積後に実装
   return null;
 }
 
@@ -248,12 +248,12 @@ export async function verifyV31Prediction(client, race, resultData) {
     };
 
     // upsert
-    const existing = await sr.PredictionV311Verification.filter(
+    const existing = await sr.PredictionV31Verification.filter(
       race.race_key ? { race_key: race.race_key } : { race_id: race.id }, "-verified_at", 1
     ).catch(() => []);
     let saved;
-    if (existing?.[0]) saved = await sr.PredictionV311Verification.update(existing[0].id, verifDoc);
-    else saved = await sr.PredictionV311Verification.create(verifDoc);
+    if (existing?.[0]) saved = await sr.PredictionV31Verification.update(existing[0].id, verifDoc);
+    else saved = await sr.PredictionV31Verification.create(verifDoc);
 
     return saved;
   } catch (e) {
