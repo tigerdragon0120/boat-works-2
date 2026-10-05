@@ -801,7 +801,7 @@ export async function resolveV31Prediction(raceId, raceKey) {
   // OddsSnapshotにはcaptured_at順で最新値が入る。
   // Entity filterのsortに未保証フィールドを渡すと取得失敗して空配列へ落ちるため、
   // まずrace_idだけで取得し、クライアント側でcaptured_atを確実に並べ替える。
-  const oddsRowsRaw = await withRetry(() => base44.entities.OddsSnapshot.filter({ race_id: raceId }, "-created_date", 20)).catch(() => []);
+  const oddsRowsRaw = await withRetry(() => base44.entities.OddsSnapshot.filter({ race_id: raceId })).catch(() => []);
   const oddsRows = [...(oddsRowsRaw || [])].sort((a, b) =>
     new Date(b.captured_at || b.created_date || 0) - new Date(a.captured_at || a.created_date || 0)
   );
