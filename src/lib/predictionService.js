@@ -798,9 +798,15 @@ export function mapV31ToUI(pred, stage, oddsMap = null) {
 }
 
 export async function resolveV31Prediction(raceId, raceKey) {
-  const oddsRows = await withRetry(() => base44.entities.OddsSnapshot.filter({ race_id: raceId }, "-captured_at", 5)).catch(() => []);
-  const finalOdds = oddsRows.find(o => o.stage === "FINAL" && o.odds_map)?.odds_map || null;
-  const preOdds = oddsRows.find(o => o.stage === "PRE" && o.odds_map)?.odds_map || finalOdds;
+  // OddsSnapshotにはcaptured_at順で最新値が入る。
+  // Entity filterのsortに未保証フィールドを渡すと取得失敗して空配列へ落ちるため、
+  // まずrace_idだけで取得し、クライアント側でcaptured_atを確実に並べ替える。
+  const oddsRowsRaw = await withRetry(() => base44.entities.OddsSnapshot.filter({ race_id: raceId }, "-created_date", 20)).catch(() => []);
+  const oddsRows = [...(oddsRowsRaw || [])].sort((a, b) =>
+    new Date(b.captured_at || b.created_date || 0) - new Date(a.captured_at || a.created_date || 0)
+  );
+  const finalOdds = oddsRows.find(o => o.stage === "FINAL" && o.odds_map && Object.keys(o.odds_map).length)?.odds_map || null;
+  const preOdds = oddsRows.find(o => o.stage === "PRE" && o.odds_map && Object.keys(o.odds_map).length)?.odds_map || finalOdds;
   const fin = await getV31Prediction(raceId, "FINAL", raceKey);
   if (fin && (fin.status === "COMPLETED" || !fin.status)) {
     const mapped = mapV31ToUI(fin, "FINAL", finalOdds);
