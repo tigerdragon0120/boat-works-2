@@ -96,6 +96,33 @@
         "type": "string"
       }
     },
+    "v31_ticket_details": {
+      "type": "array",
+      "description": "V3.1\u691c\u8a3c\u7528\u3002\u4e88\u60f3\u6642\u70b9\u306e\u8cb7\u3044\u76ee\u30fb\u78ba\u7387\u30fb\u5b9f\u30aa\u30c3\u30ba\u30fb\u671f\u5f85\u5024\u3092\u56fa\u5b9a\u4fdd\u5b58",
+      "items": {
+        "type": "object",
+        "properties": {
+          "combination": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "number"
+          },
+          "probability": {
+            "type": "number"
+          },
+          "actual_odds": {
+            "type": "number"
+          },
+          "expected_value": {
+            "type": "number"
+          },
+          "is_selected": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
     "v3_payout": {
       "type": "number"
     },
