@@ -186,7 +186,7 @@ export default function RaceDetail() {
             <span className="rounded-md bg-rose-500 px-3 py-1 text-sm font-bold text-white">確定</span>
           </div>
           <div className="grid grid-cols-3 gap-2 mb-4">
-            {(raceResult.finish_order || []).slice(0,3).map((boat, i) => (
+            {((raceResult.finish_order?.length ? raceResult.finish_order : (raceResult.result_trifecta || "").split("-").map(Number).filter(Boolean))).slice(0,3).map((boat, i) => (
               <div key={i} className="rounded-lg border bg-slate-50 p-3 text-center">
                 <div className="text-xs font-bold text-slate-500">{i + 1}着</div>
                 <div className="text-2xl font-black">{boat}号艇</div>
