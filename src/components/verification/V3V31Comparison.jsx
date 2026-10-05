@@ -29,8 +29,9 @@ function Card({label,d,newOne}){
 export default function V3V31Comparison(){
  const [period,setPeriod]=useState("100"),[data,setData]=useState(null),[loading,setLoading]=useState(true);
  const load=useCallback(async()=>{setLoading(true);try{
-   const [v3,v31]=await Promise.all([base44.entities.PredictionV3Verification.list("-verified_at",1000).catch(()=>[]),base44.entities.PredictionV31Verification.list("-created_date",1000).catch(()=>[])]);
-   setData({v3:aggregate(v3,period),v31:aggregate(v31,period)});
+   const [v3,v31,recent31]=await Promise.all([base44.entities.PredictionV3Verification.list("-verified_at",1000).catch(()=>[]),base44.entities.PredictionV31Verification.list("-created_date",1000).catch(()=>[]),base44.entities.PredictionV31.list("-computed_at",20).catch(()=>[])]);
+   const cal=(recent31||[]).find(p=>p.calibration_applied)?.calibration_applied||null;
+   setData({v3:aggregate(v3,period),v31:aggregate(v31,period),cal});
  }finally{setLoading(false)}},[period]);
  useEffect(()=>{load()},[load]);
  if(loading)return <div className="text-center text-slate-400 py-8 text-sm">V3.1検証データ読み込み中…</div>;
@@ -40,6 +41,12 @@ export default function V3V31Comparison(){
   <div className="flex gap-2 flex-wrap">{PERIODS.map(([k,l])=><button key={k} onClick={()=>setPeriod(k)} className={cn("px-3 py-1.5 rounded-md text-xs font-medium",period===k?"bg-violet-600 text-white":"bg-slate-800 text-slate-400")}>{l}</button>)}</div>
   <div className="grid grid-cols-2 gap-3"><Card label="V3 基準" d={v3}/><Card label="V3.1 Candidate" d={v31} newOne/></div>
   <div className="bg-slate-900 rounded-lg p-3 border border-slate-700"><b className="text-slate-300 text-xs">V3.1 改善差分</b><div className="grid grid-cols-2 gap-2 mt-2">{[["的中率",v31.hit_rate-v3.hit_rate],["回収率",v31.recovery_rate-v3.recovery_rate]].map(([l,d])=><div className="bg-slate-800/50 rounded p-2" key={l}><div className="text-[10px] text-slate-400">{l}</div><b className={cn("text-xs",d>0?"text-emerald-400":d<0?"text-rose-400":"text-slate-300")}>{d>0?"+":""}{d.toFixed(1)}%</b></div>)}</div></div>
+  <div className="bg-slate-900 rounded-lg p-3 border border-slate-700">
+   <b className="text-slate-300 text-xs">実績校正(V3.1)</b>
+   {data.cal?.set_reliability
+     ? <div className="text-xs text-slate-300 mt-1">期待回収率の補正係数 <b className="text-violet-300">×{data.cal.set_reliability.factor}</b><span className="text-slate-500">（実績 {data.cal.set_reliability.observed_rate}% / 予測 {data.cal.set_reliability.predicted_rate}%・{data.cal.set_reliability.samples}件）</span></div>
+     : <div className="text-xs text-slate-500 mt-1">検証サンプルが50件に達すると、予測セット確率と実績の比から補正係数を自動算出して判定に反映します。</div>}
+  </div>
   {v31.buy_count===0&&<div className="flex gap-2 items-start bg-amber-950/30 border border-amber-800 rounded-lg p-3 text-xs text-amber-300"><AlertCircle className="w-4 h-4 shrink-0"/>V3.1は追加直後なので、まだ検証サンプルがありません。今後の予想・結果確定から自動で蓄積されます。</div>}
   {v31.miss_reasons.length>0&&<div className="bg-slate-900 rounded-lg p-3 border border-slate-700"><b className="text-slate-300 text-xs">V3.1 外れ原因TOP5</b>{v31.miss_reasons.slice(0,5).map((x,i)=><div className="flex justify-between text-xs mt-1" key={x.reason}><span className="text-slate-400">{i+1}. {x.reason}</span><span className="text-slate-200">{x.count}件</span></div>)}</div>}
  </div>

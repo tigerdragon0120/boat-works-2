@@ -1035,8 +1035,11 @@ function computeDataCompleteness(boatScores, stage, oddsMap) {
 // 【V3新規】BUY6条件判定
 // A: 1着信頼度, B: セット確率, C: オッズ, D: 期待回収率, E: 展示信頼度, F: データ完全性
 // ============================================================
-function judgeV3(setMetrics, firstConfidence, dataCompleteness, raceType, settings, stage) {
-  const recovery = setMetrics?.set_expected_recovery;
+function judgeV3(setMetrics, firstConfidence, dataCompleteness, raceType, settings, stage, setReliability = 1) {
+  const rawRecovery = setMetrics?.set_expected_recovery;
+  // 実績校正: 過去の検証で「実際のセット的中率 ÷ 予測セット確率」から求めた信頼度を期待回収率に適用する
+  const recovery = rawRecovery != null ? Math.round(rawRecovery * setReliability * 10) / 10 : null;
+  const calibNote = setReliability !== 1 ? `（校正x${setReliability}）` : "";
   const setProb = setMetrics?.set_probability;
   const buyThreshold = settings?.buy_set_ev_threshold || 120;
   const watchThreshold = settings?.watch_set_ev_threshold || 90;
@@ -1079,12 +1082,12 @@ function judgeV3(setMetrics, firstConfidence, dataCompleteness, raceType, settin
 
   // 期待回収率判定
   if (recovery >= buyThreshold && conditions.E_exhibition_confidence) {
-    return { judgment: "BUY", reason: `6条件中${passedCount}条件通過・期待回収率${recovery}%≥${buyThreshold}%`, conditions, passedCount };
+    return { judgment: "BUY", reason: `6条件中${passedCount}条件通過・期待回収率${recovery}%≥${buyThreshold}%${calibNote}`, conditions, passedCount };
   }
   if (recovery >= watchThreshold) {
-    return { judgment: "WATCH", reason: `期待回収率${recovery}%≥${watchThreshold}%・BUY基準${buyThreshold}%未満`, conditions, passedCount };
+    return { judgment: "WATCH", reason: `期待回収率${recovery}%≥${watchThreshold}%・BUY基準${buyThreshold}%未満${calibNote}`, conditions, passedCount };
   }
-  return { judgment: "SKIP", reason: `期待回収率${recovery}%<${watchThreshold}%`, conditions, passedCount };
+  return { judgment: "SKIP", reason: `期待回収率${recovery}%<${watchThreshold}%${calibNote}`, conditions, passedCount };
 }
 
 // ============================================================
@@ -1096,6 +1099,19 @@ export function applyCalibration(raceProbability, calibrationFactor) {
   return Math.round(raceProbability * calibrationFactor * 10) / 10;
 }
 
+// 予測確率帯ごとの補正係数が含まれているか
+const CALIBRATION_BAND_KEYS = ["0-5", "5-10", "10-15", "15-20", "20-30", "30+"];
+function hasBandFactors(factors) {
+  return CALIBRATION_BAND_KEYS.some(k => Number(factors?.[k]) > 0);
+}
+
+// 実績校正係数(セット信頼度)。検証データ不足時は1(補正なし)。
+function normalizeSetReliability(factors) {
+  const raw = Number(factors?.set_reliability?.factor);
+  if (!Number.isFinite(raw) || raw <= 0) return 1;
+  return Math.max(0.3, Math.min(1.5, Math.round(raw * 100) / 100));
+}
+
 // ============================================================
 // メイン: V3予想実行
 // ============================================================
@@ -1103,6 +1119,7 @@ export function runPredictionV31(entries, race, settings, options = {}) {
   const stage = options.stage || settings?.stage || "PRE";
   const oddsMap = options.oddsMap || {};
   const calibrationFactors = options.calibrationFactors || null;
+  const setReliability = normalizeSetReliability(calibrationFactors);
 
   // Boat Scores計算
   const boatScores = computeV3BoatScores(entries, race, stage);
@@ -1116,8 +1133,8 @@ export function runPredictionV31(entries, race, settings, options = {}) {
   // 120通りrace_probability
   const trifectas = computeV3Trifectas(boatScores);
 
-  // 確率校正(補正係数がある場合)
-  if (calibrationFactors) {
+  // 確率校正(予測確率帯ごとの補正係数がある場合のみ)
+  if (calibrationFactors && hasBandFactors(calibrationFactors)) {
     for (const t of trifectas) {
       const band = getProbabilityBand(t.race_probability);
       const factor = calibrationFactors[band];
@@ -1150,7 +1167,7 @@ export function runPredictionV31(entries, race, settings, options = {}) {
   const setMetrics = computeV3SetMetrics(selected, oddsMap, settings);
 
   // 判定
-  const judgment = judgeV3(setMetrics, firstConfidence, dataCompleteness, raceType, settings, stage);
+  const judgment = judgeV3(setMetrics, firstConfidence, dataCompleteness, raceType, settings, stage, setReliability);
 
   // ランキング
   const scoreField = stage === "FINAL" ? "final_score" : "pre_score";
@@ -1226,7 +1243,12 @@ export function runPredictionV31(entries, race, settings, options = {}) {
       rough_water: condWeights.rough_water,
     },
     v3_weights: V31_BASE_WEIGHTS,
-    calibration_applied: calibrationFactors ? { source: "historical_verification", factors: calibrationFactors } : null,
+    calibration_applied: calibrationFactors ? {
+      source: "historical_verification",
+      set_reliability: setReliability,
+      set_reliability_detail: calibrationFactors.set_reliability || null,
+      factors: calibrationFactors,
+    } : null,
   };
 }
 

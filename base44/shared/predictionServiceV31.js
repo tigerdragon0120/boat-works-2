@@ -139,10 +139,54 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
 // 予測確率帯ごとに(実際的中率 / 予測平均確率)を計算
 // 未実装時はnull(補正なし)
 // ============================================================
+const MIN_CALIBRATION_SAMPLES = 50;
+
 async function getCalibrationFactors(client) {
-  // 直近100件の検証データから算出
-  // TODO: PredictionV31Verification蓄積後に実装
-  return null;
+  const sr = client.asServiceRole.entities;
+
+  // 直近の検証データからBUY予想を取り出す
+  const rows = await sr.PredictionV31Verification.list("-verified_at", 300).catch(() => []);
+  const buyRows = (rows || []).filter(r =>
+    r.v3_final_judgment === "BUY" && typeof r.v3_recommended_hit === "boolean"
+  );
+  if (buyRows.length < MIN_CALIBRATION_SAMPLES) return null;
+
+  // 検証レコードには予測セット確率を保存していないため、予想本体から結合する
+  const raceKeys = [...new Set(buyRows.map(r => r.race_key).filter(Boolean))].slice(0, 300);
+  const preds = raceKeys.length
+    ? await sr.PredictionV31.filter({ race_key: { $in: raceKeys }, stage: "FINAL" }, "-computed_at", 400).catch(() => [])
+    : [];
+  const setProbByKey = new Map();
+  for (const p of preds || []) {
+    if (p.race_key && !setProbByKey.has(p.race_key)) setProbByKey.set(p.race_key, Number(p.set_probability) || null);
+  }
+
+  let samples = 0;
+  let hits = 0;
+  let probSum = 0;
+  for (const r of buyRows) {
+    const setProb = setProbByKey.get(r.race_key);
+    if (setProb == null || setProb <= 0) continue;
+    samples += 1;
+    if (r.v3_recommended_hit) hits += 1;
+    probSum += setProb;
+  }
+  if (samples < MIN_CALIBRATION_SAMPLES) return null;
+
+  const observed = hits / samples;               // 実際のセット的中率(0-1)
+  const predicted = (probSum / samples) / 100;   // 予測セット的中確率(0-1)
+  if (!(predicted > 0)) return null;
+
+  const factor = Math.max(0.3, Math.min(1.5, Math.round(observed / predicted * 100) / 100));
+
+  return {
+    set_reliability: {
+      factor,
+      samples,
+      observed_rate: Math.round(observed * 1000) / 10,
+      predicted_rate: Math.round(predicted * 1000) / 10,
+    },
+  };
 }
 
 // ============================================================
