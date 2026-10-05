@@ -341,6 +341,24 @@
         },
         "source": {
           "type": "string"
+        },
+        "set_reliability": {
+          "type": "object",
+          "description": "\u691c\u8a3c\u5b9f\u7e3e\u304b\u3089\u81ea\u52d5\u7b97\u51fa\u3057\u305f\u30bb\u30c3\u30c8\u4fe1\u983c\u5ea6\u88dc\u6b63(\u671f\u5f85\u56de\u53ce\u7387\u306b\u4e57\u7b97)",
+          "properties": {
+            "factor": {
+              "type": "number"
+            },
+            "samples": {
+              "type": "number"
+            },
+            "observed_rate": {
+              "type": "number"
+            },
+            "predicted_rate": {
+              "type": "number"
+            }
+          }
         }
       }
     },

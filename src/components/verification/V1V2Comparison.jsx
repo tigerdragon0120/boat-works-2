@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { getV2VerificationSummary } from "@/lib/predictionService";
-import { BarChart3, Target, Coins, TrendingUp, CheckCircle2, XCircle, GitCompare, ArrowUpDown } from "lucide-react";
+import { BarChart3, Target, Coins, CheckCircle2, GitCompare, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const fmt = (n) => n != null ? n.toLocaleString() : "—";

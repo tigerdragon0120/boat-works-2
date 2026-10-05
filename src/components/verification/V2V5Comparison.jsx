@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { cn } from "@/lib/utils";
 import { dedupeVerifications } from "@/lib/verificationUtils";
-import { AlertTriangle, CheckCircle2, Scale, Target, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Scale, XCircle } from "lucide-react";
 
 const TARGET_HIT = 16;
 const TARGET_RECOVERY = 110;

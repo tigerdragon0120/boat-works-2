@@ -109,7 +109,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-auto">
         {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} race={race} predictionVersion={predictionVersion} />}
-        {subTab === "出走表" && <><EntryGrid entries={filter === "得点率早見" ? tokutenEntries : entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />}{filter === "得点率早見" && tokutenLoading && <div className="px-3 py-2 text-[11px] text-amber-600 font-bold">BOATCAST 得点率早見を取得中…</div>}</>}
+        {subTab === "出走表" && <><EntryGrid entries={filter === "得点率早見" ? tokutenEntries : entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />{filter === "得点率早見" && tokutenLoading && <div className="px-3 py-2 text-[11px] text-amber-600 font-bold">BOATCAST 得点率早見を取得中…</div>}</>}
         {subTab === "直前情報" && <ExhibitionInfo entries={entries} race={race} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
         {subTab === "3連単" && <TrifectaView probRank={probRank} evRank={evRank} rankMode={rankMode} setRankMode={setRankMode} />}

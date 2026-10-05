@@ -141,15 +141,31 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
 // ============================================================
 const MIN_CALIBRATION_SAMPLES = 50;
 
+// 校正係数キャッシュ: 同一実行(バッチ)内で毎レース同じ集計を繰り返さない。
+// 検証データは数分単位でしか増えないため、5分TTLでも判定への反映は継続する。
+const CALIBRATION_CACHE_TTL_MS = 5 * 60 * 1000;
+let calibrationCache = null;
+
+function cacheCalibration(value) {
+  calibrationCache = { value, at: Date.now() };
+  return value;
+}
+
 async function getCalibrationFactors(client) {
   const sr = client.asServiceRole.entities;
 
+  if (calibrationCache && Date.now() - calibrationCache.at < CALIBRATION_CACHE_TTL_MS) {
+    return calibrationCache.value;
+  }
+
   // 直近の検証データからBUY予想を取り出す
   const rows = await sr.PredictionV31Verification.list("-verified_at", 300).catch(() => []);
+  // 取得失敗(0件)は一時的な可能性が高いためキャッシュせず、次のレースで再試行する
+  if (!rows || !rows.length) return null;
   const buyRows = (rows || []).filter(r =>
     r.v3_final_judgment === "BUY" && typeof r.v3_recommended_hit === "boolean"
   );
-  if (buyRows.length < MIN_CALIBRATION_SAMPLES) return null;
+  if (buyRows.length < MIN_CALIBRATION_SAMPLES) return cacheCalibration(null);
 
   // 検証レコードには予測セット確率を保存していないため、予想本体から結合する
   const raceKeys = [...new Set(buyRows.map(r => r.race_key).filter(Boolean))].slice(0, 300);
@@ -171,22 +187,22 @@ async function getCalibrationFactors(client) {
     if (r.v3_recommended_hit) hits += 1;
     probSum += setProb;
   }
-  if (samples < MIN_CALIBRATION_SAMPLES) return null;
+  if (samples < MIN_CALIBRATION_SAMPLES) return cacheCalibration(null);
 
   const observed = hits / samples;               // 実際のセット的中率(0-1)
   const predicted = (probSum / samples) / 100;   // 予測セット的中確率(0-1)
-  if (!(predicted > 0)) return null;
+  if (!(predicted > 0)) return cacheCalibration(null);
 
   const factor = Math.max(0.3, Math.min(1.5, Math.round(observed / predicted * 100) / 100));
 
-  return {
+  return cacheCalibration({
     set_reliability: {
       factor,
       samples,
       observed_rate: Math.round(observed * 1000) / 10,
       predicted_rate: Math.round(predicted * 1000) / 10,
     },
-  };
+  });
 }
 
 // ============================================================

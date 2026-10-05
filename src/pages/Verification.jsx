@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { getVerificationSummary } from "@/lib/predictionService";
 import {
-  BarChart3, Target, Coins, TrendingUp, CheckCircle2, XCircle,
+  BarChart3, Target, Coins, CheckCircle2, XCircle,
   ArrowRight, BrainCircuit, Database, TicketCheck, RefreshCw, AlertTriangle, CalendarDays, MapPin
 } from "lucide-react";
 import { cn } from "@/lib/utils";

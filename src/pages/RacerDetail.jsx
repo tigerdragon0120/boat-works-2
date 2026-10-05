@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { getRacerDetailData } from "@/lib/dataManagementService";
 import { ArrowLeft, Loader2, TrendingUp, TrendingDown, Minus, Award, Gauge, MapPin, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine } from "recharts";
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 
 export default function RacerDetail() {
   const { reg } = useParams();

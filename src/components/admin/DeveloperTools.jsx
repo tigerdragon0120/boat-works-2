@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { getSettings, todayStr, generateAndSavePrediction, saveResultAndVerify, invokeSync } from "@/lib/predictionService";
-import { Settings as SettingsIcon, FlaskConical, Save, Plus, Code, ChevronDown, ChevronRight, Zap } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Save, Plus, Code, ChevronDown, ChevronRight, Zap } from "lucide-react";
 
 export default function DeveloperTools() {
   const [open, setOpen] = useState(null);

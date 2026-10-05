@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from "react";
 import { parseRacerTermFileForPreview, rebuildRollingStats } from "@/lib/dataManagementService";
 import { getRacerTermImportState, startRacerTermImport, subscribeRacerTermImport, resumeRacerTermImport } from "@/lib/racerTermImportManager";
-import { Users, Upload, CheckCircle2, AlertTriangle, Loader2, Zap, RefreshCw, FileText, TrendingUp } from "lucide-react";
+import { Upload, CheckCircle2, AlertTriangle, Loader2, Zap, RefreshCw, FileText, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function RacerTermImportCard() {

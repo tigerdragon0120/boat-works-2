@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { cn } from "@/lib/utils";
 import { dedupeVerifications } from "@/lib/verificationUtils";
-import { Target, TrendingUp, TrendingDown, Trophy, DollarSign, AlertCircle, CheckCircle2, XCircle } from "lucide-react";
+import { Target, AlertCircle, CheckCircle2, XCircle } from "lucide-react";
 
 // KPI目標値
 const TARGET_HIT_RATE = 16;
