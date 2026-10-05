@@ -128,6 +128,22 @@ export default async function(req: Request) {
           : 0;
       const payout = recommendedHit ? Number(result.payout || 0) : 0;
       const recoveryRate = investment > 0 ? Math.round((payout / investment) * 100) : 0;
+      const sourceForTickets = final || pre;
+      const selectedSet = new Set(finalSelected.length ? finalSelected : preSelected);
+      const ticketDetails = (Array.isArray(sourceForTickets?.trifectas) ? sourceForTickets.trifectas : [])
+        .filter((ticket: any) => selectedSet.has(ticket?.combination) || ticket?.is_selected)
+        .sort((a: any, b: any) => Number(a?.ticket_rank ?? a?.rank ?? 999) - Number(b?.ticket_rank ?? b?.rank ?? 999))
+        .slice(0, 8)
+        .map((ticket: any) => ({
+          combination: ticket.combination,
+          rank: Number(ticket.ticket_rank ?? ticket.rank ?? 0),
+          probability: Number(ticket.race_probability ?? 0),
+          actual_odds: ticket.actual_odds == null ? null : Number(ticket.actual_odds),
+          expected_value: ticket.expected_value == null
+            ? (ticket.actual_odds == null ? null : Math.round(Number(ticket.race_probability || 0) * Number(ticket.actual_odds) * 10) / 10)
+            : Number(ticket.expected_value),
+          is_selected: true,
+        }));
 
       const document = {
         race_id: race.id,
@@ -144,6 +160,7 @@ export default async function(req: Request) {
         v3_final_judgment: final?.final_judgment || null,
         v3_ticket_count: final?.ticket_count || null,
         v3_selected_trifectas: finalSelected,
+        v31_ticket_details: ticketDetails,
         v3_payout: payout,
         v3_investment: investment,
         v3_recovery_rate: recoveryRate,
