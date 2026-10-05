@@ -119,8 +119,25 @@ export default function Venue() {
       }
     }
     setEntries(es || []);
-    const resultRows = await base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1);
-    setRaceResult(resultRows?.[0] || null);
+    let resultRows = await base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1);
+    let latestResult = resultRows?.[0] || null;
+
+    // 終了済みレースで旧データが3連単払戻しか持っていない場合、
+    // 画面を開いた時に公式結果を再取得して全券種払戻を自動補完する。
+    const raceEnded = r.status === "finished" || (Number.isFinite(deadlineMs) && nowMs > deadlineMs);
+    const hasFullPayouts = !!(latestResult?.payouts && Object.keys(latestResult.payouts).length > 1);
+    if (raceEnded && latestResult?.result_trifecta && !hasFullPayouts) {
+      try {
+        const refreshResult = await fetchOnlineData("result", r.race_date, r.venue_code, r.race_number, r.id);
+        if (refreshResult?.data?.ok !== false) {
+          resultRows = await base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1);
+          latestResult = resultRows?.[0] || latestResult;
+        }
+      } catch (err) {
+        console.warn("払戻全券種の自動補完に失敗", sectionKey, err);
+      }
+    }
+    setRaceResult(latestResult);
 
     // === V4 FINAL自動生成保証 ===
     if (r?.exhibition_ready && r?.deadline) {
