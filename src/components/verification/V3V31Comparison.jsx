@@ -29,7 +29,7 @@ function Card({label,d,newOne}){
 export default function V3V31Comparison(){
  const [period,setPeriod]=useState("100"),[data,setData]=useState(null),[loading,setLoading]=useState(true);
  const load=useCallback(async()=>{setLoading(true);try{
-   const [v3,v31]=await Promise.all([base44.entities.PredictionV3Verification.list("-verified_at",1000).catch(()=>[]),base44.entities.PredictionV31Verification.list("-verified_at",1000).catch(()=>[])]);
+   const [v3,v31]=await Promise.all([base44.entities.PredictionV3Verification.list("-verified_at",1000).catch(()=>[]),base44.entities.PredictionV31Verification.list("-created_date",1000).catch(()=>[])]);
    setData({v3:aggregate(v3,period),v31:aggregate(v31,period)});
  }finally{setLoading(false)}},[period]);
  useEffect(()=>{load()},[load]);
