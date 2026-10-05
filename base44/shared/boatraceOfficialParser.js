@@ -437,6 +437,51 @@ export function parseResult(html, raceDate, venueCode, venueName) {
     payout = num(triMatch[2].replace(/,/g, ""));
   }
 
+  // 全券種の払戻を保存する。存在する実データだけ採用し、欠損値は作らない。
+  const parseSinglePayout = (label, comboPattern) => {
+    const re = new RegExp(label + "\\s+(" + comboPattern + ")\\s+[¥￥]?([\\d,]+)(?:\\s*円)?(?:\\s*\\(?([0-9]+)番人気\\)?)?");
+    const m = text.match(re);
+    if (!m) return null;
+    return {
+      combination: m[1].replace(/\s/g, ""),
+      payout: num(m[2].replace(/,/g, "")),
+      popularity: m[3] ? num(m[3]) : null,
+    };
+  };
+  const parseMultiPayout = (label, comboPattern, maxCount = 3) => {
+    const start = text.indexOf(label);
+    if (start < 0) return [];
+    const nextLabels = ["3連単","3連複","2連単","2連複","拡連複","単勝","複勝"].filter(x => x !== label);
+    let end = text.length;
+    for (const l of nextLabels) {
+      const p = text.indexOf(l, start + label.length);
+      if (p >= 0 && p < end) end = p;
+    }
+    const section = text.slice(start + label.length, end);
+    const re = new RegExp("(" + comboPattern + ")\\s+[¥￥]?([\\d,]+)(?:\\s*円)?(?:\\s*\\(?([0-9]+)番人気\\)?)?", "g");
+    const out = [];
+    let m;
+    while ((m = re.exec(section)) !== null && out.length < maxCount) {
+      out.push({ combination: m[1].replace(/\s/g, ""), payout: num(m[2].replace(/,/g, "")), popularity: m[3] ? num(m[3]) : null });
+    }
+    return out;
+  };
+  const payouts = {};
+  const trifecta = parseSinglePayout("3連単", "\\d\\s*-\\s*\\d\\s*-\\s*\\d");
+  const trio = parseSinglePayout("3連複", "\\d\\s*-\\s*\\d\\s*-\\s*\\d");
+  const exacta = parseSinglePayout("2連単", "\\d\\s*-\\s*\\d");
+  const quinella = parseSinglePayout("2連複", "\\d\\s*-\\s*\\d");
+  const wide = parseMultiPayout("拡連複", "\\d\\s*-\\s*\\d", 3);
+  const win = parseSinglePayout("単勝", "\\d");
+  const place = parseMultiPayout("複勝", "\\d", 3);
+  if (trifecta) payouts.trifecta = trifecta;
+  if (trio) payouts.trio = trio;
+  if (exacta) payouts.exacta = exacta;
+  if (quinella) payouts.quinella = quinella;
+  if (wide.length) payouts.wide = wide;
+  if (win) payouts.win = win;
+  if (place.length) payouts.place = place;
+
   // ST情報抽出: img_boat2_X.png の後にST値(.19やF.05形式に対応)
   const stPattern = /img_boat2_(\d)\.png[\s\S]*?(-?\d*\.\d+|F\.\d+)/g;
   const stMap = {};
@@ -490,6 +535,7 @@ export function parseResult(html, raceDate, venueCode, venueName) {
         race_number: null,
         result_trifecta: resultTrifecta,
         payout: payout || 0,
+        payouts: Object.keys(payouts).length ? payouts : null,
         entries: uniqueEntries,
         weather,
         wind_speed: windSpeed,
