@@ -25,6 +25,7 @@ export default function RaceDetail() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [rankMode, setRankMode] = useState("prob");
+  const [raceResult, setRaceResult] = useState(null);
 
   const load = async ({ silent = false } = {}) => {
     if (!silent) {
@@ -40,6 +41,8 @@ export default function RaceDetail() {
     setRace(r);
     const es = await getRaceEntries(id, r?.race_key);
     setEntries(es || []);
+    const results = await base44.entities.RaceResult.filter({ race_id: id }, "-finished_at", 1);
+    setRaceResult(results?.[0] || null);
 
     // === V4 FINAL自動生成保証 ===
     // exhibition_ready=true かつ V4 FINAL未生成 かつ 締切前なら生成
@@ -175,6 +178,34 @@ export default function RaceDetail() {
       <Link to="/" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-[#f9c836] mb-3">
         <ArrowLeft className="w-4 h-4" /> レース一覧
       </Link>
+
+      {raceResult && (raceResult.result_status === "RESULT_FINAL" || raceResult.is_finished) && (
+        <div className="mb-4 rounded-xl border-2 border-rose-500 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 className="text-lg font-bold text-slate-900">🏁 レース結果</h2>
+            <span className="rounded-md bg-rose-500 px-3 py-1 text-sm font-bold text-white">確定</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            {(raceResult.finish_order || []).slice(0,3).map((boat, i) => (
+              <div key={i} className="rounded-lg border bg-slate-50 p-3 text-center">
+                <div className="text-xs font-bold text-slate-500">{i + 1}着</div>
+                <div className="text-2xl font-black">{boat}号艇</div>
+              </div>
+            ))}
+          </div>
+          <div className="border-t pt-3">
+            <div className="font-bold mb-2">💴 払戻金</div>
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+              {raceResult.payouts?.trifecta && <div className="flex justify-between"><span>3連単 {raceResult.payouts.trifecta.combination}</span><b>{Number(raceResult.payouts.trifecta.payout || 0).toLocaleString()}円</b></div>}
+              {raceResult.payouts?.trifecta_quinella && <div className="flex justify-between"><span>3連複 {raceResult.payouts.trifecta_quinella.combination}</span><b>{Number(raceResult.payouts.trifecta_quinella.payout || 0).toLocaleString()}円</b></div>}
+              {raceResult.payouts?.exacta && <div className="flex justify-between"><span>2連単 {raceResult.payouts.exacta.combination}</span><b>{Number(raceResult.payouts.exacta.payout || 0).toLocaleString()}円</b></div>}
+              {raceResult.payouts?.quinella && <div className="flex justify-between"><span>2連複 {raceResult.payouts.quinella.combination}</span><b>{Number(raceResult.payouts.quinella.payout || 0).toLocaleString()}円</b></div>}
+              {!raceResult.payouts?.trifecta && raceResult.result_trifecta && <div className="flex justify-between"><span>3連単 {raceResult.result_trifecta}</span><b>{Number(raceResult.payout || 0).toLocaleString()}円</b></div>}
+              {(raceResult.payouts?.wide || []).map((w,i)=><div key={"w"+i} className="flex justify-between"><span>拡連複 {w.combination}</span><b>{Number(w.payout || 0).toLocaleString()}円</b></div>)}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* スプリットレイアウト: 左=予想サマリー / 右=出走表 */}
       <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
