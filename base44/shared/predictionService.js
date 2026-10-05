@@ -892,7 +892,8 @@ export async function upsertResultAndVerify(client, race, resultData) {
   const doc = {
     race_id: race.id, race_key: race.race_key,
     result_trifecta: resultData.result_trifecta, finish_order: resultData.finish_order,
-    payout: resultData.payout || 0, is_finished: true, finished_at: new Date().toISOString(),
+    payout: resultData.payout || 0, payouts: resultData.payouts || null,
+    is_finished: true, finished_at: new Date().toISOString(),
     source: 'LOCAL', result_status: 'RESULT_FINAL',
   };
   const saved = await saveSingleRaceResult(sr, race, doc);
