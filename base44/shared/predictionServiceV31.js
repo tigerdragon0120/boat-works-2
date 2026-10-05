@@ -165,10 +165,10 @@ export async function verifyV31Prediction(client, race, resultData) {
 
     // V3予想取得
     const v3Final = await sr.PredictionV31.filter(
-      { race_id: race.id, stage: "FINAL", prediction_version: "v3" }, "-computed_at", 1
+      { race_id: race.id, stage: "FINAL", prediction_version: V3_VERSION }, "-computed_at", 1
     ).catch(() => []);
     const v3Pre = await sr.PredictionV31.filter(
-      { race_id: race.id, stage: "PRE", prediction_version: "v3" }, "-computed_at", 1
+      { race_id: race.id, stage: "PRE", prediction_version: V3_VERSION }, "-computed_at", 1
     ).catch(() => []);
 
     const v2PrePred = v2Pre?.[0];
