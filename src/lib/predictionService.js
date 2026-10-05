@@ -771,7 +771,7 @@ export async function getV31Prediction(raceId, stage, raceKey) {
   return list && list[0];
 }
 
-export function mapV31ToUI(pred, stage) {
+export function mapV31ToUI(pred, stage, oddsMap = null) {
   if (!pred) return null;
   const boats = (pred.boat_scores || []).map(b => ({
     boat_number: b.boat_number,
@@ -788,9 +788,9 @@ export function mapV31ToUI(pred, stage) {
     combination: t.combination,
     rank: t.rank || i + 1,
     probability: t.race_probability ?? t.probability ?? 0,
-    actual_odds: t.actual_odds ?? null,
-    current_odds: t.actual_odds ?? null,
-    expected_value: t.expected_value ?? null,
+    actual_odds: t.actual_odds ?? oddsMap?.[t.combination] ?? null,
+    current_odds: t.actual_odds ?? oddsMap?.[t.combination] ?? null,
+    expected_value: t.expected_value ?? ((t.actual_odds ?? oddsMap?.[t.combination]) != null ? Math.round((t.race_probability ?? t.probability ?? 0) * (t.actual_odds ?? oddsMap?.[t.combination]) * 10) / 10 : null),
     is_selected: selected.has(t.combination) || !!t.is_selected,
     ticket_rank: t.ticket_rank ?? (selected.has(t.combination) ? [...selected].indexOf(t.combination) + 1 : null),
   }));
@@ -798,14 +798,17 @@ export function mapV31ToUI(pred, stage) {
 }
 
 export async function resolveV31Prediction(raceId, raceKey) {
+  const oddsRows = await withRetry(() => base44.entities.OddsSnapshot.filter({ race_id: raceId }, "-captured_at", 5)).catch(() => []);
+  const finalOdds = oddsRows.find(o => o.stage === "FINAL" && o.odds_map)?.odds_map || null;
+  const preOdds = oddsRows.find(o => o.stage === "PRE" && o.odds_map)?.odds_map || finalOdds;
   const fin = await getV31Prediction(raceId, "FINAL", raceKey);
   if (fin && (fin.status === "COMPLETED" || !fin.status)) {
-    const mapped = mapV31ToUI(fin, "FINAL");
+    const mapped = mapV31ToUI(fin, "FINAL", finalOdds);
     return { stage: "FINAL", ...mapped };
   }
   const pre = await getV31Prediction(raceId, "PRE", raceKey);
   if (pre && (pre.status === "COMPLETED" || !pre.status)) {
-    const mapped = mapV31ToUI(pre, "PRE");
+    const mapped = mapV31ToUI(pre, "PRE", preOdds);
     return { stage: "PRE", ...mapped };
   }
   return { stage: null, pred: null, boats: [], trifectas: [] };
