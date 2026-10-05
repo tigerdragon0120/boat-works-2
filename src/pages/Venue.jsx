@@ -188,6 +188,11 @@ export default function Venue() {
     const freshEntries = await getRaceEntries(selectedRace.id, selectedRace.race_key);
     setEntries(freshEntries || []);
 
+    // レース終了後にRaceResultが後から入っても、開いたまま結果・払戻を反映する。
+    // 取得できなかったときは既存の正常な表示を消さない。
+    const latestResult = await base44.entities.RaceResult.filter({ race_id: selectedRace.id }, "-finished_at", 1);
+    if (latestResult?.[0]) setRaceResult(latestResult[0]);
+
     if (selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
     const [resolved, resolvedV31, resolvedV6, resolvedEnsemble] = await Promise.all([
       resolveCurrentPrediction(selectedRace.id, selectedRace.race_key),

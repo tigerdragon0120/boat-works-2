@@ -21,13 +21,13 @@ const finishTone = {
 
 // 券種 → RaceResult.payoutsのキー候補。存在するものだけ表示する。
 const PAYOUT_KINDS = [
-  { label: "3連単", keys: ["trifecta"] },
-  { label: "3連複", keys: ["trifecta_quinella", "trio"] },
-  { label: "2連単", keys: ["exacta"] },
-  { label: "2連複", keys: ["quinella"] },
-  { label: "拡連複", keys: ["wide"] },
-  { label: "単勝", keys: ["win", "tansho"] },
-  { label: "複勝", keys: ["place", "fukusho", "show"] },
+  { label: "3連単", keys: ["trifecta"], tone: "bg-rose-100 text-rose-700 border-rose-200" },
+  { label: "3連複", keys: ["trifecta_quinella", "trio"], tone: "bg-orange-100 text-orange-700 border-orange-200" },
+  { label: "2連単", keys: ["exacta"], tone: "bg-sky-100 text-sky-700 border-sky-200" },
+  { label: "2連複", keys: ["quinella"], tone: "bg-blue-100 text-blue-700 border-blue-200" },
+  { label: "拡連複", keys: ["wide"], tone: "bg-violet-100 text-violet-700 border-violet-200" },
+  { label: "単勝", keys: ["win", "tansho", "win_payout"], tone: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  { label: "複勝", keys: ["place", "fukusho", "show", "place_payout"], tone: "bg-amber-100 text-amber-700 border-amber-200" },
 ];
 
 function formatStartedAt(race) {
@@ -52,20 +52,39 @@ function resolveFinishBoats(raceResult) {
   return source.map(Number).filter((n) => n >= 1 && n <= 6).slice(0, 3);
 }
 
+function toPopularity(value) {
+  const num = String(value ?? "").match(/\d+/);
+  return num ? Number(num[0]) : null;
+}
+
 function buildPayoutRows(raceResult) {
   const payouts = raceResult?.payouts || {};
   const rows = [];
   for (const kind of PAYOUT_KINDS) {
     const raw = kind.keys.map((key) => payouts[key]).find((v) => v != null && (Array.isArray(v) ? v.length > 0 : true));
     if (raw == null) continue;
+    // 拡連複・複勝のように複数組ある券種は全件表示する。
+    // 金額(または組番)が無いものは偽の金額を作らず非表示にする。
     for (const item of Array.isArray(raw) ? raw : [raw]) {
-      if (item == null || (item.combination == null && item.payout == null)) continue;
-      rows.push({ label: kind.label, combination: item.combination || "", payout: item.payout });
+      if (item == null || item.payout == null || item.combination == null) continue;
+      rows.push({
+        label: kind.label,
+        tone: kind.tone,
+        combination: item.combination,
+        payout: item.payout,
+        popularity: toPopularity(item.popularity ?? item.ninki),
+      });
     }
   }
-  // 3連単は必ずresult_trifecta/payoutでフォールバック表示する
+  // 3連単はresult_trifecta/payoutで必ずフォールバック表示する
   if (!rows.some((row) => row.label === "3連単") && raceResult?.result_trifecta) {
-    rows.unshift({ label: "3連単", combination: raceResult.result_trifecta, payout: raceResult.payout });
+    rows.unshift({
+      label: "3連単",
+      tone: PAYOUT_KINDS[0].tone,
+      combination: raceResult.result_trifecta,
+      payout: raceResult.payout ?? null,
+      popularity: toPopularity(raceResult.popular_trifecta),
+    });
   }
   return rows;
 }
@@ -126,14 +145,15 @@ export default function RaceResultCard({ race, raceResult, entries = [] }) {
       {payoutRows.length > 0 && (
         <div className="mt-3 border-t border-slate-200 pt-3">
           <div className="text-sm font-black text-slate-900">¥ 払戻金</div>
-          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 sm:gap-x-6">
+          <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-x-4">
             {payoutRows.map((row, index) => (
-              <div key={`${row.label}-${row.combination}-${index}`} className="flex items-center justify-between gap-1.5 min-w-0 rounded-md bg-slate-50 px-2 py-1">
-                <span className="text-[11px] text-slate-500 whitespace-nowrap">
-                  {row.label}
-                  {row.combination && <span className="ml-1 font-mono font-bold text-slate-700">{row.combination}</span>}
-                </span>
-                <span className="text-[11px] sm:text-xs font-black text-rose-600 whitespace-nowrap">
+              <div key={`${row.label}-${row.combination}-${index}`} className="flex items-center justify-between gap-2 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-black", row.tone)}>{row.label}</span>
+                  <span className="font-mono font-black text-slate-900 text-sm truncate">{row.combination}</span>
+                  {row.popularity != null && <span className="shrink-0 text-[10px] text-slate-400 whitespace-nowrap">({row.popularity}番人気)</span>}
+                </div>
+                <span className="shrink-0 text-sm font-black text-rose-600 whitespace-nowrap">
                   {row.payout != null ? `${Number(row.payout).toLocaleString()}円` : "—"}
                 </span>
               </div>
