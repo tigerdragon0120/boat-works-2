@@ -196,6 +196,7 @@ async function processResult(base44: any, race: any, parsed: any) {
     result_trifecta: resultTrifecta,
     finish_order: finishOrder,
     payout,
+    payouts: result.payouts || null,
   });
 
   // RacerRaceHistory蓄積
