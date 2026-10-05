@@ -4,6 +4,7 @@ import PlayerPhoto from "@/components/race/PlayerPhoto";
 import StartTimingPanel from "@/components/race/StartTimingPanel";
 import LanePast10Table from "@/components/race/LanePast10Table";
 import { buildSelectedTickets } from "@/lib/predictionService";
+import { formatRacerDisplayName } from "@/lib/racerIdentity";
 import { base44 } from "@/api/base44Client";
 
 
@@ -35,13 +36,7 @@ const judgmentStyle = {
 const subTabs = ["買い目", "出走表", "直前情報", "オッズ", "3連単", "6艇評価"];
 const filterTabs = ["選手成績", "得点率早見", "枠番過去10走", "節間成績", "モーター履歴", "全国成績", "当地成績"];
 
-const racerBranchPattern = /^(.*?)[\s　]*(北海道|青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|東京|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|京都|大阪|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)(\/.+)$/;
-
-function formatRacerDisplayName(value) {
-  const raw = String(value || "").trim();
-  const match = raw.match(racerBranchPattern);
-  return match ? `${match[1]}　${match[2]}${match[3]}` : raw;
-}
+// 選手名の表示整形は @/lib/racerIdentity に集約
 
 export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode, predictionVersion = "v4" }) {
   const [subTab, setSubTab] = useState("出走表");

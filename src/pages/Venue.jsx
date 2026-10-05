@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
+import RaceResultCard from "@/components/race/RaceResultCard";
 import { fetchOnlineData } from "@/lib/dataManagementService";
 import { base44 } from "@/api/base44Client";
 
@@ -289,29 +290,7 @@ export default function Venue() {
         ))}
       </div>
 
-      {race && raceResult && (raceResult.is_finished || raceResult.result_status === "RESULT_FINAL") && (
-        <div className="rounded-xl border-2 border-rose-400 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div className="font-black text-lg">🏁 {venueName} {race.race_number}R 結果</div>
-            <span className="rounded-md bg-rose-500 text-white text-xs font-black px-3 py-1">確定</span>
-          </div>
-          <div className="flex items-center gap-2 mb-3">
-            {((raceResult.finish_order?.length ? raceResult.finish_order : (raceResult.result_trifecta || "").split("-").map(Number).filter(Boolean))).slice(0,3).map((boat,i) => (
-              <React.Fragment key={i}>
-                {i > 0 && <span className="font-black text-slate-400">→</span>}
-                <div className="rounded-lg bg-slate-100 border px-4 py-2 text-center">
-                  <div className="text-[10px] text-slate-500 font-bold">{i+1}着</div>
-                  <div className="text-xl font-black">{boat}号艇</div>
-                </div>
-              </React.Fragment>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-t pt-3">
-            <div className="font-bold">3連単 <span className="text-lg">{raceResult.result_trifecta || "—"}</span></div>
-            <div className="font-bold">払戻 <span className="text-2xl text-rose-600">{raceResult.payout != null ? Number(raceResult.payout).toLocaleString() + "円" : "—"}</span></div>
-          </div>
-        </div>
-      )}
+      {race && <RaceResultCard race={race} entries={entries} raceResult={raceResult} />}
 
       {/* スプリットレイアウト */}
       {race && (
