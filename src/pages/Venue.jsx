@@ -72,7 +72,8 @@ export default function Venue() {
     if (!selectedId) return;
     // 前レースのstateを完全クリア
     setCurrent(null);
-    setV31Current(null);
+    // V3.1は再取得完了まで現在表示を保持する
+    // setV31Current(null);
     setV6Current(null);
     setRaceResult(null);
     setPreBoats([]);
