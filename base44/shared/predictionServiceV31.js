@@ -150,10 +150,51 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
       status: "COMPLETED",
     });
 
-    // 保存失敗を握りつぶさない。PENDINGだけ残るとUIが永久に「生成待ち」になるため、
-    // update失敗は呼び出し元へ返して再試行・エラー記録させる。
+    // PredictionV31のnested schemaはadditionalPropertiesを許可しないため、
+    // エンジン内部用のobjectをそのまま保存するとvalidationで全updateが失敗する。
+    // 表示・検証に必要なschema定義済みフィールドだけ保存する。
+    const schemaSafeRecord = {
+      race_id: record.race_id, race_key: record.race_key, stage: record.stage,
+      prediction_version: record.prediction_version, computed_at: record.computed_at,
+      data_confidence: record.data_confidence, data_completeness: record.data_completeness,
+      race_type: record.race_type, race_type_reason: record.race_type_reason,
+      final_judgment: record.final_judgment, judgment_reason: record.judgment_reason,
+      buy_conditions: record.buy_conditions, ticket_count: record.ticket_count,
+      selected_trifectas: record.selected_trifectas,
+      set_probability: record.set_probability, set_expected_recovery: record.set_expected_recovery,
+      synthetic_odds: record.synthetic_odds, min_payout: record.min_payout,
+      avg_payout: record.avg_payout, max_payout: record.max_payout,
+      best_ev_ticket: record.best_ev_ticket,
+      honmei_boat: record.honmei_boat, taiko_boat: record.taiko_boat,
+      ana_boat: record.ana_boat, keshi_boat: record.keshi_boat,
+      top_trifecta: record.top_trifecta, top_probability: record.top_probability,
+      top_odds: record.top_odds, top_expected_value: record.top_expected_value,
+      first_ranking: record.first_ranking, second_ranking: record.second_ranking,
+      third_ranking: record.third_ranking, first_probability_gap: record.first_probability_gap,
+      first_confidence: record.first_confidence, inside_escape_reliability: record.inside_escape_reliability,
+      // 複雑な内部component objectはschema不一致の主因なので、表示に必要な数値だけ残す
+      boat_scores: (record.boat_scores || []).map(b => ({
+        boat_number:b.boat_number, past_score:b.past_score, recent_score:b.recent_score,
+        today_score:b.today_score, pre_score:b.pre_score, final_delta:b.final_delta,
+        final_score:b.final_score, first_score:b.first_score, first_probability:b.first_probability,
+        first_confidence:b.first_confidence, second_score:b.second_score,
+        second_probability:b.second_probability, third_score:b.third_score,
+        third_probability:b.third_probability, attack_power:b.attack_power,
+        inside_escape_score:b.inside_escape_score, reasons:b.reasons, notes:b.notes,
+      })),
+      trifectas: (record.trifectas || []).map(t => ({
+        combination:t.combination, rank:t.rank, race_probability:t.race_probability,
+        actual_odds:t.actual_odds, expected_value:t.expected_value,
+        is_selected:t.is_selected, ticket_rank:t.ticket_rank,
+      })),
+      conditional_weights: record.conditional_weights,
+      calibration_applied: record.calibration_applied,
+      data_sources_used: record.data_sources_used,
+      v3_weights: record.v3_weights,
+      status: "COMPLETED",
+    };
     try {
-      await sr.PredictionV31.update(predictionId, record);
+      await sr.PredictionV31.update(predictionId, cleanDeep(schemaSafeRecord));
     } catch (e) {
       console.error("[V3.1] Failed to save prediction:", e?.message || e);
       throw new Error(`V3.1_SAVE_FAILED: ${e?.message || e}`);
