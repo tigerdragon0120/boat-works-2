@@ -537,13 +537,21 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   let v3Generated = 0;
   const v3Pending = races.filter((r: any) => r.has_pre === true);
   if (v3Pending.length > 0) {
-    const v3Preds = await withRateLimitRetry(() => sr.PredictionV3.filter({ stage: 'PRE', prediction_version: 'v3' }, '-computed_at', 1000), 3).catch(() => []);
+    const [v3Preds, v31Preds] = await Promise.all([
+      withRateLimitRetry(() => sr.PredictionV3.filter({ stage: 'PRE', prediction_version: 'v3' }, '-computed_at', 1000), 3).catch(() => []),
+      withRateLimitRetry(() => sr.PredictionV31.filter({ stage: 'PRE', prediction_version: 'v3.1' }, '-computed_at', 2000), 3).catch(() => []),
+    ]);
     const v3DoneKeys = new Set<string>();
     for (const p of v3Preds || []) {
       if (p.race_key) v3DoneKeys.add(String(p.race_key));
     }
-    const v3Missing = v3Pending.filter((r: any) => !v3DoneKeys.has(String(r.race_key)));
-    const v3Batch = v3Missing.slice(0, 5);
+    const v31DoneKeys = new Set<string>();
+    for (const p of v31Preds || []) {
+      if (p.race_key && (p.status === 'COMPLETED' || !p.status)) v31DoneKeys.add(String(p.race_key));
+    }
+    // V3.1も独立して欠落判定。V3だけ存在してV3.1が待ちのレースを必ず補完する。
+    const v3Missing = v3Pending.filter((r: any) => !v3DoneKeys.has(String(r.race_key)) || !v31DoneKeys.has(String(r.race_key)));
+    const v3Batch = v3Missing.slice(0, 8);
 
     for (const race of v3Batch) {
       if (Date.now() - startTime > timeBudgetMs - 5000) {
@@ -553,10 +561,18 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
       try {
         const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
         if (entries.length < 6) continue;
-        await runAndSavePredictionV3(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-        await runAndSavePredictionV31(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+        const raceKey = String(race.race_key);
+        if (!v3DoneKeys.has(raceKey)) {
+          await runAndSavePredictionV3(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+          v3DoneKeys.add(raceKey);
+        }
+        if (!v31DoneKeys.has(raceKey)) {
+          const v31 = await runAndSavePredictionV31(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+          if (v31?.skipped) throw new Error(`V3.1生成失敗: ${v31.reason || v31.error || 'unknown'}`);
+          v31DoneKeys.add(raceKey);
+        }
         v3Generated++;
-        logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V3 PRE生成`);
+        logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V3/V3.1 PRE補完`);
       } catch (e: any) {
         errors.push(`V3 PRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
       }
