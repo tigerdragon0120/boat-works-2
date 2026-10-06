@@ -44,11 +44,13 @@ function normalizedTris(pred) {
 
 export async function runAndSaveEnsemble(client, race, entries = []) {
   const sr = client.asServiceRole.entities;
-  const [v4s, v6s] = await Promise.all([
+  const [v4s, v31s, v6s] = await Promise.all([
     sr.PredictionV4.filter({ race_key: race.race_key, stage:"FINAL" }, "-computed_at", 5).catch(() => []),
+    sr.PredictionV31.filter({ race_key: race.race_key, stage:"FINAL", prediction_version:"v3.1" }, "-computed_at", 5).catch(() => []),
     sr.PredictionV6.filter({ race_key: race.race_key, stage:"FINAL" }, "-computed_at", 5).catch(() => [])
   ]);
   const v4 = v4s.find(x => x.status === "COMPLETED" || !x.status);
+  const v31 = v31s.find(x => x.status === "COMPLETED" || !x.status);
   const v6 = v6s.find(x => x.status === "COMPLETED" || !x.status);
   if (!v4 || !v6) return { skipped:true, reason:"v4_or_v6_missing" };
 
@@ -68,7 +70,11 @@ export async function runAndSaveEnsemble(client, race, entries = []) {
     detail.set(combo,d);
   };
 
-  for (const [engine,pred,weight] of [["V4",v4,4.0],["V6",v6,3.2]]) {
+  const engines = [["V4",v4,4.0],["V6",v6,3.2]];
+  // V3.1はCOMPLETEDかつ買い目が存在する時だけ合成へ参加させる。
+  // 壊れたPENDINGを合成に混ぜない。
+  if (v31 && (v31.selected_trifectas || []).length) engines.splice(1, 0, ["V3.1",v31,3.6]);
+  for (const [engine,pred,weight] of engines) {
     for (const t of normalizedTris(pred)) {
       const rankBonus = Math.max(0, 1.5 - t.rank * .05);
       add(t.combination, (t.selected ? weight : weight * .15) + rankBonus + Math.min(2, t.probability / 8), engine, t);
@@ -94,27 +100,27 @@ export async function runAndSaveEnsemble(client, race, entries = []) {
   const selected = [...consensus, ...ranked.filter(x => x.engine_count < 2)]
     .filter((x,i,a) => a.findIndex(y => y.combination === x.combination) === i).slice(0,8);
   const top = selected[0];
-  const v4Buy=v4.final_judgment === "BUY", v6Buy=v6.final_judgment === "BUY";
+  const v4Buy=v4.final_judgment === "BUY", v31Buy=v31?.final_judgment === "BUY", v6Buy=v6.final_judgment === "BUY";
   const strongAgreement=selected.filter(x => x.engine_count >= 2).length;
   const consensusScore=Math.round(((strongAgreement / Math.max(1,selected.length))*70 + (top?.engine_count || 0)/3*30)*10)/10;
-  const judgment = (v4Buy || v6Buy) && strongAgreement >= 3 ? "BUY"
-    : (strongAgreement >= 2 || v4Buy || v6Buy) ? "WATCH" : "SKIP";
+  const judgment = (v4Buy || v31Buy || v6Buy) && strongAgreement >= 3 ? "BUY"
+    : (strongAgreement >= 2 || v4Buy || v31Buy || v6Buy) ? "WATCH" : "SKIP";
   const firsts=selected.map(x => Number(x.combination.split("-")[0]));
   const counts=firsts.reduce((m,n)=>(m[n]=(m[n]||0)+1,m),{});
   const roleOrder=Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([n])=>Number(n));
   const doc={
     race_id:race.id,race_key:race.race_key,stage:"FINAL",prediction_version:"ensemble_v1",
     computed_at:new Date().toISOString(),final_judgment:judgment,
-    judgment_reason:`V4(${v4.final_judgment})・V5(${v5.verdict})・V6(${v6.final_judgment})を合成。2系統以上一致${strongAgreement}点`,
+    judgment_reason:`V4(${v4.final_judgment})・V3.1(${v31?.final_judgment || "未参加"})・V5(${v5.verdict})・V6(${v6.final_judgment})を合成。2系統以上一致${strongAgreement}点`,
     ticket_count:selected.length,selected_trifectas:selected.map(x=>x.combination),
     trifectas:selected.map((x,i)=>({...x,rank:i+1,is_selected:true,ticket_rank:i+1})),
     honmei_boat:roleOrder[0] || Number(top?.combination?.split("-")[0]) || null,
     taiko_boat:roleOrder[1] || null,ana_boat:roleOrder[2] || null,
     top_trifecta:top?.combination || "",top_probability:top?.probability || 0,
     consensus_score:consensusScore,
-    engine_votes:{v4:v4.final_judgment,v5:v5.verdict,v6:v6.final_judgment,strong_agreement_tickets:strongAgreement},
+    engine_votes:{v4:v4.final_judgment,v31:v31?.final_judgment || null,v5:v5.verdict,v6:v6.final_judgment,strong_agreement_tickets:strongAgreement},
     v5_scenarios:v5.scenarios,v5_verdict:v5.verdict,
-    source_prediction_ids:{v4:v4.id,v6:v6.id},status:"COMPLETED"
+    source_prediction_ids:{v4:v4.id,v31:v31?.id || null,v6:v6.id},status:"COMPLETED"
   };
   const old=await sr.PredictionEnsemble.filter({race_key:race.race_key,stage:"FINAL"},"-computed_at",10).catch(()=>[]);
   let saved;
