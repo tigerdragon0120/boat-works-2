@@ -4,7 +4,7 @@ import { ArrowLeft, RefreshCw, Waves } from "lucide-react";
 import {
   listTodayRaces, getRaceEntries,
   getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV31Prediction, resolveV6Prediction, resolveEnsemblePrediction,
-  generateV4PredictionForRace,
+  generateV4PredictionForRace, withRetry,
 } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
@@ -35,6 +35,9 @@ export default function Venue() {
   const [raceResult, setRaceResult] = useState(null);
   const sectionFetchTried = useRef(new Set());
   const exhibitionFetchTried = useRef(new Set());
+  // 重複した読み込みを抑えてAPIレート制限に達しないようにする
+  const detailSeq = useRef(0);
+  const refreshBusy = useRef(false);
 
   const loadList = async () => {
     setLoading(true);
@@ -70,6 +73,9 @@ export default function Venue() {
   // 選択中レースの詳細読み込み
   const loadDetail = async () => {
     if (!selectedId) return;
+    // レースを素早く切り替えた時、古い読み込みが走り続けないよう打ち切る
+    const seq = ++detailSeq.current;
+    const stale = () => seq !== detailSeq.current;
     // 前レースのstateを完全クリア
     setCurrent(null);
     // V3.1は再取得完了まで現在表示を保持する
@@ -82,6 +88,7 @@ export default function Venue() {
     setRace(r);
     if (!r) return;
     let es = await getRaceEntries(selectedId, r.race_key);
+    if (stale()) return;
 
     // 節間成績が未取得なら、そのレースの公式racelistから自動補完する。
     const hasSection = (es || []).some((e) =>
@@ -119,8 +126,9 @@ export default function Venue() {
         console.warn("展示データの即時取得に失敗", sectionKey, err);
       }
     }
+    if (stale()) return;
     setEntries(es || []);
-    let resultRows = await base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1);
+    let resultRows = await withRetry(() => base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1));
     let latestResult = resultRows?.[0] || null;
 
     // 終了済みレースで旧データが3連単払戻しか持っていない場合、
@@ -131,7 +139,7 @@ export default function Venue() {
       try {
         const refreshResult = await fetchOnlineData("result", r.race_date, r.venue_code, r.race_number, r.id);
         if (refreshResult?.data?.ok !== false) {
-          resultRows = await base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1);
+          resultRows = await withRetry(() => base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1));
           latestResult = resultRows?.[0] || latestResult;
         }
       } catch (err) {
@@ -169,6 +177,7 @@ export default function Venue() {
       resolveV6Prediction(selectedId, r?.race_key),
       resolveEnsemblePrediction(selectedId, r?.race_key),
     ]);
+    if (stale()) return;
     setCurrent(resolved);
     setV31Current(resolvedV31);
     setV6Current(resolvedV6);
@@ -183,12 +192,20 @@ export default function Venue() {
       }
     }
   };
-  useEffect(() => { loadDetail(); }, [selectedId, races.length]);
+  useEffect(() => {
+    loadDetail().catch((e) => console.warn("[Venue] detail load failed:", e?.message || e));
+  }, [selectedId, races.length]);
 
   // 締切直前にバックエンドで生成されたFINAL予想を、ページを開いたままでも反映する。
   // loadDetailのように表示を一度クリアせず、予想部分だけを静かに更新する。
   const refreshPredictions = async () => {
     if (!selectedId) return;
+    // 15秒周期の更新が重なったり、非表示タブで走り続けると
+    // APIレート制限に達するため、実行中と非表示中はスキップする。
+    if (refreshBusy.current) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+    refreshBusy.current = true;
+    try {
 
     // 展示・オッズは締切直前にバックエンドで更新されるため、
     // 予想だけでなくRace/RaceEntryも再読込して開いたままの画面へ反映する。
@@ -208,7 +225,7 @@ export default function Venue() {
 
     // レース終了後にRaceResultが後から入っても、開いたまま結果・払戻を反映する。
     // 取得できなかったときは既存の正常な表示を消さない。
-    const latestResult = await base44.entities.RaceResult.filter({ race_id: selectedRace.id }, "-finished_at", 1);
+    const latestResult = await withRetry(() => base44.entities.RaceResult.filter({ race_id: selectedRace.id }, "-finished_at", 1));
     if (latestResult?.[0]) setRaceResult(latestResult[0]);
 
     if (selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
@@ -222,15 +239,22 @@ export default function Venue() {
     setV31Current(resolvedV31);
     setV6Current(resolvedV6);
     setEnsembleCurrent(resolvedEnsemble);
+    } finally {
+      refreshBusy.current = false;
+    }
   };
 
   useEffect(() => {
     if (!selectedId) return undefined;
+    // 締切前後30分は15秒、それ以外は60秒で静かに更新する。
+    // 開いたままの画面への反映は保ちつつ、APIレート制限に達しない頻度に抑える。
+    const deadlineMs = race?.deadline ? new Date(race.deadline).getTime() : NaN;
+    const nearDeadline = Number.isFinite(deadlineMs) && Math.abs(Date.now() - deadlineMs) <= 30 * 60 * 1000;
     const intervalId = window.setInterval(() => {
       refreshPredictions().catch((e) => console.warn("[Venue] prediction refresh failed:", e?.message || e));
-    }, 15000);
+    }, nearDeadline ? 15000 : 60000);
     return () => window.clearInterval(intervalId);
-  }, [selectedId, races]);
+  }, [selectedId, races, race?.deadline]);
 
   const refreshAll = async () => {
     await loadList();
