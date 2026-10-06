@@ -29,7 +29,8 @@ export default async function(req: Request) {
 
     const body = await req.json().catch(() => ({}));
     const raceDate = String(body.race_date || '').trim();
-    const batchSize = Math.max(1, Math.min(12, Number(body.batch_size || 6)));
+    const batchSize = Math.max(1, Math.min(50, Number(body.batch_size || 6)));
+    const targetRaceKey = String(body.race_key || '').trim();
     if (!raceDate) return Response.json({ ok: false, error: 'race_date is required' }, { status: 400 });
 
     const sr = base44.asServiceRole.entities;
@@ -72,7 +73,12 @@ export default async function(req: Request) {
 
     // 通常PREまたはV3.1のどちらかが欠けていれば補完対象。
     const pending = raceList.filter(r => !completedKeys.has(String(r.race_key)) || !v31CompletedKeys.has(String(r.race_key)));
-    const batch = pending.slice(0, batchSize);
+    // レース画面からの復旧時は、そのレースを必ず最優先で生成する。
+    // 日付内の先頭N件だけ処理すると多摩川3Rまで到達せずPENDINGが残り続ける。
+    const orderedPending = targetRaceKey
+      ? [...pending].sort((a, b) => (String(a.race_key) === targetRaceKey ? -1 : String(b.race_key) === targetRaceKey ? 1 : 0))
+      : pending;
+    const batch = orderedPending.slice(0, batchSize);
     const profileByReg = new Map((profiles || []).map((p: any) => [String(p.registration_number || ''), p]));
     const rollingByReg = new Map((rolling || []).map((r: any) => [String(r.registration_number || ''), r]));
 
