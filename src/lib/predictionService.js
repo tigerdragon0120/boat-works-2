@@ -817,6 +817,28 @@ export async function resolveV31Prediction(raceId, raceKey) {
     const mapped = mapV31ToUI(pre, "PRE", preOdds);
     return { stage: "PRE", ...mapped };
   }
+
+  // V3.1がPENDING/MISSINGなら、画面表示時に不足生成を即時起動する。
+  // 従来は管理画面の「不足PRE生成」を押した時しか生成関数が動かず、
+  // Race.has_pre=true のレースではボタン自体が出ないため永久にPENDINGだった。
+  if (raceKey && ((fin && fin.status === "PENDING") || (pre && pre.status === "PENDING") || (!fin && !pre))) {
+    const raceDate = String(raceKey).slice(0, 10);
+    try {
+      await base44.functions.invoke("generateMissingPrePredictions", { race_date: raceDate, batch_size: 20 });
+      const retryPre = await getV31Prediction(raceId, "PRE", raceKey);
+      if (retryPre && (retryPre.status === "COMPLETED" || !retryPre.status)) {
+        const mapped = mapV31ToUI(retryPre, "PRE", preOdds);
+        return { stage: "PRE", ...mapped };
+      }
+      const retryFin = await getV31Prediction(raceId, "FINAL", raceKey);
+      if (retryFin && (retryFin.status === "COMPLETED" || !retryFin.status)) {
+        const mapped = mapV31ToUI(retryFin, "FINAL", finalOdds);
+        return { stage: "FINAL", ...mapped };
+      }
+    } catch (e) {
+      console.error("[V3.1] auto recovery failed:", e?.message || e);
+    }
+  }
   return { stage: null, pred: null, boats: [], trifectas: [] };
 }
 
