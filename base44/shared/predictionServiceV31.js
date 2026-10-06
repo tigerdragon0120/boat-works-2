@@ -71,14 +71,35 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
       return { skipped: true, reason: "CREATE_FAILED" };
     }
 
-    const record = {
+    // Entity schemaへ保存できる安全な値だけに正規化する。
+    // NaN/Infinity/undefined や未定義のrace_typeが1つでも混ざると更新全体が失敗し、
+    // PENDINGだけが残るためここで除去する。
+    const finiteOrNull = (v) => Number.isFinite(Number(v)) ? Number(v) : null;
+    const cleanDeep = (value) => {
+      if (Array.isArray(value)) return value.map(cleanDeep).filter(v => v !== undefined);
+      if (value && typeof value === "object") {
+        const out = {};
+        for (const [k, v] of Object.entries(value)) {
+          const c = cleanDeep(v);
+          if (c !== undefined) out[k] = c;
+        }
+        return out;
+      }
+      if (typeof value === "number" && !Number.isFinite(value)) return null;
+      return value === undefined ? undefined : value;
+    };
+    const allowedRaceTypes = new Set(["INSIDE_CONFIDENT","INSIDE_WEAK","CENTER_ATTACK","ENTRY_CHANGE","MIXED","HIGH_VALUE","DATA_INSUFFICIENT"]);
+    const safeRaceType = allowedRaceTypes.has(result.race_type) ? result.race_type : "DATA_INSUFFICIENT";
+    const safeJudgment = ["BUY","WATCH","SKIP"].includes(result.final_judgment) ? result.final_judgment : "SKIP";
+
+    const record = cleanDeep({
       race_id: race.id, race_key: race.race_key, stage, prediction_version: V3_VERSION,
       computed_at: new Date().toISOString(),
-      data_confidence: result.data_confidence,
+      data_confidence: finiteOrNull(result.data_confidence),
       data_completeness: result.data_completeness,
-      race_type: result.race_type,
+      race_type: safeRaceType,
       race_type_reason: result.race_type_reason,
-      final_judgment: result.final_judgment,
+      final_judgment: safeJudgment,
       judgment_reason: result.judgment_reason,
       buy_conditions: result.buy_conditions,
       ticket_count: result.ticket_count,
@@ -121,7 +142,7 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
       data_sources_used: result.data_sources_used,
       v3_weights: result.v3_weights,
       status: "COMPLETED",
-    };
+    });
 
     // 保存失敗を握りつぶさない。PENDINGだけ残るとUIが永久に「生成待ち」になるため、
     // update失敗は呼び出し元へ返して再試行・エラー記録させる。
