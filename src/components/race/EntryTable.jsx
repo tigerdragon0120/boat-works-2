@@ -385,14 +385,14 @@ function BetTicketView({ activePred, allTri, race, predictionVersion }) {
         return !boats.some(b => scratchedBoats.includes(b));
       })
     : selected;
-  if (!filteredSelected.length) return <Empty msg={`${predictionVersion.toUpperCase()}予想生成待ち — 買い目データがありません`} />;
+  if (!filteredSelected.length) return <Empty msg={`${predictionVersion === "v61" ? "V6.1" : predictionVersion.toUpperCase()}予想生成待ち — 買い目データがありません`} />;
   const judgment = activePred?.final_judgment || "—";
   return (
     <div className="p-2 space-y-2">
       {/* 判定ヘッダー */}
       <div className="rounded-lg border border-slate-200 bg-white p-2.5">
         <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-1.5"><span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-black text-slate-600">{predictionVersion.toUpperCase()}</span><span className={cn("px-2 py-0.5 rounded text-xs font-black border", judgmentStyle[judgment] || judgmentStyle.SKIP)}>{judgment}</span></div>
+          <div className="flex items-center gap-1.5"><span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-black text-slate-600">{predictionVersion === "v61" ? "V6.1" : predictionVersion.toUpperCase()}</span><span className={cn("px-2 py-0.5 rounded text-xs font-black border", judgmentStyle[judgment] || judgmentStyle.SKIP)}>{judgment}</span></div>
           <span className="text-xs text-slate-600">{filteredSelected.length}点 · {activePred?.ticket_strategy || ""}</span>
         </div>
         <div className="text-[11px] text-slate-600 leading-relaxed">{activePred?.judgment_reason || ""}</div>

@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import {
   getRaceEntries,
-  getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV31Prediction, resolveV6Prediction,
+  getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV31Prediction, resolveV61Prediction,
   generateV4PredictionForRace,
 } from "@/lib/predictionService";
 import PredictionPanel from "@/components/race/PredictionPanel";
@@ -18,7 +18,7 @@ export default function RaceDetail() {
   // { stage, pred, boats, trifectas } — UIの唯一の表示ソース
   const [current, setCurrent] = useState(null);
   const [v31Current, setV31Current] = useState(null);
-  const [v6Current, setV6Current] = useState(null);
+  const [v61Current, setV61Current] = useState(null);
   const [predictionVersion, setPredictionVersion] = useState("v4");
   // preBoats: PRE→FINAL比較用のみ(FINAL表示時にPREのboat_scoresを保持)
   const [preBoats, setPreBoats] = useState([]);
@@ -33,7 +33,7 @@ export default function RaceDetail() {
       // 前レースのstateを完全クリア(mergeではなくreplace)
       setCurrent(null);
       setV31Current(null);
-      setV6Current(null);
+      setV61Current(null);
       setPreBoats([]);
     }
 
@@ -65,14 +65,14 @@ export default function RaceDetail() {
 
     // === Current Prediction Resolver ===
     // FINAL優先で予想を1本化取得。UIの唯一の表示ソース。
-    const [resolved, resolvedV31, resolvedV6] = await Promise.all([
+    const [resolved, resolvedV31, resolvedV61] = await Promise.all([
       resolveCurrentPrediction(id, r?.race_key),
       resolveV31Prediction(id, r?.race_key),
-      resolveV6Prediction(id, r?.race_key),
+      resolveV61Prediction(id, r?.race_key),
     ]);
     setCurrent(resolved);
     setV31Current(resolvedV31);
-    setV6Current(resolvedV6);
+    setV61Current(resolvedV61);
 
     // FINAL表示時のみPRE boat_scoresを取得(PRE→FINAL比較用)
     if (resolved.stage === "FINAL") {
@@ -151,8 +151,8 @@ export default function RaceDetail() {
   if (loading) return <div className="py-20 text-center text-slate-500 text-sm">読み込み中…</div>;
   if (!race) return <div className="py-20 text-center text-slate-500">レースが見つかりません</div>;
 
-  // V4/V5はV4予想を基礎にし、V6選択時だけV6保存レコードへ切り替える。
-  const displayedCurrent = predictionVersion === "v31" ? v31Current : predictionVersion === "v6" ? v6Current : current;
+  // V4/V5はV4予想を基礎にし、V6.1選択時だけV6.1保存レコードへ切り替える。
+  const displayedCurrent = predictionVersion === "v31" ? v31Current : predictionVersion === "v61" ? v61Current : current;
   const activePred = displayedCurrent?.pred;
   const activeBoats = [...(displayedCurrent?.boats || [])].sort((a, b) => a.boat_number - b.boat_number);
   const allTri = displayedCurrent?.trifectas || [];

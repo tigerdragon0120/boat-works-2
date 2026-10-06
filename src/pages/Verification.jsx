@@ -10,8 +10,7 @@ import V2V3Comparison from "@/components/verification/V2V3Comparison";
 import V3V4Comparison from "@/components/verification/V3V4Comparison";
 import V3V31Comparison from "@/components/verification/V3V31Comparison";
 import V2V5Comparison from "@/components/verification/V2V5Comparison";
-import V4V6Comparison from "@/components/verification/V4V6Comparison";
-import V6V61Comparison from "@/components/verification/V6V61Comparison";
+import V61Performance from "@/components/verification/V61Performance";
 
 export default function Verification() {
   const [summary, setSummary] = useState(null);
@@ -35,7 +34,7 @@ export default function Verification() {
       <div>
         <Header onReload={load} />
         <div className="text-center py-20 text-slate-400 text-sm bg-white rounded-2xl border border-dashed border-slate-200">
-          まだ合成FINALの検証結果がありません。<br />次の結果確定から、V4・V5・V6合成BUYの的中率と回収率を自動集計します。
+          まだ合成FINALの検証結果がありません。<br />次の結果確定から、V4・V3.1・V5・V6.1合成BUYの的中率と回収率を自動集計します。
         </div>
       </div>
     );
@@ -69,7 +68,7 @@ export default function Verification() {
       <section>
         <div className="flex items-end justify-between gap-3 mb-2">
           <div>
-            <div className="text-[11px] font-bold text-violet-600">V4 × V5 × V6 ENSEMBLE</div>
+            <div className="text-[11px] font-bold text-violet-600">V4 × V3.1 × V5 × V6.1 ENSEMBLE</div>
             <h2 className="font-display font-black text-slate-900 text-lg">合成BUY予想の成績</h2>
           </div>
           <div className="text-[10px] text-slate-400">確定結果 {summary.total}Rのうち BUY {summary.buy_count}R</div>
@@ -135,26 +134,13 @@ export default function Verification() {
       <section>
         <div className="flex items-end justify-between gap-2 mb-2">
           <div>
-            <div className="text-[10px] font-bold text-violet-600">V6 PROFIT CANDIDATE</div>
-            <h2 className="font-display font-black text-slate-900 text-lg">TARGET 20-30% HIT / 110%+ RECOVERY — V6 利益型</h2>
+            <div className="text-[10px] font-bold text-fuchsia-600">V6.1 PROFIT CANDIDATE — MAIN ENGINE</div>
+            <h2 className="font-display font-black text-slate-900 text-lg">TARGET 20-30% HIT / 110%+ RECOVERY — V6.1 単体成績</h2>
           </div>
-          <div className="text-[10px] text-slate-400">最低100BUYで自動採用判定</div>
+          <div className="text-[10px] text-slate-400">画面のメインエンジン</div>
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <V4V6Comparison />
-        </div>
-      </section>
-
-      <section>
-        <div className="flex items-end justify-between gap-2 mb-2">
-          <div>
-            <div className="text-[10px] font-bold text-fuchsia-600">V6.1 PROFIT CANDIDATE</div>
-            <h2 className="font-display font-black text-slate-900 text-lg">TARGET 20-30% HIT / 110%+ RECOVERY — V6 vs V6.1</h2>
-          </div>
-          <div className="text-[10px] text-slate-400">シャドー予想（画面の買い目には出しません）</div>
-        </div>
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <V6V61Comparison />
+          <V61Performance />
         </div>
       </section>
 

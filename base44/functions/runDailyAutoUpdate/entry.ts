@@ -5,9 +5,8 @@ import { upsertRace, upsertEntry, dedupRace, dedupEntriesForRace, upsertResultAn
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV31 } from '../../shared/predictionServiceV31.js';
 import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
-import { runAndSavePredictionV6, verifyV6Prediction } from '../../shared/predictionServiceV6.js';
 import { runAndSaveEnsemble } from '../../shared/predictionServiceEnsemble.js';
-// V6 policy bundle v6.2: 本命・買い目・シナリオ整合 + 1号艇逃げ利益型BUY
+// V6.1 policy bundle: 本命・買い目・シナリオ整合 + 1号艇逃げ利益型BUY
 import { runAndSavePredictionV61, verifyV61Prediction } from '../../shared/predictionServiceV61.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
@@ -416,27 +415,21 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
       }
     }
 
-    // V6検証は既存エンジンの検証とは独立して実行する。
-    // BOATCAST/LOCALどちらで結果を保存した場合も、V6 FINALがあれば同じ結果で採点する。
+    // V6.1はメインエンジン。既存エンジンの検証とは独立して実行する。
+    // BOATCAST/LOCALどちらで結果を保存した場合も、同じ結果で採点する。
     if (resultSaved) {
       try {
         const savedResults = await sr.RaceResult.filter({ race_id: race.id }, '-finished_at', 1).catch(() => []);
         const savedResult = savedResults?.[0];
         if (savedResult?.result_trifecta) {
-          await verifyV6Prediction(base44, race, {
-            result_trifecta: savedResult.result_trifecta,
-            payout: savedResult.payout || 0,
-          });
-          logs.push(`${venueName} R${raceNumber}: V6検証完了`);
-
           const v61Verified = await verifyV61Prediction(base44, race, {
             result_trifecta: savedResult.result_trifecta,
             payout: savedResult.payout || 0,
           });
-          if (v61Verified) logs.push(`${venueName} R${raceNumber}: V6.1シャドー検証完了`);
+          if (v61Verified) logs.push(`${venueName} R${raceNumber}: V6.1検証完了`);
         }
       } catch (e: any) {
-        errors.push(`${venueName} R${raceNumber}: V6検証失敗 ${e.message}`);
+        errors.push(`${venueName} R${raceNumber}: V6.1検証失敗 ${e.message}`);
       }
     }
 
@@ -717,7 +710,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
   const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
   const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
-  let oddsFetched = 0, finalGenerated = 0, v6FinalGenerated = 0;
+  let oddsFetched = 0, finalGenerated = 0, v61FinalGenerated = 0;
 
   for (const race of races) {
     if (Date.now() - startTime > timeBudgetMs) break;
@@ -785,20 +778,21 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
         }
 
-        // V6はV1〜V5と完全独立。展示・直前オッズが揃った同じタイミングでFINALを生成する。
+        // V6.1はメインエンジン。展示・直前オッズが揃った同じタイミングでFINALを生成する。
+        // 合成予想がV6.1を参照するため、必ず合成より先に生成する。
         try {
-          const v6Result = await runAndSavePredictionV6(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          if (v6Result?.skipped) {
-            logs.push(`${venueName} R${raceNumber}: V6 FINALスキップ(${v6Result.reason || 'unknown'})`);
+          const v61Result = await runAndSavePredictionV61(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          if (v61Result?.skipped) {
+            logs.push(`${venueName} R${raceNumber}: V6.1 FINALスキップ(${v61Result.reason || 'unknown'})`);
           } else {
-            v6FinalGenerated++;
-            logs.push(`${venueName} R${raceNumber}: V6 FINAL予想生成 → ${v6Result?.prediction?.final_judgment || '判定保存'}`);
+            v61FinalGenerated++;
+            logs.push(`${venueName} R${raceNumber}: V6.1 FINAL予想生成 → ${v61Result?.result?.final_judgment || '判定保存'}`);
           }
         } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: V6 FINAL予想失敗 ${e.message}`);
+          errors.push(`${venueName} R${raceNumber}: V6.1 FINAL予想失敗 ${e.message}`);
         }
 
-        // V4・V5展開・V6を合成した最終判断。画面と検証の主判定に使う。
+        // V4・V3.1・V5展開・V6.1を合成した最終判断。画面と検証の主判定に使う。
         try {
           const ensembleResult = await runAndSaveEnsemble(base44, race, entries);
           if (ensembleResult?.skipped) {
@@ -808,18 +802,6 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: 合成FINAL予想失敗 ${e.message}`);
-        }
-
-        // V6.1は画面の買い目へは出さず、比較検証用のシャドー予想として保存する。
-        try {
-          const v61Result = await runAndSavePredictionV61(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          if (v61Result?.skipped) {
-            logs.push(`${venueName} R${raceNumber}: V6.1 FINALスキップ(${v61Result.reason || 'unknown'})`);
-          } else {
-            logs.push(`${venueName} R${raceNumber}: V6.1 FINALシャドー予想保存 → ${v61Result?.result?.final_judgment || '判定保存'}`);
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: V6.1 FINAL予想失敗 ${e.message}`);
         }
 
         // BOATCAST OD3で最終オッズ更新+期待値再計算(FINAL予想自体は変更しない)
@@ -841,7 +823,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     await sleep(300);
   }
 
-  return { total: races.length, odds_fetched: oddsFetched, final_generated: finalGenerated, v6_final_generated: v6FinalGenerated, errors };
+  return { total: races.length, odds_fetched: oddsFetched, final_generated: finalGenerated, v61_final_generated: v61FinalGenerated, errors };
 }
 
 // =====================================================

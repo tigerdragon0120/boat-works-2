@@ -79,7 +79,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
           </div>
         </div>
         <div className="grid grid-cols-5 gap-1 rounded-lg bg-slate-100 p-1">
-          {["mix", "v31", "v4", "v5", "v6"].map((version) => (
+          {["mix", "v31", "v4", "v5", "v61"].map((version) => (
             <button
               key={version}
               type="button"
@@ -93,11 +93,13 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
                     ? "bg-blue-600 text-white shadow-sm"
                     : version === "v5"
                     ? "bg-cyan-500 text-slate-950 shadow-sm"
+                    : version === "v61"
+                    ? "bg-fuchsia-600 text-white shadow-sm"
                     : "bg-rose-500 text-white shadow-sm"
                   : "text-slate-500 hover:bg-white hover:text-slate-900"
               )}
             >
-              {version === "mix" ? "合成" : version === "v31" ? "V3.1" : version.toUpperCase()}
+              {version === "mix" ? "合成" : version === "v31" ? "V3.1" : version === "v61" ? "V6.1" : version.toUpperCase()}
             </button>
           ))}
         </div>
@@ -109,7 +111,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
           <div className="flex flex-col gap-3">
             <V5ScenarioPanel entries={entries} activePred={activePred} />
             <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-3 text-[10px] leading-relaxed text-cyan-100">
-              V5はレース展開を比較するシナリオ予想です。買い目とBUY判定はV4またはV6タブで確認できます。
+              V5はレース展開を比較するシナリオ予想です。買い目とBUY判定はV4またはV6.1タブで確認できます。
             </div>
           </div>
         ) : !hasPred ? (
@@ -117,9 +119,9 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
             <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center mb-3">
               <Zap className="w-8 h-8 text-[#f9c836]" />
             </div>
-            <div className="text-slate-200 font-semibold text-sm mb-1">{predictionVersion === "v31" ? "V3.1" : predictionVersion.toUpperCase()}予想生成待ち</div>
+            <div className="text-slate-200 font-semibold text-sm mb-1">{predictionVersion === "v31" ? "V3.1" : predictionVersion === "v61" ? "V6.1" : predictionVersion.toUpperCase()}予想生成待ち</div>
             <div className="text-slate-400 text-xs mb-4">
-              {predictionVersion === "v31" ? "V3.1 Candidateの生成を待っています" : predictionVersion === "v6" ? "V6は締切直前の展示・オッズ取得後に自動生成されます" : "PredictionV4の生成を待っています"}
+              {predictionVersion === "v31" ? "V3.1 Candidateの生成を待っています" : predictionVersion === "v61" ? "V6.1は締切直前の展示・オッズ取得後に自動生成されます" : "PredictionV4の生成を待っています"}
             </div>
             {predictionVersion === "v4" && (
               <>
@@ -302,7 +304,7 @@ export default function PredictionPanel({ race, stage, run, busy, entries, activ
               </div>
             )}
 
-            {/* V4のみ手動再実行。V6は自動生成された保存データを表示する。 */}
+            {/* V4のみ手動再実行。V6.1は自動生成された保存データを表示する。 */}
             {predictionVersion === "v4" && (
               <>
                 <div className="flex gap-2 mt-1">

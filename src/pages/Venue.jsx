@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ArrowLeft, RefreshCw, Waves } from "lucide-react";
 import {
   listTodayRaces, getRaceEntries,
-  getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV31Prediction, resolveV6Prediction, resolveEnsemblePrediction,
+  getV4Prediction, mapV4ToUI, resolveCurrentPrediction, resolveV31Prediction, resolveV61Prediction, resolveEnsemblePrediction,
   generateV4PredictionForRace, withRetry,
 } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
@@ -26,7 +26,7 @@ export default function Venue() {
   // currentPrediction: resolveCurrentPredictionの結果(FINAL優先)
   const [current, setCurrent] = useState(null);
   const [v31Current, setV31Current] = useState(null);
-  const [v6Current, setV6Current] = useState(null);
+  const [v61Current, setV61Current] = useState(null);
   const [ensembleCurrent, setEnsembleCurrent] = useState(null);
   const [predictionVersion, setPredictionVersion] = useState("mix");
   const [preBoats, setPreBoats] = useState([]);
@@ -80,7 +80,7 @@ export default function Venue() {
     setCurrent(null);
     // V3.1は再取得完了まで現在表示を保持する
     // setV31Current(null);
-    setV6Current(null);
+    setV61Current(null);
     setRaceResult(null);
     setPreBoats([]);
 
@@ -170,17 +170,17 @@ export default function Venue() {
       }
     }
 
-    // V4・V6・合成FINALを同時に取得し、タブ切替時に即座に表示する。
-    const [resolved, resolvedV31, resolvedV6, resolvedEnsemble] = await Promise.all([
+    // V4・V6.1・合成FINALを同時に取得し、タブ切替時に即座に表示する。
+    const [resolved, resolvedV31, resolvedV61, resolvedEnsemble] = await Promise.all([
       resolveCurrentPrediction(selectedId, r?.race_key),
       resolveV31Prediction(selectedId, r?.race_key),
-      resolveV6Prediction(selectedId, r?.race_key),
+      resolveV61Prediction(selectedId, r?.race_key),
       resolveEnsemblePrediction(selectedId, r?.race_key),
     ]);
     if (stale()) return;
     setCurrent(resolved);
     setV31Current(resolvedV31);
-    setV6Current(resolvedV6);
+    setV61Current(resolvedV61);
     setEnsembleCurrent(resolvedEnsemble);
 
     // FINAL表示時のみPRE boat_scoresを取得(PRE→FINAL比較用)
@@ -229,15 +229,15 @@ export default function Venue() {
     if (latestResult?.[0]) setRaceResult(latestResult[0]);
 
     if (selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
-    const [resolved, resolvedV31, resolvedV6, resolvedEnsemble] = await Promise.all([
+    const [resolved, resolvedV31, resolvedV61, resolvedEnsemble] = await Promise.all([
       resolveCurrentPrediction(selectedRace.id, selectedRace.race_key),
       resolveV31Prediction(selectedRace.id, selectedRace.race_key),
-      resolveV6Prediction(selectedRace.id, selectedRace.race_key),
+      resolveV61Prediction(selectedRace.id, selectedRace.race_key),
       resolveEnsemblePrediction(selectedRace.id, selectedRace.race_key),
     ]);
     setCurrent(resolved);
     setV31Current(resolvedV31);
-    setV6Current(resolvedV6);
+    setV61Current(resolvedV61);
     setEnsembleCurrent(resolvedEnsemble);
     } finally {
       refreshBusy.current = false;
@@ -278,11 +278,11 @@ export default function Venue() {
   if (loading) return <div className="py-24 text-center text-slate-500">読み込み中…</div>;
   if (!raceList.length) return <div className="space-y-4"><Link to="/" className="text-blue-400 text-sm">← レース場一覧へ</Link><div className="py-24 text-center text-slate-500">本日のレースはありません</div></div>;
 
-  // 合成を主表示にし、V4/V5/V6は根拠確認用の内訳として残す。
+  // 合成を主表示にし、V4/V5/V6.1は根拠確認用の内訳として残す。
   const displayedCurrent = predictionVersion === "mix"
     ? (ensembleCurrent?.pred ? ensembleCurrent : current)
     : predictionVersion === "v31" ? v31Current
-    : predictionVersion === "v6" ? v6Current : current;
+    : predictionVersion === "v61" ? v61Current : current;
   const activePred = displayedCurrent?.pred;
   const boatSource = predictionVersion === "mix" ? (current?.boats || []) : (displayedCurrent?.boats || []);
   const activeBoats = [...boatSource].sort((a, b) => a.boat_number - b.boat_number);

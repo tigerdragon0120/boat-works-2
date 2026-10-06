@@ -1,16 +1,16 @@
 // ============================================================
-// V6 vs V6.1 比較検証サマリー
-// PredictionV6Verification と PredictionV61Verification を期間別に集計
-// 集計はサーバー側(aggregate)で行い、レコードを全件読み込まない
+// V6.1 単体成績サマリー
+// PredictionV61Verification を期間別に集計する(サーバー側aggregateで集計)
+// V6はメインエンジンから外したため、V6.1の成績のみを扱う
 // ============================================================
 import { base44 } from "@/api/base44Client";
 
 const EMPTY_OUTCOME = { HIT_PROFIT: 0, HIT_LOW_VALUE: 0, MISS_FIRST: 0, MISS_SECOND: 0, MISS_THIRD: 0, MISS_OTHER: 0 };
 
-function buildSide(judgmentRows, outcomeRows, prefix) {
+function buildSide(judgmentRows, outcomeRows) {
   const counts = {};
   for (const row of judgmentRows || []) {
-    const key = row[`${prefix}_final_judgment`];
+    const key = row.v61_final_judgment;
     if (key) counts[key] = (counts[key] || 0) + (row.count || 0);
   }
 
@@ -21,8 +21,8 @@ function buildSide(judgmentRows, outcomeRows, prefix) {
     if (outcome[key] != null) outcome[key] += row.count || 0;
     buyCount += row.count || 0;
     if (key === "HIT_PROFIT" || key === "HIT_LOW_VALUE") hits += row.count || 0;
-    investment += Number(row[`sum_${prefix}_investment`] || 0);
-    payout += Number(row[`sum_${prefix}_payout`] || 0);
+    investment += Number(row.sum_v61_investment || 0);
+    payout += Number(row.sum_v61_payout || 0);
   }
 
   return {
@@ -41,23 +41,16 @@ function buildSide(judgmentRows, outcomeRows, prefix) {
 }
 
 // periodDays=0 は全期間
-export async function getV6V61ComparisonSummary(periodDays = 30) {
-  const periodQuery = periodDays
-    ? {
-        race_date: { $gte: new Date(Date.now() - periodDays * 86400000).toISOString().slice(0, 10) },
-        race_id: { $ne: "BACKTEST_SUMMARY_V6" },
-      }
-    : { race_id: { $ne: "BACKTEST_SUMMARY_V6" } };
+export async function getV61Summary(periodDays = 30) {
+  const periodQuery = {
+    race_id: { $ne: "BACKTEST_SUMMARY_V6" },
+    ...(periodDays
+      ? { race_date: { $gte: new Date(Date.now() - periodDays * 86400000).toISOString().slice(0, 10) } }
+      : {}),
+  };
 
   const empty = { rows: [] };
-  const [v6Judgments, v6Outcome, v61Judgments, v61Outcome] = await Promise.all([
-    base44.entities.PredictionV6Verification.aggregate({ query: periodQuery, groupBy: "v6_final_judgment", limit: 10 }).catch(() => empty),
-    base44.entities.PredictionV6Verification.aggregate({
-      query: { ...periodQuery, v6_final_judgment: "BUY" },
-      groupBy: "outcome_class",
-      sum: ["v6_payout", "v6_investment"],
-      limit: 20,
-    }).catch(() => empty),
+  const [judgments, outcome] = await Promise.all([
     base44.entities.PredictionV61Verification.aggregate({ query: periodQuery, groupBy: "v61_final_judgment", limit: 10 }).catch(() => empty),
     base44.entities.PredictionV61Verification.aggregate({
       query: { ...periodQuery, v61_final_judgment: "BUY" },
@@ -67,9 +60,5 @@ export async function getV6V61ComparisonSummary(periodDays = 30) {
     }).catch(() => empty),
   ]);
 
-  return {
-    period_days: periodDays,
-    v6: buildSide(v6Judgments?.rows, v6Outcome?.rows, "v6"),
-    v61: buildSide(v61Judgments?.rows, v61Outcome?.rows, "v61"),
-  };
+  return { period_days: periodDays, ...buildSide(judgments?.rows, outcome?.rows) };
 }

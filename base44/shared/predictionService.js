@@ -911,7 +911,7 @@ export async function upsertResultAndVerify(client, race, resultData) {
   // V4検証(V1/V2/V3に影響しない)
   await verifyV4Prediction(client, race, resultData).catch(() => {});
 
-  // V4・V5・V6合成FINALを、保存済み買い目のまま結果照合する。
+  // V4・V3.1・V5・V6.1合成FINALを、保存済み買い目のまま結果照合する。
   await verifyEnsemblePrediction(client, race, resultData).catch(() => {});
 
   return { result: saved, verification };

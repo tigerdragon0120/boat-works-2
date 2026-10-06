@@ -534,7 +534,7 @@ export async function listTodayRaceStatus() {
 
 // 検証集計: 「BUYしたレースが当たったか」を中心に、次の予想ロジック改善へ繋げる
 export async function getVerificationSummary() {
-  // 主画面と同じV4・V5・V6合成FINALだけを主成績として集計する。
+  // 主画面と同じV4・V3.1・V5・V6.1合成FINALだけを主成績として集計する。
   // V4単体の成績は比較セクションに残し、ここへ混ぜない。
   const raw = await base44.entities.PredictionEnsembleVerification.list("-verified_at", 500).catch(() => []);
   const verifs = dedupeVerifications(raw)
@@ -859,35 +859,36 @@ export async function resolveV31Prediction(raceId, raceKey) {
   return { stage: null, pred: null, boats: [], trifectas: [] };
 }
 
-// V6予想取得。V4とは別レコードを読み、画面切替時だけ表示する。
-export async function getV6Prediction(raceId, stage, raceKey) {
+// V6.1予想取得(メインエンジン)。V6.1予想はPredictionV6エンティティへ
+// prediction_version="v6.1" で保存されるため、versionで絞って読む。
+export async function getV61Prediction(raceId, stage, raceKey) {
   let list = await withRetry(() => base44.entities.PredictionV6.filter({
-    race_id: raceId, stage, prediction_version: "v6",
+    race_id: raceId, stage, prediction_version: "v6.1",
   }, "-computed_at", 1)).catch(() => []);
   if ((!list || !list.length) && raceKey) {
     list = await withRetry(() => base44.entities.PredictionV6.filter({
-      race_key: raceKey, stage, prediction_version: "v6",
+      race_key: raceKey, stage, prediction_version: "v6.1",
     }, "-computed_at", 1)).catch(() => []);
   }
   return list && list[0];
 }
 
-// V6もV4と同じ埋め込み形式なので、共通のUI形状へ変換できる。
-export function mapV6ToUI(v6Pred, stage) {
-  return mapV4ToUI(v6Pred, stage);
+// V6.1もV4と同じ埋め込み形式なので、共通のUI形状へ変換できる。
+export function mapV61ToUI(v61Pred, stage) {
+  return mapV4ToUI(v61Pred, stage);
 }
 
-// V6はFINAL優先、なければPREを表示する。V4への自動フォールバックはしない。
-export async function resolveV6Prediction(raceId, raceKey) {
-  const finalV6 = await getV6Prediction(raceId, "FINAL", raceKey);
-  if (finalV6 && (finalV6.status === "COMPLETED" || !finalV6.status)) {
-    const mapped = mapV6ToUI(finalV6, "FINAL");
+// V6.1はFINAL優先、なければPREを表示する。V4への自動フォールバックはしない。
+export async function resolveV61Prediction(raceId, raceKey) {
+  const finalV61 = await getV61Prediction(raceId, "FINAL", raceKey);
+  if (finalV61 && (finalV61.status === "COMPLETED" || !finalV61.status)) {
+    const mapped = mapV61ToUI(finalV61, "FINAL");
     if (mapped) return { stage: "FINAL", ...mapped };
   }
 
-  const preV6 = await getV6Prediction(raceId, "PRE", raceKey);
-  if (preV6 && (preV6.status === "COMPLETED" || !preV6.status)) {
-    const mapped = mapV6ToUI(preV6, "PRE");
+  const preV61 = await getV61Prediction(raceId, "PRE", raceKey);
+  if (preV61 && (preV61.status === "COMPLETED" || !preV61.status)) {
+    const mapped = mapV61ToUI(preV61, "PRE");
     if (mapped) return { stage: "PRE", ...mapped };
   }
 
@@ -895,7 +896,7 @@ export async function resolveV6Prediction(raceId, raceKey) {
 }
 
 
-// V4・V5展開・V6を締切前データだけで合成した最終予想。
+// V4・V3.1・V5展開・V6.1を締切前データだけで合成した最終予想。
 export async function resolveEnsemblePrediction(raceId, raceKey) {
   let list = await withRetry(() => base44.entities.PredictionEnsemble.filter({
     race_id: raceId, stage: "FINAL",
@@ -1088,81 +1089,6 @@ export function buildSelectedTickets(activePred, allTri) {
     });
   }
   return (allTri || []).filter(t => t.is_selected).sort((a, b) => (a.ticket_rank || 99) - (b.ticket_rank || 99));
-}
-
-// ============================================================
-// V6 PROFIT Candidate検証サマリー
-// PredictionV6VerificationからV6予想の成績を集計
-// BUY/WATCH/SKIP別・チケット数別・HIT_PROFIT/HIT_LOW_VALUE/MISS分類
-// ============================================================
-export async function getV6VerificationSummary() {
-  const raw = await base44.entities.PredictionV6Verification.list("-verified_at", 1000).catch(() => []);
-
-  // バックテストサマリー取得
-  const summaryRecord = (raw || []).find((v) => v.race_id === "BACKTEST_SUMMARY_V6" && v.factor_snapshot);
-  const backtestSummary = summaryRecord?.factor_snapshot || null;
-
-  const verifs = dedupeVerifications(raw).filter((v) => /^([1-6])-([1-6])-([1-6])$/.test(String(v.actual_result || "")));
-  const total = verifs.length;
-  if (total === 0 && !backtestSummary) return { total: 0, backtest_summary: null };
-
-  const buyRecords = verifs.filter((v) => v.v6_final_judgment === "BUY");
-  const watchRecords = verifs.filter((v) => v.v6_final_judgment === "WATCH");
-  const skipRecords = verifs.filter((v) => v.v6_final_judgment === "SKIP");
-  const buyHits = buyRecords.filter((v) => v.v6_recommended_hit).length;
-  const buyInvest = buyRecords.reduce((a, v) => a + (v.v6_investment || 0), 0);
-  const buyReturn = buyRecords.filter((v) => v.v6_recommended_hit).reduce((a, v) => a + (v.v6_payout || 0), 0);
-  const buyHitRate = buyRecords.length ? Math.round((buyHits / buyRecords.length) * 1000) / 10 : 0;
-  const buyRecoveryRate = buyInvest > 0 ? Math.round((buyReturn / buyInvest) * 100) : 0;
-  const avgTickets = buyRecords.length
-    ? Math.round(buyRecords.reduce((a, v) => a + (Number(v.v6_ticket_count) || 6), 0) / buyRecords.length * 10) / 10
-    : 0;
-
-  // チケット数別
-  const byTicketCount = (n) => {
-    const list = buyRecords.filter((v) => Number(v.v6_ticket_count) === n);
-    const hits = list.filter((v) => v.v6_recommended_hit).length;
-    const invest = list.reduce((a, v) => a + (v.v6_investment || 0), 0);
-    const ret = list.filter((v) => v.v6_recommended_hit).reduce((a, v) => a + (v.v6_payout || 0), 0);
-    return {
-      count: list.length, hits,
-      hit_rate: list.length ? Math.round((hits / list.length) * 1000) / 10 : 0,
-      recovery_rate: invest > 0 ? Math.round((ret / invest) * 100) : 0,
-    };
-  };
-
-  // outcome分類
-  const outcome = { HIT_PROFIT: 0, HIT_LOW_VALUE: 0, MISS_FIRST: 0, MISS_SECOND: 0, MISS_THIRD: 0, MISS_OTHER: 0 };
-  for (const v of buyRecords) {
-    const oc = v.outcome_class || "MISS_OTHER";
-    if (outcome[oc] != null) outcome[oc]++;
-  }
-
-  // 要因接続率
-  const factorLinked = buyRecords.filter((v) => v.factor_snapshot && Object.keys(v.factor_snapshot).length > 0).length;
-  const factorLinkRate = buyRecords.length ? Math.round((factorLinked / buyRecords.length) * 1000) / 10 : 0;
-
-  return {
-    total,
-    buy_count: buyRecords.length,
-    watch_count: watchRecords.length,
-    skip_count: skipRecords.length,
-    hit_count: buyHits,
-    hit_rate: buyHitRate,
-    recovery_rate: buyRecoveryRate,
-    total_investment: buyInvest,
-    total_return: buyReturn,
-    avg_ticket_count: avgTickets,
-    tickets_6: byTicketCount(6).count,
-    tickets_7: byTicketCount(7).count,
-    tickets_8: byTicketCount(8).count,
-    tickets_detail: { 6: byTicketCount(6), 7: byTicketCount(7), 8: byTicketCount(8) },
-    outcome,
-    factor_linked: factorLinked,
-    factor_link_rate: factorLinkRate,
-    backtest_summary: backtestSummary,
-    records: buyRecords.slice(0, 100),
-  };
 }
 
 // ============================================================
