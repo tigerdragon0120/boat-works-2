@@ -824,7 +824,11 @@ export async function resolveV31Prediction(raceId, raceKey) {
   if (raceKey && ((fin && fin.status === "PENDING") || (pre && pre.status === "PENDING") || (!fin && !pre))) {
     const raceDate = String(raceKey).slice(0, 10);
     try {
-      await base44.functions.invoke("generateMissingPrePredictions", { race_date: raceDate, batch_size: 20 });
+      await base44.functions.invoke("generateMissingPrePredictions", {
+        race_date: raceDate,
+        race_key: raceKey,
+        batch_size: 50,
+      });
       const retryPre = await getV31Prediction(raceId, "PRE", raceKey);
       if (retryPre && (retryPre.status === "COMPLETED" || !retryPre.status)) {
         const mapped = mapV31ToUI(retryPre, "PRE", preOdds);
