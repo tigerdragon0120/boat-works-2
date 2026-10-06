@@ -7,16 +7,22 @@ import { runPredictionV31 } from "./predictionEngineV31.js";
 
 const V3_VERSION = "v3.1";
 
-// 既存V3予想取得(重複作成防止)
+// 既存V3.1予想取得。COMPLETEDだけ再利用し、古いPENDINGは再利用しない。
+// PENDINGを再利用すると、過去の保存失敗レコードに何度も書き込み続けて永久待ちになる。
 async function getOrCreateV3Prediction(client, raceId, raceKey, stage) {
   const list = await client.asServiceRole.entities.PredictionV31.filter(
     { race_id: raceId, stage, prediction_version: V3_VERSION },
-    "-computed_at", 1
+    "-computed_at", 10
   ).catch(() => []);
-  if (list && list[0]) return { id: list[0].id, existing: list[0] };
+  const completed = (list || []).find(p => p.status === "COMPLETED");
+  if (completed) return { id: completed.id, existing: completed };
   const created = await client.asServiceRole.entities.PredictionV31.create({
-    race_id: raceId, race_key: raceKey, stage, prediction_version: V3_VERSION, status: "PENDING",
-  }).catch(() => null);
+    race_id: raceId, race_key: raceKey, stage, prediction_version: V3_VERSION,
+    status: "PENDING", computed_at: new Date().toISOString(),
+  }).catch((e) => {
+    console.error("[V3.1] Failed to create recovery prediction:", e?.message || e);
+    return null;
+  });
   return { id: created?.id, existing: null };
 }
 
