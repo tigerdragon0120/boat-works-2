@@ -123,9 +123,14 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
       status: "COMPLETED",
     };
 
-    await sr.PredictionV31.update(predictionId, record).catch(e => {
-      console.error("[V3.1] Failed to save prediction:", e.message);
-    });
+    // 保存失敗を握りつぶさない。PENDINGだけ残るとUIが永久に「生成待ち」になるため、
+    // update失敗は呼び出し元へ返して再試行・エラー記録させる。
+    try {
+      await sr.PredictionV31.update(predictionId, record);
+    } catch (e) {
+      console.error("[V3.1] Failed to save prediction:", e?.message || e);
+      throw new Error(`V3.1_SAVE_FAILED: ${e?.message || e}`);
+    }
 
     return { predictionId, result, skipped: false };
   } catch (e) {
