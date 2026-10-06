@@ -12,7 +12,9 @@ import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
 import { verifyV61Prediction } from "../../shared/predictionServiceV61.js";
 
 const V61_VERSION = "v6.1";
-const MAX_RACES = 300;
+const MAX_RACES = 150;
+// 1回の実行時間上限(秒)。未処理分は次回の実行で補完する
+const TIME_BUDGET_MS = 60000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -44,14 +46,9 @@ export default async function(req: Request) {
 
     const sr = base44.asServiceRole.entities;
 
-    const [raceGroups, recentResults, verificationGroups, recentPredictions] = await Promise.all([
-      Promise.all(dates.map((raceDate) => sr.Race.filter({ race_date: raceDate }, "race_number", 500)))
-        .then((groups: any[][]) => groups.flat()),
-      sr.RaceResult.list("-created_date", 2000),
-      Promise.all(dates.map((raceDate) => sr.PredictionV61Verification.filter({ race_date: raceDate }, "-created_date", 500)))
-        .then((groups: any[][]) => groups.flat()),
-      sr.PredictionV6.list("-computed_at", 3000).catch(() => []),
-    ]);
+    const raceGroups = await Promise.all(
+      dates.map((raceDate) => sr.Race.filter({ race_date: raceDate }, "race_number", 500))
+    ).then((groups: any[][]) => groups.flat());
 
     const races = raceGroups;
     if (!races.length) {
@@ -59,6 +56,15 @@ export default async function(req: Request) {
     }
 
     const raceIdSet = new Set(races.map((race: any) => race.id));
+    const raceIds = [...raceIdSet];
+
+    // 対象レースに絞って取得する(全件取得はメモリを圧迫するため避ける)
+    const [recentResults, verificationGroups, recentPredictions] = await Promise.all([
+      sr.RaceResult.filter({ race_id: { $in: raceIds } }, "-created_date", 1000).catch(() => []),
+      Promise.all(dates.map((raceDate) => sr.PredictionV61Verification.filter({ race_date: raceDate }, "-created_date", 500)))
+        .then((groups: any[][]) => groups.flat()),
+      sr.PredictionV6.filter({ prediction_version: V61_VERSION, race_id: { $in: raceIds } }, "-computed_at", 1000).catch(() => []),
+    ]);
 
     const resultByRace = new Map<string, any>();
     for (const result of recentResults || []) {
@@ -91,8 +97,11 @@ export default async function(req: Request) {
     let skippedAlready = 0;
     let failed = 0;
 
+    const startedAt = Date.now();
+
     for (const race of races) {
       if (verified >= MAX_RACES) break;
+      if (Date.now() - startedAt > TIME_BUDGET_MS) break;
 
       const result = resultByRace.get(race.id);
       if (!result) { skippedNoResult += 1; continue; }
@@ -110,7 +119,7 @@ export default async function(req: Request) {
         failed += 1;
         console.error(`[V6.1 DAILY VERIFY] race=${race.race_key}`, e?.message || e);
       }
-      await sleep(120);
+      await sleep(80);
     }
 
     return Response.json({
