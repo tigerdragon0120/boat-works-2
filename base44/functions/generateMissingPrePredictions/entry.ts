@@ -1,5 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
+import { runAndSavePredictionV31 } from '../../shared/predictionServiceV31.js';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -32,9 +33,10 @@ export default async function(req: Request) {
     if (!raceDate) return Response.json({ ok: false, error: 'race_date is required' }, { status: 400 });
 
     const sr = base44.asServiceRole.entities;
-    const [races, predictions, profiles, rolling, settings] = await Promise.all([
+    const [races, predictions, v31Predictions, profiles, rolling, settings] = await Promise.all([
       withRateLimitRetry(() => sr.Race.filter({ race_date: raceDate }, 'race_key', 500)),
       withRateLimitRetry(() => sr.RacePrediction.filter({ stage: 'PRE' }, '-computed_at', 1000)),
+      withRateLimitRetry(() => sr.PredictionV31.filter({ stage: 'PRE', prediction_version: 'v3.1' }, '-computed_at', 2000)).catch(() => []),
       sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []),
       sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []),
       getSettings(base44),
@@ -63,7 +65,13 @@ export default async function(req: Request) {
       if (p.race_key) completedKeys.add(String(p.race_key));
     }
 
-    const pending = raceList.filter(r => !completedKeys.has(String(r.race_key)));
+    const v31CompletedKeys = new Set<string>();
+    for (const p of v31Predictions || []) {
+      if (p.race_key && (p.status === 'COMPLETED' || !p.status)) v31CompletedKeys.add(String(p.race_key));
+    }
+
+    // 通常PREまたはV3.1のどちらかが欠けていれば補完対象。
+    const pending = raceList.filter(r => !completedKeys.has(String(r.race_key)) || !v31CompletedKeys.has(String(r.race_key)));
     const batch = pending.slice(0, batchSize);
     const profileByReg = new Map((profiles || []).map((p: any) => [String(p.registration_number || ''), p]));
     const rollingByReg = new Map((rolling || []).map((r: any) => [String(r.registration_number || ''), r]));
@@ -89,7 +97,16 @@ export default async function(req: Request) {
           continue;
         }
 
-        await withRateLimitRetry(() => runAndSavePrediction(base44, race, six, settings, 'PRE', {}, profileByReg, rollingByReg));
+        const raceKey = String(race.race_key);
+        if (!completedKeys.has(raceKey)) {
+          await withRateLimitRetry(() => runAndSavePrediction(base44, race, six, settings, 'PRE', {}, profileByReg, rollingByReg));
+          completedKeys.add(raceKey);
+        }
+        if (!v31CompletedKeys.has(raceKey)) {
+          const v31 = await withRateLimitRetry(() => runAndSavePredictionV31(base44, race, six, settings, 'PRE', {}, profileByReg, rollingByReg));
+          if (v31?.skipped) throw new Error(`V3.1生成失敗: ${v31.reason || v31.error || 'unknown'}`);
+          v31CompletedKeys.add(raceKey);
+        }
         generated++;
         await sleep(450);
       } catch (e: any) {
