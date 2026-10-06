@@ -758,7 +758,7 @@ export function mapV4ToUI(v4Pred, stage) {
 }
 
 // V3.1 Candidate予想取得・UIマッピング。
-// 本番の合成BUYには混ぜず、検証用タブで独立表示する。
+// V3.1は単体表示・検証に加え、COMPLETED後は合成予想にも利用する。
 export async function getV31Prediction(raceId, stage, raceKey) {
   let list = await withRetry(() => base44.entities.PredictionV31.filter({
     race_id: raceId, stage, prediction_version: "v3.1",
@@ -784,7 +784,20 @@ export function mapV31ToUI(pred, stage, oddsMap = null) {
     reasons: b.reasons || [],
   }));
   const selected = new Set(pred.selected_trifectas || []);
-  const trifectas = (pred.trifectas || []).map((t, i) => ({
+  // 詳細trifectasの保存に失敗しても、先に保存したselected_trifectasから
+  // V3.1の6〜8点を必ず表示できるようにする。
+  const sourceTrifectas = (pred.trifectas && pred.trifectas.length)
+    ? pred.trifectas
+    : [...selected].map((combination, i) => ({
+        combination,
+        rank: i + 1,
+        race_probability: combination === pred.top_trifecta ? pred.top_probability : 0,
+        actual_odds: oddsMap?.[combination] ?? null,
+        expected_value: null,
+        is_selected: true,
+        ticket_rank: i + 1,
+      }));
+  const trifectas = sourceTrifectas.map((t, i) => ({
     combination: t.combination,
     rank: t.rank || i + 1,
     probability: t.race_probability ?? t.probability ?? 0,
