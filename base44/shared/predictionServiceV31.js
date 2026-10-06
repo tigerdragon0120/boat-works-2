@@ -194,7 +194,35 @@ export async function runAndSavePredictionV31(client, race, entries, settings, s
       status: "COMPLETED",
     };
     try {
-      await sr.PredictionV31.update(predictionId, cleanDeep(schemaSafeRecord));
+      const coreRecord = cleanDeep({
+        race_id: record.race_id,
+        race_key: record.race_key,
+        stage: record.stage,
+        prediction_version: record.prediction_version,
+        computed_at: record.computed_at,
+        status: "COMPLETED",
+        final_judgment: record.final_judgment,
+        judgment_reason: record.judgment_reason,
+        ticket_count: record.ticket_count,
+        selected_trifectas: record.selected_trifectas,
+        top_trifecta: record.top_trifecta,
+        top_probability: record.top_probability,
+        top_odds: record.top_odds,
+        top_expected_value: record.top_expected_value,
+        honmei_boat: record.honmei_boat,
+        taiko_boat: record.taiko_boat,
+        ana_boat: record.ana_boat,
+        keshi_boat: record.keshi_boat,
+        set_probability: record.set_probability,
+        set_expected_recovery: record.set_expected_recovery,
+        synthetic_odds: record.synthetic_odds
+      });
+      await sr.PredictionV31.update(predictionId, coreRecord);
+      try {
+        await sr.PredictionV31.update(predictionId, cleanDeep(schemaSafeRecord));
+      } catch (detailError) {
+        console.warn("[V3.1] detail save skipped:", detailError?.message || detailError);
+      }
     } catch (e) {
       console.error("[V3.1] Failed to save prediction:", e?.message || e);
       throw new Error(`V3.1_SAVE_FAILED: ${e?.message || e}`);
