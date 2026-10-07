@@ -80,7 +80,7 @@ export default function PredictionPanel({
 
             {/* 予想判定(常にタブの上) */}
             {hasPred ? (
-              <PredictionJudgment stage={stage} pred={activePred} allTri={allTri} race={race} />
+              <PredictionJudgment stage={stage} pred={activePred} allTri={allTri} race={race} entries={entries} />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col items-center text-center">
                 <div className="w-14 h-14 rounded-full bg-slate-100 flex items-center justify-center mb-3">
