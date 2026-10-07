@@ -440,6 +440,28 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
   return { total: races.length, fetched, skipped, boatcast: boatcastCount, local: localCount, errors };
 }
 
+// =====================================================
+// 選手プロファイル・ローリング統計の取得
+// 全件(1000件超・十数MB)を毎回読み込むと関数のメモリ上限を超えるため、
+// 対象レースの6艇分だけを読む。
+// =====================================================
+async function loadRacerMaps(sr: any, entries: any[]) {
+  const regs = [...new Set(
+    (entries || [])
+      .map((e: any) => str(e.registration_number || e.register_number))
+      .filter((reg) => /^\d{4}$/.test(reg))
+  )];
+  if (!regs.length) return { profileByReg: new Map(), rollingByReg: new Map() };
+  const [profiles, rolling] = await Promise.all([
+    sr.RacerPerformanceProfile.filter({ registration_number: { $in: regs } }, '-updated_at', 50).catch(() => []),
+    sr.RacerRollingStats.filter({ registration_number: { $in: regs } }, '-calculated_at', 50).catch(() => []),
+  ]);
+  return {
+    profileByReg: new Map((profiles || []).map((p: any) => [String(p.registration_number), p])),
+    rollingByReg: new Map((rolling || []).map((r: any) => [String(r.registration_number), r])),
+  };
+}
+
 function isCompletePrePrediction(p: any) {
   if (p?.stage !== 'PRE' || p?.status !== 'COMPLETED') return false;
   const ticketCount = Number(p.ticket_count || 0);
@@ -455,10 +477,6 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   const sr = base44.asServiceRole.entities;
   const startTime = Date.now();
   const settings = await getSettings(base44);
-  const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
-  const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
-  const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
-  const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
   const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   const existingPrePreds = await sr.RacePrediction.filter({ stage: 'PRE' }, '-computed_at', 1000).catch(() => []);
@@ -488,6 +506,8 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
       logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: 6艇未満のため保留`);
       continue;
     }
+
+    const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
 
     let success = false;
     for (let attempt = 0; attempt < 3 && !success; attempt++) {
@@ -554,6 +574,7 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
       try {
         const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
         if (entries.length < 6) continue;
+        const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
         const raceKey = String(race.race_key);
         if (!v3DoneKeys.has(raceKey)) {
           await runAndSavePredictionV3(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
@@ -596,6 +617,7 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
     try {
       const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
       if (entries.length < 6) continue;
+      const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
       await runAndSavePredictionV4(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
       v4Generated++;
       logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V4 PRE生成`);
@@ -637,6 +659,7 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
     try {
       const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
       if (entries.length < 6) continue;
+      const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
       await runAndSavePredictionV61(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
       v61Generated++;
       logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V6.1 PRE生成`);
@@ -745,10 +768,6 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
   const sr = base44.asServiceRole.entities;
   const startTime = Date.now();
   const settings = await getSettings(base44);
-  const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
-  const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
-  const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
-  const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
 
   const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   let oddsFetched = 0, finalGenerated = 0, v61FinalGenerated = 0;
@@ -790,6 +809,31 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     });
     oddsFetched++;
 
+    // V6.1(PRE/FINAL)の120通りへも実オッズと期待値を反映する。
+    // これにより事前予想タブでも締切前の実オッズ・期待値が表示される。
+    // 予想確率自体は変更しない。
+    const v61Rows = await sr.PredictionV6.filter(
+      { race_id: race.id, prediction_version: 'v6.1' }, '-computed_at', 2
+    ).catch(() => []);
+    for (const row of v61Rows || []) {
+      const tris = (row.trifectas || []).map((t: any) => {
+        const odds = oddsMap[t.combination] ?? null;
+        return {
+          ...t,
+          actual_odds: odds,
+          current_odds: odds,
+          expected_value: odds != null ? Math.round((t.probability || 0) * odds * 10) / 10 : (t.expected_value ?? null),
+        };
+      });
+      if (!tris.length) continue;
+      await sr.PredictionV6.update(row.id, {
+        trifectas: tris,
+        odds_source: 'LOCAL',
+        odds_fetched_at: new Date().toISOString(),
+        odds_combination_count: oddsCount,
+      }).catch(() => {});
+    }
+
     // PRE/FINALどちらが表示中でも実オッズを画面に出せるよう、
     // 最新予想の120通りへactual_odds/current_oddsを反映する。
     const latestPreds = await sr.RacePrediction.filter({ race_id: race.id }, '-computed_at', 2).catch(() => []);
@@ -807,6 +851,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     if (inFinalWindow) {
       const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
       if (entries.length >= 6) {
+        const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
         try {
           const finResult = await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
           if (finResult?.skipped) {

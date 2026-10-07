@@ -110,6 +110,19 @@ export default async function(req: Request) {
       }
     }
 
+    if (stage === 'FINAL' && Object.keys(oddsMap).length < 100) {
+      // FINALは実オッズが揃っていることが前提。オッズ未取得のままCOMPLETEDのFINALを
+      // 作ると、買い目がオッズ・期待値なしで表示されてしまう。
+      // 締切前のオッズ取得(締切25分前〜)は自動更新処理が行うため、ここでは生成しない。
+      return Response.json({
+        ok: false,
+        error: 'odds_not_available',
+        reason: 'FINAL オッズ取得待ち',
+        race_key: race.race_key,
+        stage,
+      });
+    }
+
     const result = await withRetry(() => runAndSavePredictionV61(base44, race, six, settings, stage, oddsMap, profileByReg, rollingByReg));
 
     if (result?.skipped) {
