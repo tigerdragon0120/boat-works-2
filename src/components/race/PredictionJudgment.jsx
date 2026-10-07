@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { Calculator, Ticket } from "lucide-react";
 import { buildSelectedTickets } from "@/lib/predictionService";
 import ScenarioHeader from "@/components/race/ScenarioHeader";
+import JudgmentAlert from "@/components/race/JudgmentAlert";
 
 const judgmentConfig = {
   BUY: { label: "BUY", cls: "bg-rose-500/20 text-rose-300 border-rose-400/50" },
@@ -20,6 +21,7 @@ const groupStyle = {
 const STAGE_LABEL = { PRE: "事前予想", FINAL: "直前予想" };
 
 // 予想判定(判定・買い目・セット分析)は、事前予想/直前予想タブより上に常時表示する。
+// 事前予想は展開シナリオを表示し、直前予想が確定したら判定アラートのみを表示する。
 export default function PredictionJudgment({ stage, pred, allTri, race, entries = [] }) {
   const judgment = pred?.final_judgment || "PENDING";
   const jcfg = judgmentConfig[judgment] || judgmentConfig.PENDING;
@@ -35,17 +37,21 @@ export default function PredictionJudgment({ stage, pred, allTri, race, entries 
 
   return (
     <div className="flex flex-col gap-3">
-      {/* === 1. 展開シナリオ + 予想判定 BUY/WATCH/SKIP === */}
-      <ScenarioHeader entries={entries} activePred={pred}>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] text-slate-400">{STAGE_LABEL[stage] || "予想"}の判定</span>
-          <span className={cn("px-2 py-0.5 rounded text-xs font-black border", jcfg.cls)}>{jcfg.label}</span>
-          <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-900 text-xs font-bold">{displayTicketCount}点</span>
-          {pred?.ticket_strategy && <span className="text-[10px] text-slate-400 truncate">{pred.ticket_strategy}</span>}
-        </div>
-        <div className="mt-1 text-[11px] text-slate-300 leading-relaxed">{pred?.judgment_reason || "—"}</div>
-        {pred?.expand_reason && <div className="text-[10px] text-amber-400/80 mt-1">拡張: {pred.expand_reason}</div>}
-      </ScenarioHeader>
+      {/* === 1. 事前予想=展開シナリオ / 直前予想確定=判定アラートのみ === */}
+      {stage === "FINAL" ? (
+        <JudgmentAlert stage={stage} jcfg={jcfg} ticketCount={displayTicketCount} pred={pred} />
+      ) : (
+        <ScenarioHeader entries={entries} activePred={pred}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-slate-400">{STAGE_LABEL[stage] || "予想"}の判定</span>
+            <span className={cn("px-2 py-0.5 rounded text-xs font-black border", jcfg.cls)}>{jcfg.label}</span>
+            <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-900 text-xs font-bold">{displayTicketCount}点</span>
+            {pred?.ticket_strategy && <span className="text-[10px] text-slate-400 truncate">{pred.ticket_strategy}</span>}
+          </div>
+          <div className="mt-1 text-[11px] text-slate-300 leading-relaxed">{pred?.judgment_reason || "—"}</div>
+          {pred?.expand_reason && <div className="text-[10px] text-amber-400/80 mt-1">拡張: {pred.expand_reason}</div>}
+        </ScenarioHeader>
+      )}
 
       {/* === 2. 買い目一覧 6-8点 === */}
       <div className="rounded-lg border border-slate-200 bg-white p-3">
