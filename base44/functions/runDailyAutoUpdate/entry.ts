@@ -305,7 +305,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
   }
 
   // 結果済みのRaceを特定
-  const existingResults = await sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []);
+  const existingResults = await sr.RaceResult.filter({ race_id: { $in: races.map((r: any) => r.id) } }, '-finished_at', 600).catch(() => []);
   const raceIdsWithResult = new Set(existingResults.map((r: any) => r.race_id));
 
   let fetched = 0, skipped = 0, boatcastCount = 0, localCount = 0;
@@ -479,7 +479,10 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   const settings = await getSettings(base44);
 
   const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
-  const existingPrePreds = await sr.RacePrediction.filter({ stage: 'PRE' }, '-computed_at', 1000).catch(() => []);
+  // 対象日付のレース分だけ読む(全期間分・120通り付きを読むとメモリ上限を超える)
+  const existingPrePreds = await sr.RacePrediction.filter(
+    { stage: 'PRE', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300
+  ).catch(() => []);
   const completePreKeys = new Set(
     existingPrePreds.filter((p: any) => isCompletePrePrediction(p)).map((p: any) => String(p.race_key || ''))
   );
@@ -551,8 +554,8 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   const v3Pending = races.filter((r: any) => r.has_pre === true);
   if (v3Pending.length > 0) {
     const [v3Preds, v31Preds] = await Promise.all([
-      withRateLimitRetry(() => sr.PredictionV3.filter({ stage: 'PRE', prediction_version: 'v3' }, '-computed_at', 1000), 3).catch(() => []),
-      withRateLimitRetry(() => sr.PredictionV31.filter({ stage: 'PRE', prediction_version: 'v3.1' }, '-computed_at', 2000), 3).catch(() => []),
+      withRateLimitRetry(() => sr.PredictionV3.filter({ stage: 'PRE', prediction_version: 'v3', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []),
+      withRateLimitRetry(() => sr.PredictionV31.filter({ stage: 'PRE', prediction_version: 'v3.1', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []),
     ]);
     const v3DoneKeys = new Set<string>();
     for (const p of v3Preds || []) {
@@ -601,7 +604,7 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   // 出走表データが揃った時点で展示・オッズを待たずにV4 PREを生成
   // =====================================================
   let v4Generated = 0;
-  const v4Preds = await withRateLimitRetry(() => sr.PredictionV4.filter({ stage: 'PRE', prediction_version: 'v4' }, '-computed_at', 2000), 3).catch(() => []);
+  const v4Preds = await withRateLimitRetry(() => sr.PredictionV4.filter({ stage: 'PRE', prediction_version: 'v4', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []);
   const v4DoneKeys = new Set<string>();
   for (const p of v4Preds || []) {
     if (p.race_key && String(p.race_key).startsWith(raceDate)) v4DoneKeys.add(String(p.race_key));
@@ -634,7 +637,7 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   // 全レースで「事前予想 → 直前予想」の2段表示を保証する
   // =====================================================
   let v61Generated = 0;
-  const v61Preds = await withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1' }, '-computed_at', 2000), 3).catch(() => []);
+  const v61Preds = await withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []);
   const v61DoneKeys = new Set<string>();
   for (const p of v61Preds || []) {
     if (p.race_key && String(p.race_key).startsWith(raceDate)) v61DoneKeys.add(String(p.race_key));
@@ -919,7 +922,7 @@ async function checkCompleteness(base44: any, raceDate: string, logs: string[]) 
   const sr = base44.asServiceRole.entities;
   const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   const entries = await sr.RaceEntry.filter({ race_date: raceDate }, 'boat_number', 5000).catch(() => []);
-  const results = await sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []);
+  const results = await sr.RaceResult.filter({ race_id: { $in: races.map((r: any) => r.id) } }, '-finished_at', 600).catch(() => []);
   const raceIdsWithResult = new Set(results.map((r: any) => r.race_id));
 
   const venueSet = new Set(races.map((r: any) => r.venue_code));
@@ -1058,10 +1061,11 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   // 現在のDB状態を確認
   const todayRaces = await sr.Race.filter({ race_date: today }, 'race_number', 300).catch(() => []);
   const tomorrowRaces = await sr.Race.filter({ race_date: tomorrow }, 'race_number', 300).catch(() => []);
+  const dateScope = { $regex: `^(${today}|${tomorrow})` };
   const [existingResults, existingPrePreds, existingV61PrePreds] = await Promise.all([
-    sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []),
-    sr.RacePrediction.filter({ stage: 'PRE' }, '-computed_at', 1000).catch(() => []),
-    sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1' }, '-computed_at', 2000).catch(() => []),
+    sr.RaceResult.filter({ race_id: { $in: [...todayRaces, ...tomorrowRaces].map((r: any) => r.id) } }, '-finished_at', 600).catch(() => []),
+    sr.RacePrediction.filter({ stage: 'PRE', race_key: dateScope }, '-computed_at', 600).catch(() => []),
+    sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: dateScope }, '-computed_at', 600).catch(() => []),
   ]);
   const raceIdsWithResult = new Set(existingResults.map((r: any) => r.race_id));
   const completePreKeys = new Set(
