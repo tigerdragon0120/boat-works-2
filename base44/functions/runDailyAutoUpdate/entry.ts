@@ -607,7 +607,39 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   const v4Remaining = Math.max(0, v4Missing.length - v4Generated);
   logs.push(`V4 PRE: 今回${v4Generated}R生成 / 残り${v4Remaining}R`);
 
-  return { total: races.length, generated, v3_generated: v3Generated, v4_generated: v4Generated, skipped, remaining, rate_limited: rateLimited, errors };
+  // =====================================================
+  // V6.1 PREギャップ埋め: V6.1 PRE未生成のRaceを補完
+  // 全レースで「事前予想 → 直前予想」の2段表示を保証する
+  // =====================================================
+  let v61Generated = 0;
+  const v61Preds = await withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1' }, '-computed_at', 2000), 3).catch(() => []);
+  const v61DoneKeys = new Set<string>();
+  for (const p of v61Preds || []) {
+    if (p.race_key && String(p.race_key).startsWith(raceDate)) v61DoneKeys.add(String(p.race_key));
+  }
+  const v61Missing = races.filter((r: any) => !v61DoneKeys.has(String(r.race_key)));
+  const v61Batch = v61Missing.slice(0, 5);
+
+  for (const race of v61Batch) {
+    if (Date.now() - startTime > timeBudgetMs - 5000) {
+      logs.push(`V6.1 PRE: 時間予算到達 — 次回へ継続`);
+      break;
+    }
+    try {
+      const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
+      if (entries.length < 6) continue;
+      await runAndSavePredictionV61(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+      v61Generated++;
+      logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V6.1 PRE生成`);
+    } catch (e: any) {
+      errors.push(`V6.1 PRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
+    }
+    await sleep(1500);
+  }
+  const v61Remaining = Math.max(0, v61Missing.length - v61Generated);
+  logs.push(`V6.1 PRE: 今回${v61Generated}R生成 / 残り${v61Remaining}R`);
+
+  return { total: races.length, generated, v3_generated: v3Generated, v4_generated: v4Generated, v61_generated: v61Generated, skipped, remaining, rate_limited: rateLimited, errors };
 }
 
 // =====================================================

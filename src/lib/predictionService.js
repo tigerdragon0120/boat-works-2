@@ -878,21 +878,48 @@ export function mapV61ToUI(v61Pred, stage) {
   return mapV4ToUI(v61Pred, stage);
 }
 
-// V6.1はFINAL優先、なければPREを表示する。V4への自動フォールバックはしない。
+// V6.1の事前予想(PRE)と直前予想(FINAL)を両方返す。
+// 画面の「事前予想 / 直前予想」タブはこの2件を切り替えて表示する。
+const v61PreRecoveryTried = new Set();
+export async function getV61Stages(raceId, raceKey) {
+  const [fin, pre] = await Promise.all([
+    getV61Prediction(raceId, "FINAL", raceKey),
+    getV61Prediction(raceId, "PRE", raceKey),
+  ]);
+
+  let prePred = pre;
+  // 事前予想が未生成のレースは、画面表示時に1回だけ自動生成して全レース事前予想を保証する。
+  if ((!prePred || prePred.status !== "COMPLETED") && !v61PreRecoveryTried.has(raceId)) {
+    v61PreRecoveryTried.add(raceId);
+    try {
+      await generateV61PredictionForRace(raceId, "PRE", false);
+      prePred = await getV61Prediction(raceId, "PRE", raceKey);
+    } catch (e) {
+      console.warn("[V6.1] PRE auto generation failed:", e?.message || e);
+    }
+  }
+
+  const finalMapped = fin && (fin.status === "COMPLETED" || !fin.status) ? mapV61ToUI(fin, "FINAL") : null;
+  const preMapped = prePred && (prePred.status === "COMPLETED" || !prePred.status) ? mapV61ToUI(prePred, "PRE") : null;
+
+  return {
+    final: finalMapped ? { stage: "FINAL", ...finalMapped } : null,
+    pre: preMapped ? { stage: "PRE", ...preMapped } : null,
+  };
+}
+
+// 直前予想はFINAL優先、なければ事前予想(PRE)を返す。V4への自動フォールバックはしない。
 export async function resolveV61Prediction(raceId, raceKey) {
-  const finalV61 = await getV61Prediction(raceId, "FINAL", raceKey);
-  if (finalV61 && (finalV61.status === "COMPLETED" || !finalV61.status)) {
-    const mapped = mapV61ToUI(finalV61, "FINAL");
-    if (mapped) return { stage: "FINAL", ...mapped };
-  }
+  const { final, pre } = await getV61Stages(raceId, raceKey);
+  return final || pre || { stage: null, pred: null, boats: [], trifectas: [] };
+}
 
-  const preV61 = await getV61Prediction(raceId, "PRE", raceKey);
-  if (preV61 && (preV61.status === "COMPLETED" || !preV61.status)) {
-    const mapped = mapV61ToUI(preV61, "PRE");
-    if (mapped) return { stage: "PRE", ...mapped };
-  }
-
-  return { stage: null, pred: null, boats: [], trifectas: [] };
+// V6.1予想の単一レース生成(UIの再実行ボタン用)
+export async function generateV61PredictionForRace(raceId, stage, force = false) {
+  const res = await base44.functions.invoke("generateV61PredictionForRace", {
+    race_id: raceId, stage, force,
+  });
+  return res?.data || res;
 }
 
 
