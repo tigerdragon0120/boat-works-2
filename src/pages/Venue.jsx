@@ -129,7 +129,16 @@ export default function Venue() {
     // 終了済みレースで旧データが3連単払戻しか持っていない場合、
     // 画面を開いた時に公式結果を再取得して全券種払戻を自動補完する。
     const raceEnded = r.status === "finished" || (Number.isFinite(deadlineMs) && nowMs > deadlineMs);
-    const hasFullPayouts = !!(latestResult?.payouts && Object.keys(latestResult.payouts).length > 1);
+    // 一部券種だけ保存された結果を「取得済み」と誤判定しない。
+    // 主要4券種 + 拡連複(通常3組)が揃うまで公式結果を再取得して補完する。
+    const payouts = latestResult?.payouts || {};
+    const hasFullPayouts = !!(
+      payouts.trifecta?.combination && payouts.trifecta?.payout != null &&
+      payouts.trifecta_quinella?.combination && payouts.trifecta_quinella?.payout != null &&
+      payouts.exacta?.combination && payouts.exacta?.payout != null &&
+      payouts.quinella?.combination && payouts.quinella?.payout != null &&
+      Array.isArray(payouts.wide) && payouts.wide.length >= 3
+    );
     if (raceEnded && latestResult?.result_trifecta && !hasFullPayouts) {
       try {
         const refreshResult = await fetchOnlineData("result", r.race_date, r.venue_code, r.race_number, r.id);
