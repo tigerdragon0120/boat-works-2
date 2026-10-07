@@ -207,7 +207,19 @@ export default function Venue() {
     if (latestResult?.[0]) setRaceResult(latestResult[0]);
 
     if (selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
-    setV61Stages(await getV61Stages(selectedRace.id, selectedRace.race_key));
+    let stages = await getV61Stages(selectedRace.id, selectedRace.race_key);
+    setV61Stages(stages);
+
+    // ページを開いたまま展示が揃った場合もFINAL生成を開始する。
+    // 以前は初回loadDetail時しかensureしなかったため、展示取得後に直前予想が出ないことがあった。
+    if (!stages.final && selectedRace.exhibition_ready && selectedRace.deadline
+        && new Date(selectedRace.deadline).getTime() > Date.now()) {
+      const ensured = await ensureV61Final(selectedRace);
+      if (ensured) {
+        stages = await getV61Stages(selectedRace.id, selectedRace.race_key);
+        setV61Stages(stages);
+      }
+    }
     } finally {
       refreshBusy.current = false;
     }
