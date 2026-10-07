@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import {
@@ -23,13 +23,17 @@ export default function RaceDetail() {
   const [busy, setBusy] = useState(false);
   const [rankMode, setRankMode] = useState("prob");
   const [raceResult, setRaceResult] = useState(null);
+  // 背景生成の完了時に、既に別レースへ切り替わっていないか確認するための参照
+  const activeRaceIdRef = useRef(id);
+  useEffect(() => { activeRaceIdRef.current = id; }, [id]);
 
   const load = async ({ silent = false } = {}) => {
     if (!silent) {
       setLoading(true);
       // 前レースのstateを完全クリア(mergeではなくreplace)
+      // レース切替時は必ず事前予想(PRE)を先に見せる
       setV61Stages({ pre: null, final: null });
-      setStageTab(null);
+      setStageTab("PRE");
     }
 
     const r = await base44.entities.Race.get(id);
@@ -39,26 +43,25 @@ export default function RaceDetail() {
     const results = await base44.entities.RaceResult.filter({ race_id: id }, "-finished_at", 1);
     setRaceResult(results?.[0] || null);
 
-    // === 合成(V6.1) FINAL自動生成保証 ===
-    // 展示取得済み・締切前で直前予想が未生成なら、画面を開いた時に生成する。
-    if (r?.exhibition_ready && r?.deadline && new Date(r.deadline).getTime() > Date.now()) {
-      try {
-        const ensured = await ensureV61Final(r);
-        if (ensured) {
-          // 生成後、Race最新状態を再取得
-          const r2 = await base44.entities.Race.get(id);
-          setRace(r2);
-        }
-      } catch (e) {
-        console.warn("[RaceDetail] V6.1 FINAL auto-gen failed:", e?.message || e);
-      }
-    }
-
     // === 合成(V6.1) 予想resolver ===
     // 事前予想(PRE)と直前予想(FINAL)を取得。UIの唯一の表示ソース。
     setV61Stages(await getV61Stages(id, r?.race_key));
 
     if (!silent) setLoading(false);
+
+    // === 合成(V6.1) FINAL自動生成保証 ===
+    // 展示取得済み・締切前で直前予想が未生成なら背景で生成する。
+    // 事前予想の初回表示を待たせないため、ここではawaitしない。
+    if (r?.exhibition_ready && r?.deadline && new Date(r.deadline).getTime() > Date.now()) {
+      ensureV61Final(r)
+        .then(async (ensured) => {
+          if (!ensured || activeRaceIdRef.current !== id) return;
+          const r2 = await base44.entities.Race.get(id);
+          setRace(r2);
+          setV61Stages(await getV61Stages(id, r2?.race_key));
+        })
+        .catch((e) => console.warn("[RaceDetail] V6.1 FINAL auto-gen failed:", e?.message || e));
+    }
   };
 
   useEffect(() => { load(); }, [id]);
@@ -129,8 +132,8 @@ export default function RaceDetail() {
   if (!race) return <div className="py-20 text-center text-slate-500">レースが見つかりません</div>;
 
   // 合成(V6.1)をメイン予想にし、事前予想(PRE)/直前予想(FINAL)をタブで切り替える。
-  // V5は同じ合成予想の評価を参照する展開シナリオ。
-  const effectiveStageTab = stageTab || (v61Stages.final ? "FINAL" : "PRE");
+  // 既定は事前予想。直前予想はタブを押した時だけ表示する。
+  const effectiveStageTab = stageTab === "FINAL" ? "FINAL" : "PRE";
   const displayedCurrent = v61Stages[effectiveStageTab === "FINAL" ? "final" : "pre"];
   const activePred = displayedCurrent?.pred;
   const activeBoats = [...(displayedCurrent?.boats || [])].sort((a, b) => a.boat_number - b.boat_number);

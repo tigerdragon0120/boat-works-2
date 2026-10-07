@@ -38,7 +38,7 @@ const filterTabs = ["選手成績", "得点率早見", "枠番過去10走", "節
 
 // 選手名の表示整形は @/lib/racerIdentity に集約
 
-export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode, predictionVersion = "v4" }) {
+export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode, predictionVersion = "mix" }) {
   const [subTab, setSubTab] = useState("出走表");
   const [filter, setFilter] = useState("選手成績");
   const [tokutenEntries, setTokutenEntries] = useState(entries);

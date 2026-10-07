@@ -19,7 +19,7 @@ const VERSION_TABS = [
 export default function PredictionPanel({
   race, stage, stageTab, stages, onStageTabChange,
   run, busy, entries, activePred, activeBoats, allTri, compareData,
-  pendingOdds, waitingFinalOdds, predictionVersion = "v61", onPredictionVersionChange,
+  pendingOdds, waitingFinalOdds, predictionVersion = "mix", onPredictionVersionChange,
 }) {
   const hasPred = !!activePred;
   const isV5 = predictionVersion === "v5";

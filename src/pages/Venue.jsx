@@ -74,8 +74,9 @@ export default function Venue() {
     const seq = ++detailSeq.current;
     const stale = () => seq !== detailSeq.current;
     // 前レースのstateを完全クリア
+    // レース切替時は必ず事前予想(PRE)を先に見せる
     setV61Stages({ pre: null, final: null });
-    setStageTab(null);
+    setStageTab("PRE");
     setRaceResult(null);
 
     const r = races.find((x) => x.id === selectedId);
@@ -142,29 +143,23 @@ export default function Venue() {
     }
     setRaceResult(latestResult);
 
-    // === 合成(V6.1) FINAL自動生成保証 ===
-    // 展示取得済み・締切前で直前予想が未生成なら、画面を開いた時に生成する。
-    if (r?.exhibition_ready && r?.deadline && new Date(r.deadline).getTime() > Date.now()) {
-      try {
-        const ensured = await ensureV61Final(r);
-        if (ensured) {
-          // 生成後、Race最新状態を再取得
-          const updatedRaces = await listTodayRaces({ includeFinished: true });
-          const updatedList = (updatedRaces || []).filter((rr) => String(rr.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
-            .sort((a, b) => a.race_number - b.race_number);
-          setRaces(updatedList);
-          const r2 = updatedList.find((x) => x.id === selectedId);
-          if (r2) setRace(r2);
-        }
-      } catch (e) {
-        console.warn("[Venue] V6.1 FINAL auto-gen failed:", e?.message || e);
-      }
-    }
-
-    // 合成(V6.1)の事前予想・直前予想を両方取得し、タブ切替時に即座に表示する。
+    // 合成(V6.1)の事前予想・直前予想を取得し、タブ切替時に即座に表示する。
     const resolvedV61Stages = await getV61Stages(selectedId, r?.race_key);
     if (stale()) return;
     setV61Stages(resolvedV61Stages);
+
+    // === 合成(V6.1) FINAL自動生成保証 ===
+    // 展示取得済み・締切前で直前予想が未生成なら背景で生成する。
+    // 事前予想の初回表示を待たせないため、ここではawaitしない。
+    if (!resolvedV61Stages.final && r?.exhibition_ready && r?.deadline
+        && new Date(r.deadline).getTime() > Date.now()) {
+      ensureV61Final(r)
+        .then(async (ensured) => {
+          if (stale() || !ensured) return;
+          setV61Stages(await getV61Stages(selectedId, r?.race_key));
+        })
+        .catch((e) => console.warn("[Venue] V6.1 FINAL auto-gen failed:", e?.message || e));
+    }
   };
   useEffect(() => {
     loadDetail().catch((e) => console.warn("[Venue] detail load failed:", e?.message || e));
@@ -247,7 +242,8 @@ export default function Venue() {
 
   // 合成(V6.1)をメイン予想にし、事前予想(PRE)/直前予想(FINAL)をタブで切り替える。
   // V5は同じ合成予想の評価を参照する展開シナリオ。
-  const effectiveStageTab = stageTab || (v61Stages.final ? "FINAL" : "PRE");
+  // 既定は事前予想。直前予想はタブを押した時だけ表示する。
+  const effectiveStageTab = stageTab === "FINAL" ? "FINAL" : "PRE";
   const displayedCurrent = v61Stages[effectiveStageTab === "FINAL" ? "final" : "pre"];
   const activePred = displayedCurrent?.pred;
   const activeBoats = [...(displayedCurrent?.boats || [])].sort((a, b) => a.boat_number - b.boat_number);
