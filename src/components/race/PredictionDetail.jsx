@@ -23,10 +23,10 @@ const boatColors = {
 const STAGE_LABEL = { PRE: "事前予想", FINAL: "直前予想" };
 
 // 判定の下に表示する各予想の中身(展開・6艇評価・役割・根拠)。
-export default function PredictionDetail({ race, stage, pred, boats = [], entries = [], compareData = [], busy, run, predictionVersion = "v61" }) {
+export default function PredictionDetail({ race, stage, pred, boats = [], entries = [], compareData = [], busy, run, predictionVersion = "mix" }) {
   const roles = resolveRoleBoats(pred, boats);
   const entryOf = (n) => entries.find((e) => e.boat_number === n);
-  const compareTitle = predictionVersion === "v61" ? "事前予想 → 直前予想 変化" : "PRE → FINAL 変化";
+  const compareTitle = "事前予想 → 直前予想 変化";
   if (!pred) return null;
 
   return (

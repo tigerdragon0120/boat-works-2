@@ -10,13 +10,10 @@ const STAGE_TABS = [
   { key: "FINAL", label: "直前予想", note: "展示・オッズ反映" },
 ];
 
-// V6.1をメイン予想に置く(先頭)。他は根拠確認用の内訳。
+// 表示は「合成(V6.1)」と「V5」の2タブのみ。合成=V6.1が唯一の予想ソース。
 const VERSION_TABS = [
-  { key: "v61", label: "V6.1", activeCls: "bg-fuchsia-600 text-white shadow-sm" },
-  { key: "mix", label: "合成", activeCls: "bg-rose-500 text-white shadow-sm" },
-  { key: "v4", label: "V4", activeCls: "bg-blue-600 text-white shadow-sm" },
-  { key: "v31", label: "V3.1", activeCls: "bg-violet-600 text-white shadow-sm" },
-  { key: "v5", label: "V5", activeCls: "bg-cyan-500 text-slate-950 shadow-sm" },
+  { key: "mix", label: "合成", sub: "V6.1", activeCls: "bg-fuchsia-600 text-white shadow-sm" },
+  { key: "v5", label: "V5", sub: "展開", activeCls: "bg-cyan-500 text-slate-950 shadow-sm" },
 ];
 
 export default function PredictionPanel({
@@ -25,8 +22,8 @@ export default function PredictionPanel({
   pendingOdds, waitingFinalOdds, predictionVersion = "v61", onPredictionVersionChange,
 }) {
   const hasPred = !!activePred;
-  const isV61 = predictionVersion === "v61";
-  const engineLabel = predictionVersion === "v31" ? "V3.1" : predictionVersion === "v61" ? "V6.1" : predictionVersion.toUpperCase();
+  const isV5 = predictionVersion === "v5";
+  const engineLabel = isV5 ? "V5" : "合成(V6.1)";
   const stageLabel = stage === "FINAL" ? "直前予想" : stage === "PRE" ? "事前予想" : "予想待ち";
 
   return (
@@ -38,29 +35,21 @@ export default function PredictionPanel({
             <span className="font-black text-slate-900 text-base sm:text-lg">{race.venue || "—"}</span>
             <span className="text-xs text-slate-600">{race.race_number}R</span>
           </div>
-          {isV61 && activePred?.od3_status && stage === "FINAL" && (
-            <span className={cn("px-1.5 h-5 rounded text-[9px] font-bold border flex items-center",
-              activePred.od3_status === "READY"
-                ? "bg-emerald-500/10 text-emerald-600 border-emerald-400/30"
-                : activePred.od3_status === "ERROR"
-                ? "bg-rose-500/10 text-rose-600 border-rose-400/30"
-                : "bg-amber-500/10 text-amber-600 border-amber-400/30")}>
-              OD3 {activePred.od3_status}
-            </span>
-          )}
+          {isV5 && <span className="text-[10px] font-bold text-cyan-500">展開シナリオ</span>}
         </div>
-        <div className="grid grid-cols-5 gap-1 rounded-lg bg-slate-100 p-1">
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
           {VERSION_TABS.map((v) => (
             <button
               key={v.key}
               type="button"
               onClick={() => onPredictionVersionChange?.(v.key)}
               className={cn(
-                "h-8 rounded-md text-xs font-black uppercase transition-colors",
+                "h-9 rounded-md flex flex-col items-center justify-center transition-colors",
                 predictionVersion === v.key ? v.activeCls : "text-slate-500 hover:bg-white hover:text-slate-900"
               )}
             >
-              {v.label}
+              <span className="text-xs font-black">{v.label}</span>
+              <span className="text-[9px] opacity-80">{v.sub}</span>
             </button>
           ))}
         </div>
@@ -72,7 +61,7 @@ export default function PredictionPanel({
           <div className="flex flex-col gap-3">
             <V5ScenarioPanel entries={entries} activePred={activePred} />
             <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-3 text-[10px] leading-relaxed text-cyan-100">
-              V5はレース展開を比較するシナリオ予想です。買い目とBUY判定はV6.1タブで確認できます。
+              V5はレース展開を比較するシナリオ予想です。買い目とBUY判定は合成(V6.1)タブで確認できます。
             </div>
           </div>
         ) : (
@@ -99,9 +88,7 @@ export default function PredictionPanel({
                 </div>
                 <div className="text-slate-900 font-semibold text-sm mb-1">{engineLabel}予想生成待ち</div>
                 <div className="text-slate-500 text-xs mb-4">
-                  {isV61
-                    ? "事前予想は出走表確定後に、直前予想は展示・オッズ取得後に自動生成されます"
-                    : `${engineLabel}の生成を待っています`}
+                  事前予想は出走表確定後に、直前予想は展示・オッズ取得後に自動生成されます
                 </div>
                 <div className="flex gap-2 w-full max-w-xs">
                   <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
@@ -119,7 +106,7 @@ export default function PredictionPanel({
             )}
 
             {/* 事前予想 / 直前予想 タブ */}
-            {isV61 && (
+            {!isV5 && (
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
                 {STAGE_TABS.map((t) => {
                   const ready = !!stages?.[t.key];

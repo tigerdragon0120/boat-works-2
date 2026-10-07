@@ -617,8 +617,17 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   for (const p of v61Preds || []) {
     if (p.race_key && String(p.race_key).startsWith(raceDate)) v61DoneKeys.add(String(p.race_key));
   }
-  const v61Missing = races.filter((r: any) => !v61DoneKeys.has(String(r.race_key)));
-  const v61Batch = v61Missing.slice(0, 5);
+  // 締切が残っているレースを優先して埋める(終了済みレースで時間予算を使わない)
+  const v61Priority = (r: any) => {
+    if (r.status === 'finished' || r.status === 'cancelled') return 2;
+    const ms = r.deadline ? new Date(r.deadline).getTime() : NaN;
+    return Number.isFinite(ms) && ms > Date.now() ? 0 : 1;
+  };
+  const v61Missing = races
+    .filter((r: any) => !v61DoneKeys.has(String(r.race_key)))
+    .sort((a: any, b: any) => v61Priority(a) - v61Priority(b));
+  // V6.1 PREはDB計算のみで外部APIを叩かないため、1回の実行でまとめて埋める
+  const v61Batch = v61Missing.slice(0, 12);
 
   for (const race of v61Batch) {
     if (Date.now() - startTime > timeBudgetMs - 5000) {
@@ -634,7 +643,7 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
     } catch (e: any) {
       errors.push(`V6.1 PRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
     }
-    await sleep(1500);
+    await sleep(300);
   }
   const v61Remaining = Math.max(0, v61Missing.length - v61Generated);
   logs.push(`V6.1 PRE: 今回${v61Generated}R生成 / 残り${v61Remaining}R`);
@@ -1004,9 +1013,10 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   // 現在のDB状態を確認
   const todayRaces = await sr.Race.filter({ race_date: today }, 'race_number', 300).catch(() => []);
   const tomorrowRaces = await sr.Race.filter({ race_date: tomorrow }, 'race_number', 300).catch(() => []);
-  const [existingResults, existingPrePreds] = await Promise.all([
+  const [existingResults, existingPrePreds, existingV61PrePreds] = await Promise.all([
     sr.RaceResult.filter({}, '-finished_at', 500).catch(() => []),
     sr.RacePrediction.filter({ stage: 'PRE' }, '-computed_at', 1000).catch(() => []),
+    sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1' }, '-computed_at', 2000).catch(() => []),
   ]);
   const raceIdsWithResult = new Set(existingResults.map((r: any) => r.race_id));
   const completePreKeys = new Set(
@@ -1016,8 +1026,17 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   const todayRaceCount = todayRaces.length;
   const tomorrowRaceCount = tomorrowRaces.length;
   const todayResultCount = todayRaces.filter((r: any) => raceIdsWithResult.has(r.id)).length;
+  // メインエンジンの事前予想はV6.1。従来は旧V4予想の有無だけで判定していたため、
+  // 全レースでV6.1 PREが未生成のまま補完処理が動かなかった。
+  const v61PreKeys = new Set(
+    (existingV61PrePreds || [])
+      .filter((p: any) => p.status === 'COMPLETED' || !p.status)
+      .map((p: any) => String(p.race_key || ''))
+  );
   const todayPreCount = todayRaces.filter((r: any) => completePreKeys.has(String(r.race_key || ''))).length;
   const tomorrowPreCount = tomorrowRaces.filter((r: any) => completePreKeys.has(String(r.race_key || ''))).length;
+  const todayV61PreCount = todayRaces.filter((r: any) => v61PreKeys.has(String(r.race_key || ''))).length;
+  const tomorrowV61PreCount = tomorrowRaces.filter((r: any) => v61PreKeys.has(String(r.race_key || ''))).length;
 
   const steps: string[] = [];
   let remaining = timeBudgetMs;
@@ -1046,8 +1065,9 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     }
   }
 
-  if (remaining > 10000 && tomorrowRaceCount > 0 && tomorrowPreCount < tomorrowRaceCount) {
-    logs.push(`AUTO: 翌日PRE予想生成開始`);
+  if (remaining > 10000 && tomorrowRaceCount > 0 &&
+      (tomorrowPreCount < tomorrowRaceCount || tomorrowV61PreCount < tomorrowRaceCount)) {
+    logs.push(`AUTO: 翌日PRE予想生成開始(旧${tomorrowPreCount}/${tomorrowRaceCount}・V6.1 ${tomorrowV61PreCount}/${tomorrowRaceCount})`);
     const before = Date.now();
     const r = await generatePrePredictions(base44, tomorrow, remaining, logs, errors);
     steps.push(`pre_predictions: ${r.generated}R`);
@@ -1072,8 +1092,9 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   }
 
   // 朝に追加されたナイター場など、当日分の不足PREも5分周期で差分補完する。
-  if (remaining > 10000 && todayRaceCount > 0 && todayPreCount < todayRaceCount) {
-    logs.push(`AUTO: 当日不足PRE予想生成開始（${todayPreCount}/${todayRaceCount}）`);
+  if (remaining > 10000 && todayRaceCount > 0 &&
+      (todayPreCount < todayRaceCount || todayV61PreCount < todayRaceCount)) {
+    logs.push(`AUTO: 当日不足PRE予想生成開始（旧${todayPreCount}/${todayRaceCount}・V6.1 ${todayV61PreCount}/${todayRaceCount}）`);
     const before = Date.now();
     const r = await generatePrePredictions(base44, today, remaining, logs, errors);
     steps.push(`today_pre_predictions: ${r.generated}R`);

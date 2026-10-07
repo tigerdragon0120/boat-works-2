@@ -888,14 +888,20 @@ export async function getV61Stages(raceId, raceKey) {
   ]);
 
   let prePred = pre;
-  // 事前予想が未生成のレースは、画面表示時に1回だけ自動生成して全レース事前予想を保証する。
-  if ((!prePred || prePred.status !== "COMPLETED") && !v61PreRecoveryTried.has(raceId)) {
-    v61PreRecoveryTried.add(raceId);
-    try {
-      await generateV61PredictionForRace(raceId, "PRE", false);
-      prePred = await getV61Prediction(raceId, "PRE", raceKey);
-    } catch (e) {
-      console.warn("[V6.1] PRE auto generation failed:", e?.message || e);
+  // 事前予想が未生成のレースは、画面表示時に自動生成して全レース事前予想を保証する。
+  // 失敗した場合は次の読み込みで再試行できるよう、成功時のみ試行済みとして記録する。
+  if (!prePred || prePred.status !== "COMPLETED") {
+    if (!v61PreRecoveryTried.has(raceId)) {
+      try {
+        await generateV61PredictionForRace(raceId, "PRE", false);
+        const retried = await getV61Prediction(raceId, "PRE", raceKey);
+        if (retried && (retried.status === "COMPLETED" || !retried.status)) {
+          prePred = retried;
+          v61PreRecoveryTried.add(raceId);
+        }
+      } catch (e) {
+        console.warn("[V6.1] PRE auto generation failed:", e?.message || e);
+      }
     }
   }
 
@@ -920,6 +926,28 @@ export async function generateV61PredictionForRace(raceId, stage, force = false)
     race_id: raceId, stage, force,
   });
   return res?.data || res;
+}
+
+// ============================================================
+// 合成(V6.1) FINAL自動生成保証
+// 展示取得済み・締切前 かつ FINAL未生成なら画面表示時に生成する。
+// これにより「展示は出ているのに直前予想が無い」状態を作らない。
+// ============================================================
+const v61FinalRecoveryTried = new Set();
+export async function ensureV61Final(race) {
+  if (!race?.id || !race?.exhibition_ready || !race?.deadline) return null;
+  if (new Date(race.deadline).getTime() <= Date.now()) return null; // 締切後は生成しない
+  const existing = await getV61Prediction(race.id, "FINAL", race.race_key);
+  if (existing && (existing.status === "COMPLETED" || !existing.status)) return existing;
+  if (v61FinalRecoveryTried.has(race.id)) return null;
+  v61FinalRecoveryTried.add(race.id);
+  try {
+    await generateV61PredictionForRace(race.id, "FINAL", false);
+    return await getV61Prediction(race.id, "FINAL", race.race_key);
+  } catch (e) {
+    console.warn("[V6.1] FINAL auto generation failed:", e?.message || e);
+    return null;
+  }
 }
 
 
