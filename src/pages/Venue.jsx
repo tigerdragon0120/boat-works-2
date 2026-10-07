@@ -187,6 +187,19 @@ export default function Venue() {
 
     // 展示・オッズは締切直前にバックエンドで更新されるため、
     // 予想だけでなくRace/RaceEntryも再読込して開いたままの画面へ反映する。
+    // 画面を開いたままでも直前データ取得を起動する。ワーカー待ちだけにすると
+    // exhibition_ready=false のままFINAL生成条件に入れない時間帯が発生する。
+    if (race?.deadline) {
+      const deadlineMs = new Date(race.deadline).getTime();
+      const minsToDeadline = (deadlineMs - Date.now()) / 60000;
+      if (Number.isFinite(minsToDeadline) && minsToDeadline <= 60 && minsToDeadline > 0) {
+        await fetchOnlineData("exhibition", race.race_date, race.venue_code, race.race_number, race.id).catch(() => null);
+        if (minsToDeadline <= 25) {
+          await fetchOnlineData("odds", race.race_date, race.venue_code, race.race_number, race.id).catch(() => null);
+        }
+      }
+    }
+
     const latestAll = await listTodayRaces({ includeFinished: true });
     const latestList = (latestAll || [])
       .filter((r) => String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
