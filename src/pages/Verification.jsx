@@ -11,6 +11,7 @@ import V3V4Comparison from "@/components/verification/V3V4Comparison";
 import V3V31Comparison from "@/components/verification/V3V31Comparison";
 import V2V5Comparison from "@/components/verification/V2V5Comparison";
 import V61Performance from "@/components/verification/V61Performance";
+import AllVersionsSummary from "@/components/verification/AllVersionsSummary";
 
 export default function Verification() {
   const [summary, setSummary] = useState(null);
@@ -47,6 +48,8 @@ export default function Verification() {
   return (
     <div className="space-y-5">
       <Header onReload={load} />
+
+      <AllVersionsSummary />
 
       <section className="rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-4">
         <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-slate-700">
