@@ -475,7 +475,9 @@ export function parseResult(html, raceDate, venueCode, venueName) {
   const win = parseSinglePayout("単勝", "\\d");
   const place = parseMultiPayout("複勝", "\\d", 3);
   if (trifecta) payouts.trifecta = trifecta;
-  if (trio) payouts.trio = trio;
+  // UI/RaceResultの正式キーに統一。以前は `trio` で保存していたため、
+  // 3連複を取得できていても画面側では欠落扱いになっていた。
+  if (trio) payouts.trifecta_quinella = trio;
   if (exacta) payouts.exacta = exacta;
   if (quinella) payouts.quinella = quinella;
   if (wide.length) payouts.wide = wide;
