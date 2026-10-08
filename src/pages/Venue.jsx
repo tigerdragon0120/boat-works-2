@@ -11,7 +11,7 @@ import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
 import RaceResultCard from "@/components/race/RaceResultCard";
 import { fetchOnlineData } from "@/lib/dataManagementService";
-import { base44 } from "@/api/base44Client";
+import { getRaceResult } from "@/lib/raceResultService";
 
 export default function Venue() {
   const { code } = useParams();
@@ -82,6 +82,9 @@ export default function Venue() {
     const r = races.find((x) => x.id === selectedId);
     setRace(r);
     if (!r) return;
+    const savedResult = await getRaceResult(r);
+    if (stale()) return;
+    setRaceResult(savedResult);
     let es = await getRaceEntries(selectedId, r.race_key);
     if (stale()) return;
 
@@ -123,7 +126,7 @@ export default function Venue() {
     }
     if (stale()) return;
     setEntries(es || []);
-    let resultRows = await withRetry(() => base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1));
+    let resultRows = [savedResult].filter(Boolean);
     let latestResult = resultRows?.[0] || null;
 
     // 終了済みレースで旧データが3連単払戻しか持っていない場合、
@@ -143,13 +146,14 @@ export default function Venue() {
       try {
         const refreshResult = await fetchOnlineData("result", r.race_date, r.venue_code, r.race_number, r.id);
         if (refreshResult?.data?.ok !== false) {
-          resultRows = await withRetry(() => base44.entities.RaceResult.filter({ race_id: selectedId }, "-finished_at", 1));
+          resultRows = [await getRaceResult(r)].filter(Boolean);
           latestResult = resultRows?.[0] || latestResult;
         }
       } catch (err) {
         console.warn("払戻全券種の自動補完に失敗", sectionKey, err);
       }
     }
+    if (stale()) return;
     setRaceResult(latestResult);
 
     // 合成(V6.1)の事前予想・直前予想を取得し、タブ切替時に即座に表示する。
@@ -216,8 +220,10 @@ export default function Venue() {
 
     // レース終了後にRaceResultが後から入っても、開いたまま結果・払戻を反映する。
     // 取得できなかったときは既存の正常な表示を消さない。
-    const latestResult = await withRetry(() => base44.entities.RaceResult.filter({ race_id: selectedRace.id }, "-finished_at", 1));
-    if (latestResult?.[0]) setRaceResult(latestResult[0]);
+    const seq = detailSeq.current;
+    const latestResult = await getRaceResult(selectedRace);
+    if (seq !== detailSeq.current) return;
+    if (latestResult) setRaceResult(latestResult);
 
     if (selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
     let stages = await getV61Stages(selectedRace.id, selectedRace.race_key);
