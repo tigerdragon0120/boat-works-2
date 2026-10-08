@@ -306,7 +306,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
 
   // 結果済みのRaceを特定
   const existingResults = await sr.RaceResult.filter({ race_id: { $in: races.map((r: any) => r.id) } }, '-finished_at', 600).catch(() => []);
-  const raceIdsWithResult = new Set(existingResults.map((r: any) => r.race_id));
+  const raceIdsWithResult = new Set(existingResults.filter((r: any) => r.result_trifecta && (r.is_finished || r.result_status === 'RESULT_FINAL')).map((r: any) => r.race_id));
 
   let fetched = 0, skipped = 0, boatcastCount = 0, localCount = 0;
   const now = Date.now();
@@ -363,6 +363,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
           result_trifecta: result.result_trifecta,
           finish_order: result.finish_order || [],
           payout: result.payout || 0,
+          payouts: result.payouts || null,
         });
 
         // RacerRaceHistory蓄積(LOCAL)
@@ -1067,7 +1068,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     sr.RacePrediction.filter({ stage: 'PRE', race_key: dateScope }, '-computed_at', 600).catch(() => []),
     sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: dateScope }, '-computed_at', 600).catch(() => []),
   ]);
-  const raceIdsWithResult = new Set(existingResults.map((r: any) => r.race_id));
+  const raceIdsWithResult = new Set(existingResults.filter((r: any) => r.result_trifecta && (r.is_finished || r.result_status === 'RESULT_FINAL')).map((r: any) => r.race_id));
   const completePreKeys = new Set(
     existingPrePreds.filter((p: any) => isCompletePrePrediction(p)).map((p: any) => String(p.race_key || ''))
   );
@@ -1100,6 +1101,15 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   // 重要: 展示・FINALは取得可能時間が短いリアルタイム処理。
   // 番組表補完や結果回収を先に実行して時間予算を使い切ると、
   // 場によって展示が入る/入らない状態になるため、必ず最優先にする。
+
+  // 結果回収の時間を先に確保。PRE生成や展示処理で結果が永遠に後回しにならない。
+  if (todayRaceCount > todayResultCount && jstHour >= 8) {
+    logs.push('AUTO: 当日結果回収（専用時間枠）');
+    const before = Date.now();
+    const r = await fetchAndSaveResults(base44, today, Math.min(15000, remaining), logs, errors);
+    steps.push(`today_results: ${r.fetched}R`);
+    remaining -= Date.now() - before;
+  }
 
   if (tomorrowRaceCount === 0 && jstHour >= 16) {
     logs.push(`AUTO: 翌日番組表取得開始`);
@@ -1150,7 +1160,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     remaining -= (Date.now() - before);
   }
 
-  if (remaining > 10000 && todayRaceCount > 0 && todayResultCount < todayRaceCount && jstHour >= 10) {
+  if (remaining > 10000 && todayRaceCount > 0 && todayResultCount < todayRaceCount && jstHour >= 8) {
     logs.push(`AUTO: 当日結果取得開始`);
     const before = Date.now();
     const r = await fetchAndSaveResults(base44, today, remaining, logs, errors);
