@@ -443,7 +443,7 @@ export function parseResult(html, raceDate, venueCode, venueName) {
     const m = text.match(re);
     if (!m) return null;
     return {
-      combination: m[1].replace(/\s/g, ""),
+      combination: m[1].replace(/\s/g, "").replace(/=/g, "-"),
       payout: num(m[2].replace(/,/g, "")),
       popularity: m[3] ? num(m[3]) : null,
     };
@@ -462,16 +462,16 @@ export function parseResult(html, raceDate, venueCode, venueName) {
     const out = [];
     let m;
     while ((m = re.exec(section)) !== null && out.length < maxCount) {
-      out.push({ combination: m[1].replace(/\s/g, ""), payout: num(m[2].replace(/,/g, "")), popularity: m[3] ? num(m[3]) : null });
+      out.push({ combination: m[1].replace(/\s/g, "").replace(/=/g, "-"), payout: num(m[2].replace(/,/g, "")), popularity: m[3] ? num(m[3]) : null });
     }
     return out;
   };
   const payouts = {};
   const trifecta = parseSinglePayout("3連単", "\\d\\s*-\\s*\\d\\s*-\\s*\\d");
-  const trio = parseSinglePayout("3連複", "\\d\\s*-\\s*\\d\\s*-\\s*\\d");
+  const trio = parseSinglePayout("3連複", "\\d\\s*[-=]\\s*\\d\\s*[-=]\\s*\\d");
   const exacta = parseSinglePayout("2連単", "\\d\\s*-\\s*\\d");
-  const quinella = parseSinglePayout("2連複", "\\d\\s*-\\s*\\d");
-  const wide = parseMultiPayout("拡連複", "\\d\\s*-\\s*\\d", 3);
+  const quinella = parseSinglePayout("2連複", "\\d\\s*[-=]\\s*\\d");
+  const wide = parseMultiPayout("拡連複", "\\d\\s*[-=]\\s*\\d", 3);
   const win = parseSinglePayout("単勝", "\\d");
   const place = parseMultiPayout("複勝", "\\d", 3);
   if (trifecta) payouts.trifecta = trifecta;
