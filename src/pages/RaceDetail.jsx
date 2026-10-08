@@ -8,6 +8,7 @@ import {
 } from "@/lib/predictionService";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
+import { getRaceResult } from "@/lib/raceResultService";
 import { ArrowLeft } from "lucide-react";
 
 export default function RaceDetail() {
@@ -40,8 +41,9 @@ export default function RaceDetail() {
     setRace(r);
     const es = await getRaceEntries(id, r?.race_key);
     setEntries(es || []);
-    const results = await base44.entities.RaceResult.filter({ race_id: id }, "-finished_at", 1);
-    setRaceResult(results?.[0] || null);
+    const result = await getRaceResult(r);
+    if (activeRaceIdRef.current !== id) return;
+    setRaceResult(result);
 
     // === 合成(V6.1) 予想resolver ===
     // 事前予想(PRE)と直前予想(FINAL)を取得。UIの唯一の表示ソース。
