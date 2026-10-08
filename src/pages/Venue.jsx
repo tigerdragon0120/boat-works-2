@@ -4,7 +4,7 @@ import { ArrowLeft, RefreshCw, Waves } from "lucide-react";
 import {
   listTodayRaces, getRaceEntries,
   getV61Stages, ensureV61Final,
-  generateV61PredictionForRace, withRetry,
+  generateV61PredictionForRace,
 } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
@@ -126,36 +126,6 @@ export default function Venue() {
     }
     if (stale()) return;
     setEntries(es || []);
-    let resultRows = [savedResult].filter(Boolean);
-    let latestResult = resultRows?.[0] || null;
-
-    // 終了済みレースで旧データが3連単払戻しか持っていない場合、
-    // 画面を開いた時に公式結果を再取得して全券種払戻を自動補完する。
-    const raceEnded = r.status === "finished" || (Number.isFinite(deadlineMs) && nowMs > deadlineMs);
-    // 一部券種だけ保存された結果を「取得済み」と誤判定しない。
-    // 主要4券種 + 拡連複(通常3組)が揃うまで公式結果を再取得して補完する。
-    const payouts = latestResult?.payouts || {};
-    const hasFullPayouts = !!(
-      payouts.trifecta?.combination && payouts.trifecta?.payout != null &&
-      payouts.trifecta_quinella?.combination && payouts.trifecta_quinella?.payout != null &&
-      payouts.exacta?.combination && payouts.exacta?.payout != null &&
-      payouts.quinella?.combination && payouts.quinella?.payout != null &&
-      Array.isArray(payouts.wide) && payouts.wide.length >= 3
-    );
-    if (raceEnded && latestResult?.result_trifecta && !hasFullPayouts) {
-      try {
-        const refreshResult = await fetchOnlineData("result", r.race_date, r.venue_code, r.race_number, r.id);
-        if (refreshResult?.data?.ok !== false) {
-          resultRows = [await getRaceResult(r)].filter(Boolean);
-          latestResult = resultRows?.[0] || latestResult;
-        }
-      } catch (err) {
-        console.warn("払戻全券種の自動補完に失敗", sectionKey, err);
-      }
-    }
-    if (stale()) return;
-    setRaceResult(latestResult);
-
     // 合成(V6.1)の事前予想・直前予想を取得し、タブ切替時に即座に表示する。
     const resolvedV61Stages = await getV61Stages(selectedId, r?.race_key);
     if (stale()) return;
