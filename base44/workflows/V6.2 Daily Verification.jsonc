@@ -1,0 +1,45 @@
+{
+  "name": "V6.2 Daily Verification",
+  "description": "V6.2\u306e\u4e88\u60f3\u3068\u78ba\u5b9a\u7d50\u679c\u3092\u6bce\u65e5\u518d\u7167\u5408\u3057\u3001\u691c\u8a3c\u30c7\u30fc\u30bf\u306e\u53d6\u308a\u3053\u307c\u3057\u3092\u81ea\u52d5\u88dc\u5b8c\u3059\u308b\u3002",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "50 0 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "v62_daily_verification",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "verify_v62": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "verifyV62Daily",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "V6.2 \u6bce\u65e5\u81ea\u52d5\u691c\u8a3c",
+            "description": "\u6bce\u65e50:50\u306b\u76f4\u8fd13\u65e5\u5206\u306eV6.2\u4e88\u60f3\u3068\u78ba\u5b9a\u7d50\u679c\u3092\u518d\u7167\u5408\u3057\u3001\u672a\u53cd\u6620\u30c7\u30fc\u30bf\u3092\u88dc\u5b8c\u3059\u308b"
+          }
+        }
+      }
+    ]
+  }
+}

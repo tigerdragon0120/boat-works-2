@@ -11,6 +11,7 @@ import V3V4Comparison from "@/components/verification/V3V4Comparison";
 import V3V31Comparison from "@/components/verification/V3V31Comparison";
 import V2V5Comparison from "@/components/verification/V2V5Comparison";
 import V61Performance from "@/components/verification/V61Performance";
+import V62Performance from "@/components/verification/V62Performance";
 import AllVersionsSummary from "@/components/verification/AllVersionsSummary";
 
 export default function Verification() {
@@ -144,6 +145,19 @@ export default function Verification() {
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
           <V61Performance />
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-end justify-between gap-2 mb-2">
+          <div>
+            <div className="text-[10px] font-bold text-teal-600">V6.2 PROFIT CANDIDATE — RECOVERY FOCUS</div>
+            <h2 className="font-display font-black text-slate-900 text-lg">1着拮抗レースの2軸化 × 市場確率校正で回収率改善</h2>
+          </div>
+          <div className="text-[10px] text-slate-400">V6.1の並行検証エンジン</div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <V62Performance />
         </div>
       </section>
 
