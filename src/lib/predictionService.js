@@ -961,6 +961,106 @@ export async function ensureV61Final(race) {
 }
 
 
+// ============================================================
+// V6.2(回収率重視の発展エンジン) — V6.1と同じ埋め込み形式で
+// PredictionV6 に prediction_version="v6.2" として保存される。
+// ============================================================
+export async function getV62Prediction(raceId, stage, raceKey) {
+  let list = await withRetry(() => base44.entities.PredictionV6.filter({
+    race_id: raceId, stage, prediction_version: "v6.2",
+  }, "-computed_at", 1)).catch(() => []);
+  if ((!list || !list.length) && raceKey) {
+    list = await withRetry(() => base44.entities.PredictionV6.filter({
+      race_key: raceKey, stage, prediction_version: "v6.2",
+    }, "-computed_at", 1)).catch(() => []);
+  }
+  return list && list[0];
+}
+
+// V6.2は艇評価を1着力までしか保存しないため、未保存項目は「—」表示にする。
+export function mapV62ToUI(v62Pred, stage) {
+  const mapped = mapV4ToUI(v62Pred, stage);
+  if (!mapped) return null;
+  const rawByBoat = new Map((v62Pred.boat_scores || []).map((b) => [b.boat_number, b]));
+  mapped.boats = mapped.boats.map((b) => {
+    const raw = rawByBoat.get(b.boat_number) || {};
+    return {
+      ...b,
+      second_power: raw.second_score ?? null,
+      third_power: raw.third_score ?? null,
+    };
+  });
+  return mapped;
+}
+
+// V6.2の事前予想(PRE)と直前予想(FINAL)を両方返す。
+const v62PreRecoveryTried = new Set();
+export async function getV62Stages(raceId, raceKey) {
+  const [fin, pre] = await Promise.all([
+    getV62Prediction(raceId, "FINAL", raceKey),
+    getV62Prediction(raceId, "PRE", raceKey),
+  ]);
+
+  let prePred = pre;
+  // 事前予想が未生成なら画面表示時に自動生成する(V6.1と同じ挙動)
+  if (!prePred || prePred.status !== "COMPLETED") {
+    if (!v62PreRecoveryTried.has(raceId)) {
+      try {
+        await generateV62PredictionForRace(raceId, "PRE", false);
+        const retried = await getV62Prediction(raceId, "PRE", raceKey);
+        if (retried && (retried.status === "COMPLETED" || !retried.status)) {
+          prePred = retried;
+          v62PreRecoveryTried.add(raceId);
+        }
+      } catch (e) {
+        console.warn("[V6.2] PRE auto generation failed:", e?.message || e);
+      }
+    }
+  }
+
+  const finalMapped = fin && (fin.status === "COMPLETED" || !fin.status) ? mapV62ToUI(fin, "FINAL") : null;
+  const preMapped = prePred && (prePred.status === "COMPLETED" || !prePred.status) ? mapV62ToUI(prePred, "PRE") : null;
+
+  return {
+    final: finalMapped ? { stage: "FINAL", ...finalMapped } : null,
+    pre: preMapped ? { stage: "PRE", ...preMapped } : null,
+  };
+}
+
+// V6.2予想の単一レース生成(UIの再実行ボタン用)
+export async function generateV62PredictionForRace(raceId, stage, force = false) {
+  const res = await base44.functions.invoke("generateV62PredictionForRace", {
+    race_id: raceId, stage, force,
+  });
+  return res?.data || res;
+}
+
+// V6.2の直前予想(FINAL)自動生成保証。展示取得済み・締切前で未生成なら生成する。
+const v62FinalRecoveryTriedAt = new Map();
+export async function ensureV62Final(race) {
+  if (!race?.id || !race?.exhibition_ready || !race?.deadline) return null;
+  if (new Date(race.deadline).getTime() <= Date.now()) return null;
+  const existing = await getV62Prediction(race.id, "FINAL", race.race_key);
+  if (existing && (existing.status === "COMPLETED" || !existing.status)) return existing;
+
+  const now = Date.now();
+  const lastTriedAt = Number(v62FinalRecoveryTriedAt.get(race.id) || 0);
+  if (now - lastTriedAt < 30000) return null;
+  v62FinalRecoveryTriedAt.set(race.id, now);
+  try {
+    await generateV62PredictionForRace(race.id, "FINAL", false);
+    const generated = await getV62Prediction(race.id, "FINAL", race.race_key);
+    if (generated && (generated.status === "COMPLETED" || !generated.status)) {
+      v62FinalRecoveryTriedAt.delete(race.id);
+      return generated;
+    }
+    return null;
+  } catch (e) {
+    console.warn("[V6.2] FINAL auto generation failed:", e?.message || e);
+    return null;
+  }
+}
+
 // V4・V3.1・V5展開・V6.1を締切前データだけで合成した最終予想。
 export async function resolveEnsemblePrediction(raceId, raceKey) {
   let list = await withRetry(() => base44.entities.PredictionEnsemble.filter({
