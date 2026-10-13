@@ -143,6 +143,25 @@
       "type": "boolean",
       "default": false
     },
+    "final_refresh_required": {
+      "type": "boolean",
+      "default": false,
+      "description": "\u5c55\u793a\u9032\u5165\u30fbST\u30fb\u5c55\u793a\u30bf\u30a4\u30e0\u30fb\u30c1\u30eb\u30c8\u30fb\u6b20\u5834\u5909\u66f4\u5f8c\u306eFINAL\u518d\u8a08\u7b97\u5f85\u3061"
+    },
+    "final_refresh_reason": {
+      "type": "string",
+      "description": "FINAL\u518d\u8a08\u7b97\u304c\u5fc5\u8981\u306b\u306a\u3063\u305f\u7406\u7531"
+    },
+    "final_refresh_requested_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "FINAL\u518d\u8a08\u7b97\u8981\u6c42\u65e5\u6642"
+    },
+    "final_refreshed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u5168\u4e88\u60f3\u30d0\u30fc\u30b8\u30e7\u30f3\u306eFINAL\u518d\u8a08\u7b97\u5b8c\u4e86\u65e5\u6642"
+    },
     "sync_source": {
       "type": "string",
       "description": "\u30c7\u30fc\u30bf\u540c\u671f\u5143(api/ingest/manual)"
