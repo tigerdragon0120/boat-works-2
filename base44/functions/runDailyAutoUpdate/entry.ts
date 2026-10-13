@@ -762,6 +762,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const entryByBoat = new Map(entries.map((e: any) => [e.boat_number, e]));
 
     let updated = 0;
+    let criticalChanged = false;
     for (const pe of parsed.data.entries) {
       const bn = pe.boat_number;
       const existing = entryByBoat.get(bn);
@@ -789,10 +790,15 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
 
       if (Object.keys(update).length) {
         const courseChanged = Object.prototype.hasOwnProperty.call(update, 'exhibition_course');
-        await sr.RaceEntry.update(existing.id, update).catch(() => {});
-        updated++;
-        if (courseChanged) {
-          logs.push(`${venueName} R${raceNumber}: ${bn}号艇の進入変更を検知 ${existing.exhibition_course ?? '未取得'}→${pe.exhibition_course}`);
+        try {
+          await sr.RaceEntry.update(existing.id, update);
+          updated++;
+          criticalChanged = true;
+          if (courseChanged) {
+            logs.push(`${venueName} R${raceNumber}: ${bn}号艇の進入変更を検知 ${existing.exhibition_course ?? '未取得'}→${pe.exhibition_course}`);
+          }
+        } catch (e: any) {
+          errors.push(`${venueName} R${raceNumber}: ${bn}号艇の展示更新失敗 ${e.message}`);
         }
       }
     }
@@ -814,8 +820,16 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       if (parsed.data.water_temp != null) raceUpdate.water_temp = parsed.data.water_temp;
       if (parsed.data.air_temp != null) raceUpdate.air_temp = parsed.data.air_temp;
       if (parsed.data.wave_height != null) raceUpdate.wave_height = parsed.data.wave_height;
-      await sr.Race.update(race.id, raceUpdate).catch(() => {});
+      if (criticalChanged && race.has_final) {
+        raceUpdate.final_refresh_required = true;
+        raceUpdate.final_refresh_reason = 'EXHIBITION_CHANGED';
+        raceUpdate.final_refresh_requested_at = new Date().toISOString();
+      }
+      await sr.Race.update(race.id, raceUpdate);
       fetched++;
+      if (raceUpdate.final_refresh_required) {
+        logs.push(`${venueName} R${raceNumber}: 展示変更のため全FINAL予想の再計算を予約`);
+      }
       logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新(実展示${realCount}/${activeBoatCount})`);
     }
 
