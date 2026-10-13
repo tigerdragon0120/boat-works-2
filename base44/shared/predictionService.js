@@ -259,7 +259,7 @@ export async function getOrCreatePrediction(client, raceId, raceKey, stage) {
 
 // 予想を実行して保存(サーバー側)。既存子レコードは置換。
 // profileByRegを外部から渡すことでDB呼び出しを削減(全レース分1回だけ取得)。
-export async function runAndSavePrediction(client, race, entries, settings, stage, oddsMap = {}, profileByReg = null, rollingByReg = null) {
+export async function runAndSavePrediction(client, race, entries, settings, stage, oddsMap = {}, profileByReg = null, rollingByReg = null, forceFinalRecompute = false) {
   const cfg = { ...settings, stage };
   // プロファイルが渡されていない場合は従来通り個別取得(フォールバック)
   if (!profileByReg) {
@@ -295,7 +295,7 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
     const existingFinal = await client.asServiceRole.entities.RacePrediction.filter(
       { race_id: race.id, stage: "FINAL", prediction_version: VERSION, status: "COMPLETED" }, "-computed_at", 1
     ).catch(() => []);
-    if (existingFinal?.[0]) {
+    if (existingFinal?.[0] && !forceFinalRecompute) {
       return { predictionId: existingFinal[0].id, result: null, skipped: true, reason: "FINAL_ALREADY_COMPLETED" };
     }
 
@@ -510,25 +510,31 @@ export async function runAndSavePrediction(client, race, entries, settings, stag
   if (stage === "FINAL") { raceUpdate.has_final = true; if (race.status !== "finished") raceUpdate.status = "final"; }
   await client.asServiceRole.entities.Race.update(race.id, raceUpdate);
 
-  // V2予想(並行計算・V1に影響しない)
-  // runAndSavePredictionが直接呼ばれた場合もV2を生成する。
-  // syncAndPredict経由でもV2が呼ばれるが、getOrCreateV2Predictionで重複防止される。
+  // V2/V3/V3.1/V4も同じ展示データで更新し、呼び出し元が全件成功を確認できるようにする。
+  const subversionStatus = { v2: false, v3: false, v31: false, v4: false };
+  const subversionErrors = {};
+
   try {
     await runAndSavePredictionV2(client, race, entries, settings, stage, effectiveOddsMap || oddsMap, profileByReg, rollingByReg);
-  } catch (e) { /* V2エラーはV1に影響しない */ }
+    subversionStatus.v2 = true;
+  } catch (e) { subversionErrors.v2 = e?.message || String(e); }
 
-  // V3 Candidate予想(並行計算・V1/V2に影響しない)
   try {
     await runAndSavePredictionV3(client, race, entries, settings, stage, effectiveOddsMap || oddsMap, profileByReg, rollingByReg);
-    await runAndSavePredictionV31(client, race, entries, settings, stage, effectiveOddsMap || oddsMap, profileByReg, rollingByReg);
-  } catch (e) { /* V3エラーはV1/V2に影響しない */ }
+    subversionStatus.v3 = true;
+  } catch (e) { subversionErrors.v3 = e?.message || String(e); }
 
-  // V4 HIT Candidate予想(並行計算・V1/V2/V3に影響しない)
+  try {
+    await runAndSavePredictionV31(client, race, entries, settings, stage, effectiveOddsMap || oddsMap, profileByReg, rollingByReg);
+    subversionStatus.v31 = true;
+  } catch (e) { subversionErrors.v31 = e?.message || String(e); }
+
   try {
     await runAndSavePredictionV4(client, race, entries, settings, stage, effectiveOddsMap || oddsMap, profileByReg, rollingByReg);
-  } catch (e) { /* V4エラーはV1/V2/V3に影響しない */ }
+    subversionStatus.v4 = true;
+  } catch (e) { subversionErrors.v4 = e?.message || String(e); }
 
-  return { predictionId, result };
+  return { predictionId, result, subversion_status: subversionStatus, subversion_errors: subversionErrors };
 }
 
 // ============================================================
