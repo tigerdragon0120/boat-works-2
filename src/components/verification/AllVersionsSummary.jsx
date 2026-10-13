@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { getV2VerificationSummary } from "@/lib/predictionService";
 import { getV61Summary } from "@/lib/v61ComparisonSummary";
+import { getV62Summary } from "@/lib/v62ComparisonSummary";
 import { dedupeVerifications } from "@/lib/verificationUtils";
 
 const pct = n => Math.round(Number(n || 0) * 10) / 10;
@@ -31,13 +32,14 @@ function v5FromV2(rows) {
 export default function AllVersionsSummary(){
  const [rows,setRows]=useState(null);
  useEffect(()=>{(async()=>{try{
-  const [v12,v3,v31,v4,v2rows,v61]=await Promise.all([
+  const [v12,v3,v31,v4,v2rows,v61,v62]=await Promise.all([
    getV2VerificationSummary().catch(()=>null),
    base44.entities.PredictionV3Verification.list("-verified_at",1000).catch(()=>[]),
    base44.entities.PredictionV31Verification.list("-created_date",1000).catch(()=>[]),
    base44.entities.PredictionV4Verification.list("-verified_at",1000).catch(()=>[]),
    base44.entities.PredictionV2Verification.list("-verified_at",1000).catch(()=>[]),
-   getV61Summary(0).catch(()=>null)
+   getV61Summary(0).catch(()=>null),
+   getV62Summary(0).catch(()=>null)
   ]);
   const data=[
    normal("V1",v12?.v1?.buy_count,v12?.v1?.buy_hits,v12?.v1?.buy_hit_rate,v12?.v1?.buy_recovery_rate),
@@ -46,12 +48,13 @@ export default function AllVersionsSummary(){
    aggregate(v31,{label:"V3.1",judgment:"v3_final_judgment",hit:"v3_recommended_hit",investment:"v3_investment",payout:"v3_payout"}),
    aggregate(v4,{label:"V4",judgment:"v4_final_judgment",hit:"v4_recommended_hit",investment:"v4_investment",payout:"v4_payout"}),
    v5FromV2(v2rows),
-   normal("V6.1",v61?.buy_count,v61?.hits,v61?.hit_rate,v61?.recovery_rate)
+   normal("V6.1",v61?.buy_count,v61?.hits,v61?.hit_rate,v61?.recovery_rate),
+   normal("V6.2",v62?.buy_count,v62?.hits,v62?.hit_rate,v62?.recovery_rate)
   ]; setRows(data);
  }catch(e){console.error("AllVersionsSummary",e);setRows([])}})()},[]);
- if(rows===null)return <div className="py-5 text-center text-sm text-slate-400">V1〜V6.1を集計中…</div>;
+ if(rows===null)return <div className="py-5 text-center text-sm text-slate-400">V1〜V6.2を集計中…</div>;
  return <section className="rounded-2xl border border-slate-200 bg-white p-4">
-  <div className="mb-3"><div className="text-[10px] font-bold text-slate-400">ALL ENGINE PERFORMANCE</div><h2 className="text-lg font-black text-slate-900">V1〜V6.1 成績一覧</h2><p className="mt-1 text-[10px] text-slate-400">各エンジンの全期間BUY実績。下に個別の詳細検証を表示します。</p></div>
+  <div className="mb-3"><div className="text-[10px] font-bold text-slate-400">ALL ENGINE PERFORMANCE</div><h2 className="text-lg font-black text-slate-900">V1〜V6.2 成績一覧</h2><p className="mt-1 text-[10px] text-slate-400">各エンジンの全期間BUY実績。下に個別の詳細検証を表示します。</p></div>
   <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-sm">
    <thead><tr className="border-b border-slate-200 text-[11px] text-slate-400"><th className="py-2 text-left">VERSION</th><th className="text-right">BUY数</th><th className="text-right">的中数</th><th className="text-right">的中率</th><th className="text-right">回収率</th></tr></thead>
    <tbody>{rows.map(r=><tr key={r.label} className={`border-b border-slate-100 last:border-0 ${r.label==="V6.1"?"bg-fuchsia-50/50":""}`}><td className="py-3 font-black text-slate-900">{r.label}{r.label==="V6.1"&&<span className="ml-2 rounded bg-fuchsia-100 px-1.5 py-0.5 text-[9px] text-fuchsia-700">MAIN</span>}</td><td className="text-right font-bold">{r.buy}R</td><td className="text-right font-bold">{r.hits}R</td><td className="text-right font-bold">{r.rate}%</td><td className={`text-right font-black ${r.recovery>=100?"text-emerald-600":"text-rose-500"}`}>{r.recovery}%</td></tr>)}</tbody>
