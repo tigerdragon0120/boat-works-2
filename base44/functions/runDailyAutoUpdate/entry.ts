@@ -931,13 +931,23 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
       const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
       if (entries.length >= 6) {
         const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
+        const forceFinalRefresh = race.final_refresh_required === true;
+        let coreFinalOk = false;
+        let v61FinalOk = false;
+        let v62FinalOk = false;
+        let ensembleFinalOk = false;
         try {
-          const finResult = await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          const finResult = await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg, forceFinalRefresh);
           if (finResult?.skipped) {
             logs.push(`${venueName} R${raceNumber}: FINALスキップ(${finResult.reason || 'exhibition_not_ready'})`);
           } else {
+            const sub = finResult?.subversion_status || {};
+            coreFinalOk = !forceFinalRefresh || ['v2', 'v3', 'v31', 'v4'].every((key) => sub[key] === true);
             finalGenerated++;
             logs.push(`${venueName} R${raceNumber}: 実オッズ${oddsCount}件反映+FINAL予想生成`);
+            if (forceFinalRefresh && !coreFinalOk) {
+              errors.push(`${venueName} R${raceNumber}: V2/V3/V3.1/V4の一部再計算失敗 ${JSON.stringify(finResult?.subversion_errors || {})}`);
+            }
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
@@ -950,6 +960,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           if (v61Result?.skipped) {
             logs.push(`${venueName} R${raceNumber}: V6.1 FINALスキップ(${v61Result.reason || 'unknown'})`);
           } else {
+            v61FinalOk = true;
             v61FinalGenerated++;
             logs.push(`${venueName} R${raceNumber}: V6.1 FINAL予想生成 → ${v61Result?.result?.final_judgment || '判定保存'}`);
           }
@@ -963,6 +974,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           if (v62Result?.skipped) {
             logs.push(`${venueName} R${raceNumber}: V6.2 FINALスキップ(${v62Result.reason || 'unknown'})`);
           } else {
+            v62FinalOk = true;
             v62FinalGenerated++;
             logs.push(`${venueName} R${raceNumber}: V6.2 FINAL予想生成 → ${v62Result?.result?.final_judgment || '判定保存'}`);
           }
@@ -976,10 +988,24 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           if (ensembleResult?.skipped) {
             logs.push(`${venueName} R${raceNumber}: 合成FINALスキップ(${ensembleResult.reason || 'unknown'})`);
           } else {
+            ensembleFinalOk = true;
             logs.push(`${venueName} R${raceNumber}: 合成FINAL生成 → ${ensembleResult?.prediction?.final_judgment || '判定保存'}`);
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: 合成FINAL予想失敗 ${e.message}`);
+        }
+
+        if (forceFinalRefresh) {
+          if (coreFinalOk && v61FinalOk && v62FinalOk && ensembleFinalOk) {
+            await sr.Race.update(race.id, {
+              final_refresh_required: false,
+              final_refresh_reason: '',
+              final_refreshed_at: new Date().toISOString(),
+            });
+            logs.push(`${venueName} R${raceNumber}: 展示変更をV1〜V6.2・合成FINALへ反映完了`);
+          } else {
+            logs.push(`${venueName} R${raceNumber}: 全FINAL再計算は未完了のため次回自動更新で再試行`);
+          }
         }
 
         // BOATCAST OD3で最終オッズ更新+期待値再計算(FINAL予想自体は変更しない)
