@@ -590,14 +590,20 @@ export function parseBeforeInfo(html) {
     if (bn >= 1 && bn <= 6) stExMap[bn] = stVal;
   }
 
-  // スタート展示進入コース抽出: is-typeX のXがコース番号
+  // スタート展示進入コース抽出。
+  // is-typeX のXはコース番号ではなく艇色(=艇番)。実進入コースは
+  // スタート展示欄に並んだ順番(内側から1→6)で決まる。
+  // 進入変更時も艇番の並び順から boat_number -> course を正しく復元する。
   const courseMap = {};
-  const coursePattern = /table1_boatImage1Number\s+is-type(\d)[^>]*>(\d)<\/span>/g;
+  const coursePattern = /table1_boatImage1Number\s+is-type\d[^>]*>(\d)<\/span>/g;
   let ce;
+  let coursePosition = 0;
   while ((ce = coursePattern.exec(html)) !== null) {
-    const course = num(ce[1]);
-    const bn = num(ce[2]);
-    if (bn >= 1 && bn <= 6) courseMap[bn] = course;
+    const bn = num(ce[1]);
+    if (bn >= 1 && bn <= 6 && courseMap[bn] == null) {
+      coursePosition += 1;
+      courseMap[bn] = coursePosition;
+    }
   }
 
   const exhibitionData = [];
