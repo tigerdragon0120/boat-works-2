@@ -734,15 +734,18 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
 
   for (const race of races) {
     if (Date.now() - startTime > timeBudgetMs) break;
-    if (race.exhibition_ready) continue;
     if (race.status === 'finished' || race.status === 'cancelled') continue;
 
     // 直前情報は締切の60分前〜締切30分後まで取得する（遅延・復旧時も回収）。
+    // 一度展示READYになったレースも、FINAL生成直前は再取得する。
+    // 進入変更・展示ST修正があれば、この直後のオッズ+FINAL処理で全予想を作り直す。
     if (!race.deadline) continue;
     const deadlineMs = new Date(race.deadline).getTime();
     if (!Number.isFinite(deadlineMs)) continue;
     const nowMs = Date.now();
     if (nowMs < deadlineMs - 60 * 60 * 1000 || nowMs > deadlineMs + 30 * 60 * 1000) continue;
+    const inFinalRefreshWindow = nowMs >= deadlineMs - 12 * 60 * 1000 && nowMs <= deadlineMs - 1 * 60 * 1000;
+    if (race.exhibition_ready && !inFinalRefreshWindow) continue;
 
     const venueCode = race.venue_code;
     const raceNumber = race.race_number;
@@ -765,18 +768,32 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       if (!existing) continue;
 
       const update: any = {};
-      if (pe.exhibition_time != null) update.exhibition_time = pe.exhibition_time;
-      if (pe.exhibition_st != null) {
+      const changed = (current: any, incoming: any) => {
+        if (incoming == null) return false;
+        if (current == null || current === '') return true;
+        const a = Number(current), b = Number(incoming);
+        if (Number.isFinite(a) && Number.isFinite(b)) return Math.abs(a - b) > 0.0001;
+        return current !== incoming;
+      };
+      if (changed(existing.exhibition_time, pe.exhibition_time)) update.exhibition_time = pe.exhibition_time;
+      if (changed(existing.exhibition_st, pe.exhibition_st)) {
         update.exhibition_st = pe.exhibition_st;
         update.exhibition_st_raw = pe.exhibition_st;
       }
-      if (pe.exhibition_course != null) update.exhibition_course = pe.exhibition_course;
-      if (pe.tilt != null) update.tilt = pe.tilt;
-      if (pe.is_absent) { update.is_absent = true; update.is_scratched = true; }
+      if (changed(existing.exhibition_course, pe.exhibition_course)) update.exhibition_course = pe.exhibition_course;
+      if (changed(existing.tilt, pe.tilt)) update.tilt = pe.tilt;
+      if (pe.is_absent && (!existing.is_absent || !existing.is_scratched)) {
+        update.is_absent = true;
+        update.is_scratched = true;
+      }
 
       if (Object.keys(update).length) {
+        const courseChanged = Object.prototype.hasOwnProperty.call(update, 'exhibition_course');
         await sr.RaceEntry.update(existing.id, update).catch(() => {});
         updated++;
+        if (courseChanged) {
+          logs.push(`${venueName} R${raceNumber}: ${bn}号艇の進入変更を検知 ${existing.exhibition_course ?? '未取得'}→${pe.exhibition_course}`);
+        }
       }
     }
 
