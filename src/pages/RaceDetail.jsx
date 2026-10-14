@@ -157,7 +157,23 @@ export default function RaceDetail() {
       // 再実行した段階(事前/直前)のタブを表示したままにする
       setStageTab(stage);
     } catch (e) {
-      alert("予想生成に失敗: " + (e?.message || e));
+      // 保存後の応答だけがレート制限になる場合があるため、DBを再確認して表示を回復する。
+      let recovered = false;
+      try {
+        if (predictionVersion === "v62") {
+          const refreshed = await getV62Stages(id, race?.race_key);
+          setV62Stages(refreshed);
+          recovered = !!refreshed[stage === "FINAL" ? "final" : "pre"];
+        } else {
+          const refreshed = await getV61Stages(id, race?.race_key);
+          setV61Stages(refreshed);
+          recovered = !!refreshed[stage === "FINAL" ? "final" : "pre"];
+        }
+        if (recovered) setStageTab(stage);
+      } catch {
+        recovered = false;
+      }
+      if (!recovered) alert("予想生成に失敗: " + (e?.message || e));
     }
     setBusy(false);
   };
