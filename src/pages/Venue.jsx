@@ -234,7 +234,9 @@ export default function Venue() {
     }
 
     // V6.2タブ表示中はV6.2予想も同じ周期で更新する
-    if (predictionVersion === "v62") {
+    // V6.2も表示中のタブに依存せず、データが揃ったら自動生成する。
+    const ensuredV62 = await ensureV62Final(selectedRace);
+    if (predictionVersion === "v62" || ensuredV62) {
       setV62Stages(await getV62Stages(selectedRace.id, selectedRace.race_key));
     }
     } finally {
