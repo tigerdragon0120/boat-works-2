@@ -17,7 +17,7 @@ const V62_VERSION = 'v6.2';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, maxRetries = 4): Promise<T> {
   let lastError: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -27,7 +27,8 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
       const msg = String(e?.message || e?.response?.data?.error || e || '');
       const limited = /rate\s*limit|too many requests|429/i.test(msg);
       if (!limited || attempt === maxRetries) throw e;
-      await sleep(Math.min(8000, 800 * Math.pow(2, attempt)));
+      // Base44の制限窓を越えるまで、短い連打ではなく段階的に待つ。
+      await sleep(Math.min(12000, 1500 * Math.pow(2, attempt)));
     }
   }
   throw lastError;
@@ -89,9 +90,16 @@ export default async function(req: Request) {
       return Response.json({ ok: false, error: 'RaceEntry not found', race_key: race.race_key }, { status: 400 });
     }
 
+    // 対象6選手だけ取得する。全選手5,000件×2の読込はレート制限の主因になる。
+    const registrationNumbers = [...new Set(
+      six.map((e: any) => String(e.registration_number || '')).filter(Boolean)
+    )];
+    const registrationQuery = registrationNumbers.length
+      ? { registration_number: { $in: registrationNumbers } }
+      : { registration_number: '__none__' };
     const [profiles, rolling, settings] = await Promise.all([
-      sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []),
-      sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []),
+      withRetry(() => sr.RacerPerformanceProfile.filter(registrationQuery, '-updated_at', 50)).catch(() => []),
+      withRetry(() => sr.RacerRollingStats.filter(registrationQuery, '-calculated_at', 50)).catch(() => []),
       getSettings(base44),
     ]);
     const profileByReg = new Map((profiles || []).map((p: any) => [String(p.registration_number || ''), p]));
