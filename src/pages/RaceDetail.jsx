@@ -58,6 +58,14 @@ export default function RaceDetail() {
       setV62Stages(await getV62Stages(id, r?.race_key));
     }
 
+    // 表示タブに依存せずV6.2も自動生成し、オッズ取得後の再試行を保証する。
+    if (r?.exhibition_ready && r?.deadline && new Date(r.deadline).getTime() > Date.now()) {
+      ensureV62Final(r).then(async (ensured) => {
+        if (!ensured || activeRaceIdRef.current !== id) return;
+        setV62Stages(await getV62Stages(id, r?.race_key));
+      }).catch((e) => console.warn("[RaceDetail] V6.2 FINAL auto-gen failed:", e?.message || e));
+    }
+
     if (!silent) setLoading(false);
 
     // === 合成(V6.1) FINAL自動生成保証 ===
@@ -103,7 +111,7 @@ export default function RaceDetail() {
     const deadlineMs = new Date(race.deadline).getTime();
     if (!Number.isFinite(deadlineMs)) return;
 
-    const pollStartMs = deadlineMs - 6 * 60 * 1000;
+    const pollStartMs = deadlineMs - 30 * 60 * 1000;
     const pollEndMs = deadlineMs + 60 * 1000;
     const nowMs = Date.now();
     if (nowMs >= pollEndMs) return;
@@ -113,7 +121,7 @@ export default function RaceDetail() {
     let refreshInFlight = false;
 
     const refresh = async () => {
-      if (refreshInFlight || Date.now() >= pollEndMs) return;
+      if (refreshInFlight || document.hidden || Date.now() >= pollEndMs) return;
       refreshInFlight = true;
       try {
         await load({ silent: true });
@@ -126,7 +134,7 @@ export default function RaceDetail() {
 
     const startPolling = () => {
       refresh();
-      intervalId = window.setInterval(refresh, 10000);
+      intervalId = window.setInterval(refresh, 30000);
     };
 
     if (nowMs >= pollStartMs) {
