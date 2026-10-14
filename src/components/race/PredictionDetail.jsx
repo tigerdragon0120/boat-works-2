@@ -1,6 +1,6 @@
 import React from "react";
 import { cn } from "@/lib/utils";
-import { Activity, Crown, Gauge, RefreshCw, Shield, Sparkles, TrendingUp } from "lucide-react";
+import { Activity, Crown, Gauge, Shield, Sparkles, TrendingUp } from "lucide-react";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import { formatRacerDisplayName } from "@/lib/racerIdentity";
 
@@ -118,19 +118,9 @@ export default function PredictionDetail({ race, stage, pred, boats = [], entrie
         </div>
       )}
 
-      {/* 再実行 */}
-      <div className="flex gap-2 mt-1">
-        <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
-          className="flex-1 h-9 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
-          <RefreshCw className="w-3.5 h-3.5" /> 事前予想を再実行
-        </button>
-        <button onClick={() => run("FINAL")} disabled={busy || entries.length === 0 || !race?.exhibition_ready}
-          className="flex-1 h-9 rounded-lg bg-[#f9c836] text-slate-950 font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-amber-300 disabled:opacity-50">
-          <Gauge className="w-3.5 h-3.5" /> 直前予想を再実行
-        </button>
+      <div className="text-[10px] text-slate-500 text-center">
+        展示・オッズ取得後に直前予想へ自動更新します
       </div>
-      {busy && <div className="text-xs text-[#f9c836] text-center animate-pulse">計算中…</div>}
-      {!race?.exhibition_ready && <div className="text-[10px] text-slate-500 text-center">展示データ取得後に直前予想を生成できます</div>}
     </div>
   );
 }
