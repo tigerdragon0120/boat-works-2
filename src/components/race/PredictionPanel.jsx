@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { AlertCircle, Gauge, Zap } from "lucide-react";
+import { AlertCircle, Zap } from "lucide-react";
 import PredictionJudgment from "@/components/race/PredictionJudgment";
 import PredictionDetail from "@/components/race/PredictionDetail";
 import V5ScenarioPanel from "@/components/race/V5ScenarioPanel";
@@ -22,6 +22,12 @@ export default function PredictionPanel({
   run, busy, entries, activePred, activeBoats, allTri, compareData,
   pendingOdds, waitingFinalOdds, predictionVersion = "mix", onPredictionVersionChange,
 }) {
+  // 直前予想が初めて揃った時に自動表示する。事前タブへ戻す操作も可能。
+  const finalReady = !!stages?.final;
+  useEffect(() => {
+    if (finalReady) onStageTabChange?.("FINAL");
+  }, [race?.id, predictionVersion, finalReady]);
+
   const hasPred = !!activePred;
   const isV5 = predictionVersion === "v5";
   const engineLabel = isV5 ? "V5" : predictionVersion === "v62" ? "V6.2" : "合成(V6.1)";
@@ -92,17 +98,11 @@ export default function PredictionPanel({
                 <div className="text-slate-500 text-xs mb-4">
                   事前予想は出走表確定後に、直前予想は展示・オッズ取得後に自動生成されます
                 </div>
-                <div className="flex gap-2 w-full max-w-xs">
-                  <button onClick={() => run("PRE")} disabled={busy || entries.length === 0}
-                    className="flex-1 h-10 rounded-lg bg-slate-100 border border-slate-200 text-slate-900 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-slate-200 disabled:opacity-50">
-                    <Zap className="w-4 h-4" /> 事前
-                  </button>
-                  <button onClick={() => run("FINAL")} disabled={busy || entries.length === 0 || !race?.exhibition_ready}
-                    className="flex-1 h-10 rounded-lg bg-[#f9c836] text-slate-950 font-semibold text-sm flex items-center justify-center gap-1.5 hover:bg-amber-300 disabled:opacity-50">
-                    <Gauge className="w-4 h-4" /> 直前
-                  </button>
+                <div className="text-[11px] text-slate-500">
+                  {stageTab === "FINAL"
+                    ? race?.exhibition_ready ? "オッズ取得・自動計算を待っています" : "展示データの取得を待っています"
+                    : "出走表から自動計算しています"}
                 </div>
-                {!race?.exhibition_ready && <div className="text-[10px] text-slate-500 mt-2">展示データ取得後に直前予想を生成できます</div>}
                 {busy && <div className="text-xs text-[#f9c836] mt-3 animate-pulse">計算中…</div>}
               </div>
             )}
@@ -111,7 +111,7 @@ export default function PredictionPanel({
             {!isV5 && (
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
                 {STAGE_TABS.map((t) => {
-                  const ready = !!stages?.[t.key];
+                  const ready = !!stages?.[t.key === "FINAL" ? "final" : "pre"];
                   return (
                     <button
                       key={t.key}
