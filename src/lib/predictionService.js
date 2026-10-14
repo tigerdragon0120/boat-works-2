@@ -880,7 +880,9 @@ export function mapV61ToUI(v61Pred, stage) {
 
 // V6.1の事前予想(PRE)と直前予想(FINAL)を両方返す。
 // 画面の「事前予想 / 直前予想」タブはこの2件を切り替えて表示する。
-const v61PreRecoveryTried = new Set();
+const PREDICTION_RETRY_COOLDOWN_MS = 60000;
+const v61PreRecoveryTriedAt = new Map();
+const predictionGenerationInFlight = new Map();
 export async function getV61Stages(raceId, raceKey) {
   const [fin, pre] = await Promise.all([
     getV61Prediction(raceId, "FINAL", raceKey),
@@ -889,15 +891,18 @@ export async function getV61Stages(raceId, raceKey) {
 
   let prePred = pre;
   // 事前予想が未生成のレースは、画面表示時に自動生成して全レース事前予想を保証する。
-  // 失敗した場合は次の読み込みで再試行できるよう、成功時のみ試行済みとして記録する。
+  // 失敗時も60秒の待機を入れ、画面ポーリングからの連続呼び出しを防ぐ。
   if (!prePred || prePred.status !== "COMPLETED") {
-    if (!v61PreRecoveryTried.has(raceId)) {
+    const now = Date.now();
+    const lastTriedAt = Number(v61PreRecoveryTriedAt.get(raceId) || 0);
+    if (now - lastTriedAt >= PREDICTION_RETRY_COOLDOWN_MS) {
+      // 成否にかかわらず先に時刻を記録し、10〜15秒ポーリングからの連打を防ぐ。
+      v61PreRecoveryTriedAt.set(raceId, now);
       try {
         await generateV61PredictionForRace(raceId, "PRE", false);
         const retried = await getV61Prediction(raceId, "PRE", raceKey);
         if (retried && (retried.status === "COMPLETED" || !retried.status)) {
           prePred = retried;
-          v61PreRecoveryTried.add(raceId);
         }
       } catch (e) {
         console.warn("[V6.1] PRE auto generation failed:", e?.message || e);
@@ -922,10 +927,16 @@ export async function resolveV61Prediction(raceId, raceKey) {
 
 // V6.1予想の単一レース生成(UIの再実行ボタン用)
 export async function generateV61PredictionForRace(raceId, stage, force = false) {
-  const res = await base44.functions.invoke("generateV61PredictionForRace", {
+  const key = `v61:${raceId}:${stage}`;
+  const active = predictionGenerationInFlight.get(key);
+  if (active) return active;
+
+  const task = base44.functions.invoke("generateV61PredictionForRace", {
     race_id: raceId, stage, force,
-  });
-  return res?.data || res;
+  }).then(res => res?.data || res)
+    .finally(() => predictionGenerationInFlight.delete(key));
+  predictionGenerationInFlight.set(key, task);
+  return task;
 }
 
 // ============================================================
@@ -941,10 +952,10 @@ export async function ensureV61Final(race) {
   if (existing && (existing.status === "COMPLETED" || !existing.status)) return existing;
 
   // 一度失敗しただけで、そのレースを永久に再試行しない旧Set方式を廃止。
-  // 展示/オッズがまだ揃っていない瞬間の失敗はよくあるため、30秒後に再試行できるようにする。
+  // 展示/オッズがまだ揃っていない瞬間の失敗はよくあるため、60秒後に再試行できるようにする。
   const now = Date.now();
   const lastTriedAt = Number(v61FinalRecoveryTriedAt.get(race.id) || 0);
-  if (now - lastTriedAt < 30000) return null;
+  if (now - lastTriedAt < PREDICTION_RETRY_COOLDOWN_MS) return null;
   v61FinalRecoveryTriedAt.set(race.id, now);
   try {
     await generateV61PredictionForRace(race.id, "FINAL", false);
@@ -1029,10 +1040,16 @@ export async function getV62Stages(raceId, raceKey) {
 
 // V6.2予想の単一レース生成(UIの再実行ボタン用)
 export async function generateV62PredictionForRace(raceId, stage, force = false) {
-  const res = await base44.functions.invoke("generateV62PredictionForRace", {
+  const key = `v62:${raceId}:${stage}`;
+  const active = predictionGenerationInFlight.get(key);
+  if (active) return active;
+
+  const task = base44.functions.invoke("generateV62PredictionForRace", {
     race_id: raceId, stage, force,
-  });
-  return res?.data || res;
+  }).then(res => res?.data || res)
+    .finally(() => predictionGenerationInFlight.delete(key));
+  predictionGenerationInFlight.set(key, task);
+  return task;
 }
 
 // V6.2の直前予想(FINAL)自動生成保証。展示取得済み・締切前で未生成なら生成する。
@@ -1045,7 +1062,7 @@ export async function ensureV62Final(race) {
 
   const now = Date.now();
   const lastTriedAt = Number(v62FinalRecoveryTriedAt.get(race.id) || 0);
-  if (now - lastTriedAt < 30000) return null;
+  if (now - lastTriedAt < PREDICTION_RETRY_COOLDOWN_MS) return null;
   v62FinalRecoveryTriedAt.set(race.id, now);
   try {
     await generateV62PredictionForRace(race.id, "FINAL", false);
