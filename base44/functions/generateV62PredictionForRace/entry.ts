@@ -132,10 +132,11 @@ export default async function(req: Request) {
       return Response.json({ ok: false, error: result.reason || 'V6.2 skipped', race_key: race.race_key }, { status: 500 });
     }
 
+    // 保存後の確認取得だけがレート制限になっても、生成成功を失敗扱いにしない。
     const freshList = await withRetry(() => sr.PredictionV6.filter(
       { race_id: raceId, stage, prediction_version: V62_VERSION }, '-computed_at', 1
-    ));
-    const fresh = freshList?.[0] || null;
+    )).catch(() => []);
+    const fresh = freshList?.[0] || result?.result || null;
 
     return Response.json({
       ok: true,
@@ -148,7 +149,7 @@ export default async function(req: Request) {
       final_judgment: fresh?.final_judgment,
       first_probability_gap: fresh?.first_probability_gap,
       winning_scenario: fresh?.winning_scenario,
-      status: fresh?.status,
+      status: fresh?.status || 'COMPLETED',
     });
   } catch (e: any) {
     return Response.json({ ok: false, error: e?.message || String(e) }, { status: 500 });
