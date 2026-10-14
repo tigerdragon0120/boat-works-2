@@ -26,7 +26,7 @@ const round2 = (n) => Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
 const V62_WEIGHTS = { past: 0.25, recent: 0.35, today: 0.40 };
 
 // V6.2 調整値
-const TWO_AXIS_GAP_PT = 8;        // 1着1位と2位の確率差がこれ未満なら2軸構成
+const TWO_AXIS_GAP_PT = 30;       // 1着1位と2位の確率差が30pt未満なら第2軸を保険採用（BUYは信頼度条件を別途満たす）
 const MARKET_BLEND = 0.45;        // 市場確率へのブレンド率(校正)
 const MIN_ODDS_FOR_CALIBRATION = 100; // 校正に必要なオッズ件数
 const MAX_TICKETS = 8;
@@ -585,41 +585,30 @@ function selectTicketsV62(boatScores, firstProbs, secondProbs, calibrated) {
     selectedSet.add(combo); selected.push(combo); return true;
   };
 
-  // コア: 軸ごとに「2着候補上位2艇 × 3着候補上位2艇」
-  // 1軸=4点 / 2軸=各3点(合計6点)
-  const corePerAxis = twoAxis ? 3 : 4;
-  for (const axis of axes) {
-    const sp = secondProbs[axis] || {};
-    const seconds = Object.entries(sp)
-      .map(([boat, p]) => ({ boat: Number(boat), p: Number(p) }))
-      .filter(x => x.boat !== axis)
-      .sort((a, b) => b.p - a.p)
-      .slice(0, 2);
+  // コア:
+  // 1軸は従来どおり確率上位4点。
+  // 2軸は実績検証で最も良かった「本線5点 + 第2軸2点」の7点構成にする。
+  // 拮抗レースを無条件BUYにはせず、judgeV62側の信頼度・回収率条件は維持する。
+  const coreTargets = twoAxis ? [5, 2] : [4];
+  axes.forEach((axis, axisIndex) => {
+    const target = coreTargets[axisIndex] || 0;
+    const core = calibrated
+      .filter(t => t.first_boat === axis)
+      .sort((a, b) => b.probability - a.probability)
+      .slice(0, target);
+    core.forEach(t => push(t.combination));
+  });
 
-    let added = 0;
-    for (const s of seconds) {
-      const thirdCandidates = calibrated
-        .filter(t => t.first_boat === axis && t.second_boat === s.boat)
-        .sort((a, b) => b.probability - a.probability)
-        .map(t => t.third_boat)
-        .filter((v, i, arr) => arr.indexOf(v) === i)
-        .slice(0, 2);
-      for (const third of thirdCandidates) {
-        if (added >= corePerAxis) break;
-        if (push(`${axis}-${s.boat}-${third}`)) added++;
-      }
-      if (added >= corePerAxis) break;
-    }
-  }
-
-  // 拡張: 軸は維持したまま校正後期待値の高い買い目を最大8点まで追加
+  // 拡張: 1軸時だけ校正後期待値の高い買い目を最大8点まで追加。
+  // 2軸時は検証済みの5+2=7点を崩さない。
   const expanded = [];
+  const ticketLimit = twoAxis ? 7 : MAX_TICKETS;
   const extras = calibrated
     .filter(t => axisSet.has(t.first_boat) && !selectedSet.has(t.combination))
     .filter(t => t.calibrated_ev != null && t.calibrated_probability >= MIN_EXTRA_PROBABILITY)
     .sort((a, b) => (b.calibrated_ev || 0) - (a.calibrated_ev || 0));
   for (const t of extras) {
-    if (selected.length >= MAX_TICKETS) break;
+    if (selected.length >= ticketLimit) break;
     if ((t.calibrated_ev || 0) < MIN_EXTRA_EV) break;
     if (push(t.combination)) expanded.push(`${t.combination}(EV${round1(t.calibrated_ev)}%)`);
   }
