@@ -259,27 +259,28 @@ export async function verifyV62Prediction(client, race, resultData) {
       outcomeClass = v62Recovery >= LOW_VALUE_RECOVERY_THRESHOLD ? "HIT_PROFIT" : "HIT_LOW_VALUE";
     } else if (v62FinalPred) {
       const predicted1st = v62FinalPred.honmei_boat;
-      const predicted2nd = v62FinalPred.second_ranking?.[0];
-      const predicted3rd = v62FinalPred.third_ranking?.[0];
+      const selectedParts = selected.map(c => String(c).split("-").map(Number));
+      const actualFirstCovered = axisBoats.includes(actualFirst);
+      const actualSecondCovered = selectedParts.some(
+        p => p[0] === actualFirst && p[1] === actualSecond
+      );
 
-      if (predicted1st != null && actualFirst !== predicted1st) {
+      // 2軸時は本命艇だけでなく、買い目に含めた全1着軸で判定する。
+      // これにより第2軸が実際の1着だったレースをMISS_FIRSTへ誤分類しない。
+      if (!actualFirstCovered) {
         outcomeClass = "MISS_FIRST";
         missPrimary = "MISS_FIRST";
-        missSecondary.push(`1着予想${predicted1st}→実際${actualFirst}`);
-        if (predicted1st >= 5) missSecondary.push("OUTER_OVER_VALUED");
-        if (actualFirst === 1 && predicted1st >= 3) missSecondary.push("INSIDE_UNDERVALUED");
-      } else if (predicted2nd != null && actualSecond !== predicted2nd) {
+        missSecondary.push(`1着軸${axisBoats.join("・") || predicted1st || "—"}→実際${actualFirst}`);
+        if (axisBoats.some(b => b >= 5)) missSecondary.push("OUTER_OVER_VALUED");
+        if (actualFirst === 1 && axisBoats.some(b => b >= 3)) missSecondary.push("INSIDE_UNDERVALUED");
+      } else if (!actualSecondCovered) {
         outcomeClass = "MISS_SECOND";
         missPrimary = "MISS_SECOND";
-        missSecondary.push(`2着予想${predicted2nd}→実際${actualSecond}`);
-      } else if (predicted3rd != null && actualThird !== predicted3rd) {
+        missSecondary.push(`1着${actualFirst}は軸内・2着${actualSecond}が買い目外`);
+      } else {
         outcomeClass = "MISS_THIRD";
         missPrimary = "MISS_THIRD";
-        missSecondary.push(`3着予想${predicted3rd}→実際${actualThird}`);
-      } else {
-        outcomeClass = "MISS_OTHER";
-        missPrimary = "TICKET_NARROW";
-        missSecondary.push("買い目枠外");
+        missSecondary.push(`1着${actualFirst}-2着${actualSecond}は買い目内・3着${actualThird}が買い目外`);
       }
     }
 
