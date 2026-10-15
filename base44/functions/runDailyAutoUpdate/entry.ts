@@ -161,21 +161,21 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     }
     if (deadlineFixes.length) await sr.Race.bulkUpdate(deadlineFixes).catch((e: any) => errors.push(`${venueName}: 締切補正 ${e.message}`));
 
-    // 出走表6艇が揃っていても、節間成績が空ならracelistを再取得して補完する。
-    // 以前は「6艇揃い=スキップ」だったため、section_* が永遠にnullのままになっていた。
+    // 6艇揃っているレースは再取得しない。
+    // 以前は「節間成績が空ならracelistを再取得」としていたが、1Rなど今節成績が
+    // まだ存在しないレースは節間値がnullのままなので、5分ごとに12R/72艇を丸ごと
+    // 書き直し続けて1日の書き込み上限に達し、自動更新そのものが停止していた。
+    // 節間成績は出走表の取得時に取り込み、欠けた分はレースを開いた時の
+    // fetchOnlineData('section')で補完する。
     const entriesByRace: Record<string, any[]> = {};
     for (const e of existingEntries) {
       const rn = String(e.race_number);
       if (!entriesByRace[rn]) entriesByRace[rn] = [];
       entriesByRace[rn].push(e);
     }
-    const targetRaceNos = Array.from({ length: 12 }, (_, i) => i + 1).filter((rno) => {
-      const raceEntries = entriesByRace[String(rno)] || [];
-      if (raceEntries.length < 6) return true;
-      return raceEntries.some((e: any) =>
-        e.section_points == null && !e.section_finishes && e.section_st == null && e.section_momentum == null
-      );
-    });
+    const targetRaceNos = Array.from({ length: 12 }, (_, i) => i + 1).filter(
+      (rno) => (entriesByRace[String(rno)] || []).length < 6,
+    );
     if (!targetRaceNos.length) {
       skippedVenues++;
       continue;
