@@ -479,6 +479,78 @@ function isCompletePrePrediction(p: any) {
 }
 
 // =====================================================
+// メインエンジン(V6.1/V6.2)のPRE予想を、対象日の全レースで欠落なく生成する。
+// 画面の「事前予想」が表示するのはV6.1/V6.2だけなので、
+// 時間のかかる旧エンジン(V1/V3/V3.1/V4)より先に必ず埋める。
+// =====================================================
+async function generateMainPrePredictions(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
+  const sr = base44.asServiceRole.entities;
+  const startTime = Date.now();
+  const settings = await getSettings(base44);
+
+  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
+  if (!races.length) return { total: 0, v61_generated: 0, v62_generated: 0, remaining: 0 };
+
+  const [v61Preds, v62Preds] = await Promise.all([
+    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
+    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.2', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
+  ]);
+  const doneKeys = (rows: any[]) => new Set(
+    (rows || [])
+      .filter((p: any) => p.race_key && (p.status === 'COMPLETED' || !p.status))
+      .map((p: any) => String(p.race_key))
+  );
+  const v61Done = doneKeys(v61Preds);
+  const v62Done = doneKeys(v62Preds);
+
+  // 締切が残っているレースを優先し、終了済みレースで時間予算を使わない。
+  const priority = (r: any) => {
+    if (r.status === 'finished' || r.status === 'cancelled') return 2;
+    const ms = r.deadline ? new Date(r.deadline).getTime() : NaN;
+    return Number.isFinite(ms) && ms > Date.now() ? 0 : 1;
+  };
+  const pending = races
+    .filter((r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key)))
+    .sort((a: any, b: any) => priority(a) - priority(b));
+
+  let v61Generated = 0, v62Generated = 0, processed = 0;
+  for (const race of pending) {
+    if (Date.now() - startTime > timeBudgetMs - 3000) {
+      logs.push(`メインPRE(${raceDate}): 時間予算到達 — 残り${pending.length - processed}Rは次回継続`);
+      break;
+    }
+    processed++;
+    try {
+      const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
+      if (entries.length < 6) continue;
+      const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
+      const raceKey = String(race.race_key);
+      if (!v61Done.has(raceKey)) {
+        await runAndSavePredictionV61(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+        v61Done.add(raceKey);
+        v61Generated++;
+      }
+      if (!v62Done.has(raceKey)) {
+        const savedV62 = await runAndSavePredictionV62(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+        if (savedV62?.skipped) {
+          errors.push(`V6.2 PRE ${race.venue_code} R${race.race_number}: ${savedV62.reason || 'skipped'}`);
+        } else {
+          v62Done.add(raceKey);
+          v62Generated++;
+        }
+      }
+    } catch (e: any) {
+      errors.push(`メインPRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
+    }
+    await sleep(200);
+  }
+
+  const remaining = Math.max(0, pending.length - processed);
+  logs.push(`メインPRE(${raceDate}): V6.1 ${v61Generated}R / V6.2 ${v62Generated}R 生成 / 残り${remaining}R`);
+  return { total: races.length, v61_generated: v61Generated, v62_generated: v62Generated, remaining, errors };
+}
+
+// =====================================================
 // STEP 8: PRE予想生成
 // =====================================================
 async function generatePrePredictions(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
@@ -641,85 +713,14 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
   logs.push(`V4 PRE: 今回${v4Generated}R生成 / 残り${v4Remaining}R`);
 
   // =====================================================
-  // V6.1 PREギャップ埋め: V6.1 PRE未生成のRaceを補完
-  // 全レースで「事前予想 → 直前予想」の2段表示を保証する
+  // メインエンジン(V6.1/V6.2)のPREギャップ埋め
+  // 画面の「事前予想」が表示するのはV6.1/V6.2だけなので、必ずここで全レース埋める
   // =====================================================
-  let v61Generated = 0;
-  const v61Preds = await withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []);
-  const v61DoneKeys = new Set<string>();
-  for (const p of v61Preds || []) {
-    if (p.race_key && String(p.race_key).startsWith(raceDate)) v61DoneKeys.add(String(p.race_key));
-  }
-  // 締切が残っているレースを優先して埋める(終了済みレースで時間予算を使わない)
-  const v61Priority = (r: any) => {
-    if (r.status === 'finished' || r.status === 'cancelled') return 2;
-    const ms = r.deadline ? new Date(r.deadline).getTime() : NaN;
-    return Number.isFinite(ms) && ms > Date.now() ? 0 : 1;
-  };
-  const v61Missing = races
-    .filter((r: any) => !v61DoneKeys.has(String(r.race_key)))
-    .sort((a: any, b: any) => v61Priority(a) - v61Priority(b));
-  // V6.1 PREはDB計算のみで外部APIを叩かないため、1回の実行でまとめて埋める
-  const v61Batch = v61Missing.slice(0, 12);
+  const mainPre = await generateMainPrePredictions(
+    base44, raceDate, Math.max(3000, timeBudgetMs - (Date.now() - startTime)), logs, errors
+  );
 
-  for (const race of v61Batch) {
-    if (Date.now() - startTime > timeBudgetMs - 5000) {
-      logs.push(`V6.1 PRE: 時間予算到達 — 次回へ継続`);
-      break;
-    }
-    try {
-      const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
-      if (entries.length < 6) continue;
-      const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-      await runAndSavePredictionV61(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-      v61Generated++;
-      logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V6.1 PRE生成`);
-    } catch (e: any) {
-      errors.push(`V6.1 PRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
-    }
-    await sleep(300);
-  }
-  const v61Remaining = Math.max(0, v61Missing.length - v61Generated);
-  logs.push(`V6.1 PRE: 今回${v61Generated}R生成 / 残り${v61Remaining}R`);
-
-  // =====================================================
-  // V6.2 PREギャップ埋め: V6.2 PRE未生成のRaceを補完
-  // 1着拮抗時の2軸化 + 市場確率校正による回収率重視版
-  // =====================================================
-  let v62Generated = 0;
-  const v62Preds = await withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.2', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []);
-  const v62DoneKeys = new Set<string>();
-  for (const p of v62Preds || []) {
-    if (p.race_key && String(p.race_key).startsWith(raceDate)) v62DoneKeys.add(String(p.race_key));
-  }
-  const v62Missing = races.filter((r: any) => !v62DoneKeys.has(String(r.race_key)));
-  const v62Batch = v62Missing.slice(0, 12);
-
-  for (const race of v62Batch) {
-    if (Date.now() - startTime > timeBudgetMs - 5000) {
-      logs.push(`V6.2 PRE: 時間予算到達 — 次回へ継続`);
-      break;
-    }
-    try {
-      const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
-      if (entries.length < 6) continue;
-      const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-      const saved = await runAndSavePredictionV62(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-      if (saved?.skipped) {
-        errors.push(`V6.2 PRE ${race.venue_code} R${race.race_number}: ${saved.reason || 'skipped'}`);
-        continue;
-      }
-      v62Generated++;
-      logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V6.2 PRE生成`);
-    } catch (e: any) {
-      errors.push(`V6.2 PRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
-    }
-    await sleep(300);
-  }
-  const v62Remaining = Math.max(0, v62Missing.length - v62Generated);
-  logs.push(`V6.2 PRE: 今回${v62Generated}R生成 / 残り${v62Remaining}R`);
-
-  return { total: races.length, generated, v3_generated: v3Generated, v4_generated: v4Generated, v61_generated: v61Generated, v62_generated: v62Generated, skipped, remaining, rate_limited: rateLimited, errors };
+  return { total: races.length, generated, v3_generated: v3Generated, v4_generated: v4Generated, v61_generated: mainPre.v61_generated, v62_generated: mainPre.v62_generated, skipped, remaining, rate_limited: rateLimited, errors };
 }
 
 // =====================================================
@@ -1258,6 +1259,15 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     }
   }
 
+  // メインエンジン(V6.1/V6.2)の事前予想は画面表示に直結するため、旧エンジンより先に埋める。
+  if (remaining > 10000 && tomorrowRaceCount > 0 && tomorrowV61PreCount < tomorrowRaceCount) {
+    logs.push(`AUTO: 翌日メインPRE予想生成開始(V6.1 ${tomorrowV61PreCount}/${tomorrowRaceCount})`);
+    const before = Date.now();
+    const r = await generateMainPrePredictions(base44, tomorrow, remaining, logs, errors);
+    steps.push(`main_pre_predictions: ${r.v61_generated}R`);
+    remaining -= (Date.now() - before);
+  }
+
   if (remaining > 10000 && tomorrowRaceCount > 0 &&
       (tomorrowPreCount < tomorrowRaceCount || tomorrowV61PreCount < tomorrowRaceCount)) {
     logs.push(`AUTO: 翌日PRE予想生成開始(旧${tomorrowPreCount}/${tomorrowRaceCount}・V6.1 ${tomorrowV61PreCount}/${tomorrowRaceCount})`);
@@ -1281,6 +1291,15 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     const before = Date.now();
     const r = await fetchAndSaveOddsAndFinal(base44, today, remaining, logs, errors);
     steps.push(`odds_final: ${r.odds_fetched}R/${r.final_generated}FINAL`);
+    remaining -= (Date.now() - before);
+  }
+
+  // 当日のメイン(V6.1/V6.2)事前予想を、旧エンジンより先に埋める。
+  if (remaining > 10000 && todayRaceCount > 0 && todayV61PreCount < todayRaceCount) {
+    logs.push(`AUTO: 当日メインPRE予想生成開始(V6.1 ${todayV61PreCount}/${todayRaceCount})`);
+    const before = Date.now();
+    const r = await generateMainPrePredictions(base44, today, remaining, logs, errors);
+    steps.push(`main_pre_predictions_today: ${r.v61_generated}R`);
     remaining -= (Date.now() - before);
   }
 
@@ -1356,6 +1375,9 @@ export default async function(req: Request) {
         break;
       case 'pre_predictions':
         result = await generatePrePredictions(base44, body.race_date || today, TIME_BUDGET, logs, errors);
+        break;
+      case 'main_pre':
+        result = await generateMainPrePredictions(base44, body.race_date || today, TIME_BUDGET, logs, errors);
         break;
       case 'exhibition':
         result = await fetchAndSaveExhibition(base44, today, TIME_BUDGET, logs, errors);
