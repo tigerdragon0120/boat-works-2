@@ -881,57 +881,77 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     const oddsCount = Object.keys(oddsMap).length;
     if (oddsCount < 100) continue; // オッズが十分でない場合はスキップ
 
-    // OddsSnapshot保存
-    await sr.OddsSnapshot.create({
-      race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
-      captured_at: new Date().toISOString(), source: 'LOCAL',
-    });
-    oddsFetched++;
-
-    // V6.1(PRE/FINAL)の120通りへも実オッズと期待値を反映する。
-    // これにより事前予想タブでも締切前の実オッズ・期待値が表示される。
-    // 予想確率自体は変更しない。
-    const v61Rows = await sr.PredictionV6.filter(
-      { race_id: race.id, prediction_version: 'v6.1' }, '-computed_at', 2
+    // 同じオッズを5分ごとに120通り分書き直すと、アプリの1日あたりエンティティ書き込み
+    // 上限に達して自動更新そのものが止まる。直前取得値と同一なら書き込みを省略する。
+    const prevSnapshots = await sr.OddsSnapshot.filter(
+      { race_id: race.id, stage: 'FINAL' }, '-captured_at', 1
     ).catch(() => []);
-    for (const row of v61Rows || []) {
-      const tris = (row.trifectas || []).map((t: any) => {
-        const odds = oddsMap[t.combination] ?? null;
-        return {
-          ...t,
-          actual_odds: odds,
-          current_odds: odds,
-          expected_value: odds != null ? Math.round((t.probability || 0) * odds * 10) / 10 : (t.expected_value ?? null),
-        };
-      });
-      if (!tris.length) continue;
-      await sr.PredictionV6.update(row.id, {
-        trifectas: tris,
-        odds_source: 'LOCAL',
-        odds_fetched_at: new Date().toISOString(),
-        odds_combination_count: oddsCount,
-      }).catch(() => {});
-    }
+    const prevOdds = prevSnapshots?.[0]?.odds_map || null;
+    const oddsChanged = !prevOdds || Object.entries(oddsMap).some(([k, v]) => Number(prevOdds[k]) !== Number(v));
+    const forceFinalRefresh = race.final_refresh_required === true;
 
-    // PRE/FINALどちらが表示中でも実オッズを画面に出せるよう、
-    // 最新予想の120通りへactual_odds/current_oddsを反映する。
-    const latestPreds = await sr.RacePrediction.filter({ race_id: race.id }, '-computed_at', 2).catch(() => []);
-    for (const pred of latestPreds) {
-      const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: pred.id }, 'rank', 120).catch(() => []);
-      const updates = trifectas.map((t: any) => {
-        const actualOdds = oddsMap[t.combination] || null;
-        const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
-        return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev };
+    if (oddsChanged) {
+      // OddsSnapshot保存
+      await sr.OddsSnapshot.create({
+        race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
+        captured_at: new Date().toISOString(), source: 'LOCAL',
       });
-      if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates).catch(() => {});
+      oddsFetched++;
+
+      // V6.1(PRE/FINAL)の120通りへも実オッズと期待値を反映する。
+      // これにより事前予想タブでも締切前の実オッズ・期待値が表示される。
+      // 予想確率自体は変更しない。
+      const v61Rows = await sr.PredictionV6.filter(
+        { race_id: race.id, prediction_version: 'v6.1' }, '-computed_at', 2
+      ).catch(() => []);
+      for (const row of v61Rows || []) {
+        const tris = (row.trifectas || []).map((t: any) => {
+          const odds = oddsMap[t.combination] ?? null;
+          return {
+            ...t,
+            actual_odds: odds,
+            current_odds: odds,
+            expected_value: odds != null ? Math.round((t.probability || 0) * odds * 10) / 10 : (t.expected_value ?? null),
+          };
+        });
+        if (!tris.length) continue;
+        await sr.PredictionV6.update(row.id, {
+          trifectas: tris,
+          odds_source: 'LOCAL',
+          odds_fetched_at: new Date().toISOString(),
+          odds_combination_count: oddsCount,
+        }).catch(() => {});
+      }
     }
 
     // FINAL予想は締切10〜1分前に再計算する（5分周期でも5分前表示を保証）。
-    if (inFinalWindow) {
+    // オッズも展示も変化していない再実行では作り直さない（同じ結果を書き直さない）。
+    let needsFinal = inFinalWindow && (forceFinalRefresh || oddsChanged || !race.has_final);
+    if (inFinalWindow && !needsFinal) {
+      const [v61Fin, ensembleFin] = await Promise.all([
+        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.1' }, '-computed_at', 1).catch(() => []),
+        sr.PredictionEnsemble.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1).catch(() => []),
+      ]);
+      if (!v61Fin?.length || !ensembleFin?.length) needsFinal = true;
+    }
+    if (needsFinal) {
       const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
       if (entries.length >= 6) {
         const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-        const forceFinalRefresh = race.final_refresh_required === true;
+
+        // V1系(V1/V2/V3/V3.1/V4)の120通りは画面表示に使わないため、
+        // 直前予想を確定するこのタイミングだけ実オッズを反映する(書き込み量削減)。
+        const latestPreds = await sr.RacePrediction.filter({ race_id: race.id }, '-computed_at', 2).catch(() => []);
+        for (const pred of latestPreds) {
+          const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: pred.id }, 'rank', 120).catch(() => []);
+          const updates = trifectas.map((t: any) => {
+            const actualOdds = oddsMap[t.combination] || null;
+            const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
+            return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev };
+          });
+          if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates).catch(() => {});
+        }
+
         let coreFinalOk = false;
         let v61FinalOk = false;
         let v62FinalOk = false;
