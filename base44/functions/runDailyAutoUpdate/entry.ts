@@ -515,7 +515,7 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
 
   // 全レース分を限られた実行時間で埋めるため、4レースずつ並行して生成する。
   // 書き込み競合はwithRateLimitRetryが吸収し、失敗したレースは次回実行で再試行する。
-  let v61Generated = 0, v62Generated = 0, processed = 0;
+  let v61Generated = 0, v62Generated = 0;
   const CONCURRENCY = 4;
   for (let i = 0; i < pending.length; i += CONCURRENCY) {
     if (Date.now() - startTime > timeBudgetMs - 3000) {
@@ -523,7 +523,6 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
       break;
     }
     const chunk: any[] = pending.slice(i, i + CONCURRENCY);
-    processed += chunk.length;
     await Promise.all(chunk.map(async (race: any) => {
       try {
         const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
@@ -550,7 +549,11 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
     }));
   }
 
-  const remaining = Math.max(0, pending.length - processed);
+  // 「残り」は処理を試みた数ではなく、両エンジンとも保存できていない実レース数で数える。
+  // 一時的なレート制限などで取りこぼしたレースを次回実行へ確実に残すため。
+  const remaining = pending.filter(
+    (r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key))
+  ).length;
   logs.push(`メインPRE(${raceDate}): V6.1 ${v61Generated}R / V6.2 ${v62Generated}R 生成 / 残り${remaining}R`);
   return { total: races.length, v61_generated: v61Generated, v62_generated: v62Generated, remaining, errors };
 }
