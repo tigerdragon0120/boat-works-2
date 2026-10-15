@@ -513,36 +513,41 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
     .filter((r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key)))
     .sort((a: any, b: any) => priority(a) - priority(b));
 
+  // 全レース分を限られた実行時間で埋めるため、4レースずつ並行して生成する。
+  // 書き込み競合はwithRateLimitRetryが吸収し、失敗したレースは次回実行で再試行する。
   let v61Generated = 0, v62Generated = 0, processed = 0;
-  for (const race of pending) {
+  const CONCURRENCY = 4;
+  for (let i = 0; i < pending.length; i += CONCURRENCY) {
     if (Date.now() - startTime > timeBudgetMs - 3000) {
-      logs.push(`メインPRE(${raceDate}): 時間予算到達 — 残り${pending.length - processed}Rは次回継続`);
+      logs.push(`メインPRE(${raceDate}): 時間予算到達 — 残り${pending.length - i}Rは次回継続`);
       break;
     }
-    processed++;
-    try {
-      const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
-      if (entries.length < 6) continue;
-      const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-      const raceKey = String(race.race_key);
-      if (!v61Done.has(raceKey)) {
-        await runAndSavePredictionV61(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-        v61Done.add(raceKey);
-        v61Generated++;
-      }
-      if (!v62Done.has(raceKey)) {
-        const savedV62 = await runAndSavePredictionV62(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-        if (savedV62?.skipped) {
-          errors.push(`V6.2 PRE ${race.venue_code} R${race.race_number}: ${savedV62.reason || 'skipped'}`);
-        } else {
-          v62Done.add(raceKey);
-          v62Generated++;
+    const chunk: any[] = pending.slice(i, i + CONCURRENCY);
+    processed += chunk.length;
+    await Promise.all(chunk.map(async (race: any) => {
+      try {
+        const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
+        if (entries.length < 6) return;
+        const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
+        const raceKey = String(race.race_key);
+        if (!v61Done.has(raceKey)) {
+          await runAndSavePredictionV61(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+          v61Done.add(raceKey);
+          v61Generated++;
         }
+        if (!v62Done.has(raceKey)) {
+          const savedV62 = await runAndSavePredictionV62(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+          if (savedV62?.skipped) {
+            errors.push(`V6.2 PRE ${race.venue_code} R${race.race_number}: ${savedV62.reason || 'skipped'}`);
+          } else {
+            v62Done.add(raceKey);
+            v62Generated++;
+          }
+        }
+      } catch (e: any) {
+        errors.push(`メインPRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
       }
-    } catch (e: any) {
-      errors.push(`メインPRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
-    }
-    await sleep(200);
+    }));
   }
 
   const remaining = Math.max(0, pending.length - processed);
