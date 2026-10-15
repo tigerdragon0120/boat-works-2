@@ -92,9 +92,19 @@ function mergeProtect(existing, incoming) {
 }
 
 export async function getSettings(client) {
-  const list = await client.asServiceRole.entities.AppSettings.list();
-  if (list && list.length) return list[0];
-  return await client.asServiceRole.entities.AppSettings.create({ name: "default", ...DEFAULT_SETTINGS });
+  const sr = client.asServiceRole.entities;
+  // 設定読み込みがレート制限(429)で失敗すると、予想生成・自動更新の実行全体が落ちる。
+  // 短い待機を挟んで数回だけ再試行し、それでも失敗した場合のみエラーとする。
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const list = await sr.AppSettings.list();
+      if (list && list.length) return list[0];
+      return await sr.AppSettings.create({ name: "default", ...DEFAULT_SETTINGS });
+    } catch (e) {
+      if (attempt === 3) throw e;
+      await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+    }
+  }
 }
 
 // Raceの完全度スコア(重複整理時に保持候補を決める)

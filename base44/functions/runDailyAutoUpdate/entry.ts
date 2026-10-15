@@ -226,8 +226,10 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       if (race.race_name) doc.race_name = race.race_name;
       if (race.race_type) doc.race_type = race.race_type;
       if (t) doc.deadline = `${raceDate}T${t}:00+09:00`;
-      const saved = await withRateLimitRetry(() => upsertRace(base44, doc));
-      raceByNo.set(rno, saved);
+      // 1件の保存失敗(429等)で自動更新の実行全体を落とさない。失敗分は次回実行で補完する。
+      const saved = await withRateLimitRetry(() => upsertRace(base44, doc))
+        .catch((e: any) => { errors.push(`${venueName} R${rno}: Race保存 ${e.message}`); return null; });
+      if (saved) raceByNo.set(rno, saved);
     }
     const existingEntryByKey = new Map(existingEntries.map((e: any) => [`${Number(e.race_number)}_${Number(e.boat_number)}`, e]));
     const entryCreates: any[] = [];
@@ -269,8 +271,10 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       }
     }
 
-    if (entryCreates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkCreate(entryCreates));
-    if (entryUpdates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkUpdate(entryUpdates));
+    if (entryCreates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkCreate(entryCreates))
+      .catch((e: any) => errors.push(`${venueName}: RaceEntry作成 ${e.message}`));
+    if (entryUpdates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkUpdate(entryUpdates))
+      .catch((e: any) => errors.push(`${venueName}: RaceEntry更新 ${e.message}`));
 
     // BOAT WORKS同期と本処理が重なって同じ艇が二重作成されても、
     // race_key + boat_numberごとに展示値を持つ完全な行へ統合する。
@@ -834,7 +838,8 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
         raceUpdate.final_refresh_reason = 'EXHIBITION_CHANGED';
         raceUpdate.final_refresh_requested_at = new Date().toISOString();
       }
-      await withRateLimitRetry(() => sr.Race.update(race.id, raceUpdate), 4);
+      await withRateLimitRetry(() => sr.Race.update(race.id, raceUpdate), 4)
+        .catch((e: any) => errors.push(`${venueName} R${raceNumber}: 展示保存 ${e.message}`));
       fetched++;
       if (raceUpdate.final_refresh_required) {
         logs.push(`${venueName} R${raceNumber}: 展示変更のため全FINAL予想の再計算を予約`);
@@ -907,7 +912,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
       await withRateLimitRetry(() => sr.OddsSnapshot.create({
         race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
         captured_at: new Date().toISOString(), source: 'LOCAL',
-      }), 4);
+      }), 4).catch((e: any) => errors.push(`${venueName} R${raceNumber}: オッズ保存 ${e.message}`));
       oddsFetched++;
 
       // V6.1(PRE/FINAL)の120通りへも実オッズと期待値を反映する。
@@ -1035,7 +1040,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
               final_refresh_required: false,
               final_refresh_reason: '',
               final_refreshed_at: new Date().toISOString(),
-            });
+            }).catch((e: any) => errors.push(`${venueName} R${raceNumber}: 再計算フラグ更新 ${e.message}`));
             logs.push(`${venueName} R${raceNumber}: 展示変更をV1〜V6.2・合成FINALへ反映完了`);
           } else {
             logs.push(`${venueName} R${raceNumber}: 全FINAL再計算は未完了のため次回自動更新で再試行`);
@@ -1362,6 +1367,9 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
 // エントリポイント
 // =====================================================
 export default async function(req: Request) {
+  // 失敗時にも「どこまで進んだか」を返せるよう、ログはハンドラの外側で保持する。
+  const logs: string[] = [];
+  const errors: string[] = [];
   try {
     const base44 = createClientFromRequest(req);
 
@@ -1377,8 +1385,6 @@ export default async function(req: Request) {
 
     const today = getTodayJST();
     const tomorrow = getTomorrowJST();
-    const logs: string[] = [];
-    const errors: string[] = [];
     const TIME_BUDGET = 80000;
 
     let result;
@@ -1414,7 +1420,16 @@ export default async function(req: Request) {
         break;
       case 'auto':
       default:
-        result = await autoUpdate(base44, today, tomorrow, TIME_BUDGET, logs, errors);
+        // 429等の一時的な失敗で実行全体を失敗扱いにしない。
+        // 失敗が続くとワークフロー自体が停止し、直前予想が生成されなくなるため、
+        // 短い待機後に一度だけ再試行する。
+        try {
+          result = await autoUpdate(base44, today, tomorrow, TIME_BUDGET, logs, errors);
+        } catch (e: any) {
+          errors.push(`AUTO: ${e?.message || e} — 再試行`);
+          await sleep(8000);
+          result = await autoUpdate(base44, today, tomorrow, 45000, logs, errors);
+        }
         break;
     }
 
@@ -1432,6 +1447,7 @@ export default async function(req: Request) {
       ...result,
     });
   } catch (error: any) {
-    return Response.json({ ok: false, error: error.message }, { status: 500 });
+    // 失敗時もログを返し、どのステップで止まったかを追えるようにする。
+    return Response.json({ ok: false, error: error.message, logs, errors }, { status: 500 });
   }
 }
