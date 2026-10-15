@@ -872,10 +872,12 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     const deadlineMs = new Date(race.deadline).getTime();
     if (!Number.isFinite(deadlineMs)) continue;
     const nowMs = Date.now();
-    const inDisplayOddsWindow = nowMs >= deadlineMs - 25 * 60 * 1000 && nowMs <= deadlineMs - 1 * 60 * 1000;
+    // 締切直後の3分間も対象にする。5分周期の実行が1回抜けても、
+    // 結果確定(締切5分後)より前に直前予想を確定させ、取りこぼしを防ぐ。
+    const inDisplayOddsWindow = nowMs >= deadlineMs - 25 * 60 * 1000 && nowMs <= deadlineMs + 3 * 60 * 1000;
     // ワーカーは5分間隔のため、-6〜-2分だけでは締切3分前まで生成されない場合がある。
     // 10分前から対象にして、遅くとも5分前には表示し、次の実行で直前オッズへ更新する。
-    const inFinalWindow = nowMs >= deadlineMs - 10 * 60 * 1000 && nowMs <= deadlineMs - 1 * 60 * 1000;
+    const inFinalWindow = nowMs >= deadlineMs - 10 * 60 * 1000 && nowMs <= deadlineMs + 3 * 60 * 1000;
     if (!inDisplayOddsWindow) continue;
 
     const venueCode = race.venue_code;
@@ -937,11 +939,13 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     // オッズも展示も変化していない再実行では作り直さない（同じ結果を書き直さない）。
     let needsFinal = inFinalWindow && (forceFinalRefresh || oddsChanged || !race.has_final);
     if (inFinalWindow && !needsFinal) {
-      const [v61Fin, ensembleFin] = await Promise.all([
+      // V6.1/V6.2は画面の「直前予想」そのもの。どちらか欠けていれば作り直す。
+      const [v61Fin, v62Fin, ensembleFin] = await Promise.all([
         sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.1' }, '-computed_at', 1).catch(() => []),
+        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.2' }, '-computed_at', 1).catch(() => []),
         sr.PredictionEnsemble.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1).catch(() => []),
       ]);
-      if (!v61Fin?.length || !ensembleFin?.length) needsFinal = true;
+      if (!v61Fin?.length || !v62Fin?.length || !ensembleFin?.length) needsFinal = true;
     }
     if (needsFinal) {
       const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
@@ -1233,6 +1237,12 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
 
   const steps: string[] = [];
   let remaining = timeBudgetMs;
+  // 展示・オッズ・FINALは締切前後の短い窓しか取れないリアルタイム処理。
+  // 事前予想生成が時間予算を使い切ると展示・オッズが1件も処理されず、
+  // 「直前予想が未生成」のまま締切を迎える。予想生成には残り時間の一部だけを使わせ、
+  // リアルタイム処理のための時間を必ず残す。
+  const PRE_BUDGET_RESERVE = 40000;
+  const preBudget = () => Math.min(remaining, Math.max(8000, remaining - PRE_BUDGET_RESERVE));
 
   // 優先順位:
   // 1. 当日展示データ（締切が近いレースを最優先）
@@ -1271,7 +1281,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   if (remaining > 10000 && tomorrowRaceCount > 0 && tomorrowV61PreCount < tomorrowRaceCount) {
     logs.push(`AUTO: 翌日メインPRE予想生成開始(V6.1 ${tomorrowV61PreCount}/${tomorrowRaceCount})`);
     const before = Date.now();
-    const r = await generateMainPrePredictions(base44, tomorrow, remaining, logs, errors);
+    const r = await generateMainPrePredictions(base44, tomorrow, preBudget(), logs, errors);
     steps.push(`main_pre_predictions: ${r.v61_generated}R`);
     remaining -= (Date.now() - before);
   }
@@ -1280,7 +1290,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
       (tomorrowPreCount < tomorrowRaceCount || tomorrowV61PreCount < tomorrowRaceCount)) {
     logs.push(`AUTO: 翌日PRE予想生成開始(旧${tomorrowPreCount}/${tomorrowRaceCount}・V6.1 ${tomorrowV61PreCount}/${tomorrowRaceCount})`);
     const before = Date.now();
-    const r = await generatePrePredictions(base44, tomorrow, remaining, logs, errors);
+    const r = await generatePrePredictions(base44, tomorrow, preBudget(), logs, errors);
     steps.push(`pre_predictions: ${r.generated}R`);
     remaining -= (Date.now() - before);
   }
@@ -1306,7 +1316,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
   if (remaining > 10000 && todayRaceCount > 0 && todayV61PreCount < todayRaceCount) {
     logs.push(`AUTO: 当日メインPRE予想生成開始(V6.1 ${todayV61PreCount}/${todayRaceCount})`);
     const before = Date.now();
-    const r = await generateMainPrePredictions(base44, today, remaining, logs, errors);
+    const r = await generateMainPrePredictions(base44, today, preBudget(), logs, errors);
     steps.push(`main_pre_predictions_today: ${r.v61_generated}R`);
     remaining -= (Date.now() - before);
   }
@@ -1316,7 +1326,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
       (todayPreCount < todayRaceCount || todayV61PreCount < todayRaceCount)) {
     logs.push(`AUTO: 当日不足PRE予想生成開始（旧${todayPreCount}/${todayRaceCount}・V6.1 ${todayV61PreCount}/${todayRaceCount}）`);
     const before = Date.now();
-    const r = await generatePrePredictions(base44, today, remaining, logs, errors);
+    const r = await generatePrePredictions(base44, today, preBudget(), logs, errors);
     steps.push(`today_pre_predictions: ${r.generated}R`);
     remaining -= (Date.now() - before);
   }
