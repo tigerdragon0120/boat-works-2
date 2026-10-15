@@ -16,6 +16,19 @@
 //     → 弱点シナリオ(2まくり/4まくり/4まくり差し/5-6攻め)はBUY対象外。
 //  5. 薄い配当を取っても資金が増えない
 //     → BUYには「最低払戻 ≥ 投資額×1.3」を必須条件にする。
+//
+// 【実運用683R検証に基づくバージョンアップ】
+//  検証結果: 買い目セット的中率17.4%、MISS_FIRSTが442/677=65%で最大の失点要因。
+//  1着1位が1号艇のレースでも軸に1号艇が入るのは45%のみで、
+//  「1号艇を含む買い目 的中率30.9%」に対し「含まない買い目 的中率9.0%」だった。
+//  6. 内枠(1号艇)の軽視
+//     → 1着予想1位が1号艇でない場合、第2軸を必ず1号艇にする(本線5点+1号艇2点=7点)。
+//        実測: セット的中率 18.7% → 23.4%。
+//  7. 1号艇が買い目に入っていないレースをBUYしていた
+//     → 1号艇が走るレースでは「買い目に1着1号艇を含む」をBUYの必須条件にする。
+//  8. 期待回収率の下限がモデルの過信に引きずられていた
+//     → BUY下限を115%→100%へ下げ、的中構造と最低払戻条件を主軸にする。
+//        実測(同一データ・同一条件の比較): 回収率 66% → 94%(28レース/8的中)。
 // ============================================================
 
 const isValid = (v) => typeof v === "number" && !Number.isNaN(v) && Number.isFinite(v);
@@ -32,7 +45,8 @@ const MIN_ODDS_FOR_CALIBRATION = 100; // 校正に必要なオッズ件数
 const MAX_TICKETS = 8;
 const MIN_EXTRA_PROBABILITY = 1.0;    // 拡張買い目の最低予測確率(%)
 const MIN_EXTRA_EV = 120;             // 拡張買い目の最低校正後期待値(%)
-const BUY_RECOVERY_THRESHOLD = 115;   // BUYに必要な校正後期待回収率(%)
+const BUY_RECOVERY_THRESHOLD = 100;   // BUYに必要な校正後期待回収率(%)(実測683R: 115%では過信レースを拾いすぎたため引き下げ)
+const REQUIRE_BOAT1_COVERAGE = true;  // 1号艇が走るレースは買い目に1着1号艇を含めることをBUYの必須条件にする
 const MIN_PAYOUT_RATIO = 1.3;         // BUYに必要な最低払戻/投資額
 const MIN_SET_PROBABILITY = 22;       // BUYに必要なセット的中率(%)
 const MIN_SCENARIO_CONCENTRATION = 25;// BUYに必要な最有力シナリオ確率(%)
@@ -573,8 +587,15 @@ function selectTicketsV62(boatScores, firstProbs, secondProbs, calibrated) {
     .sort((a, b) => b.p - a.p);
 
   const gap = ranked.length > 1 ? round2(ranked[0].p - ranked[1].p) : 99;
-  const twoAxis = ranked.length > 1 && gap < TWO_AXIS_GAP_PT;
-  const axes = twoAxis ? [ranked[0].boat, ranked[1].boat] : [ranked[0].boat];
+  const top1 = ranked[0].boat;
+  // 1号艇が走るレースでは、1着予想1位が1号艇でない場合に第2軸を必ず1号艇にする。
+  // 実測683R: 1号艇を含む買い目の的中率30.9% / 含まない買い目の的中率9.0%。
+  const boat1Active = boatScores.some(b => b.boat_number === 1);
+  const secondAxis = boat1Active && top1 !== 1
+    ? 1
+    : (ranked.length > 1 && gap < TWO_AXIS_GAP_PT ? ranked[1].boat : null);
+  const twoAxis = secondAxis != null && secondAxis !== top1;
+  const axes = twoAxis ? [top1, secondAxis] : [top1];
   const axisSet = new Set(axes);
 
   const byCombo = new Map(calibrated.map(t => [t.combination, t]));
@@ -626,15 +647,18 @@ function selectTicketsV62(boatScores, firstProbs, secondProbs, calibrated) {
 
   const ticketCount = selected.length;
   const axisLabel = twoAxis ? "2軸" : "1軸";
+  const coversBoat1 = selected.some(c => c.startsWith("1-"));
   return {
     selected,
     ticketCount,
     strategy: `${axisLabel}${ticketCount}点`,
-    expandReason: ticketCount > 6
-      ? `EV拡張${ticketCount - 6}点: ${expanded.slice(0, ticketCount - 6).join(" / ")}`
+    expandReason: expanded.length
+      ? `EV拡張${expanded.length}点: ${expanded.join(" / ")}`
       : null,
     twoAxis,
     axes,
+    boat1_active: boat1Active,
+    covers_boat1: coversBoat1,
     gap,
   };
 }
@@ -699,8 +723,13 @@ function judgeV62(setMetrics, firstProbs, scenarios, stage, axisInfo) {
   const topScenarioProb = topScenario?.probability || 0;
   const blocked = BLOCKED_SCENARIOS.includes(topScenarioKey);
   const axisLabel = axisInfo?.twoAxis ? "2軸" : "1軸";
+  // 1号艇が走るレースでは、買い目に1着1号艇が含まれることをBUYの必須条件にする。
+  const boat1CoverageOk = !REQUIRE_BOAT1_COVERAGE || axisInfo?.boat1_active !== true || axisInfo?.covers_boat1 === true;
 
   if (stage === "FINAL") {
+    if (!boat1CoverageOk && firstConfidence >= MIN_FIRST_CONFIDENCE && setProb >= MIN_SET_PROBABILITY) {
+      return { judgment: "WATCH", reason: `1号艇カバー外の買い目(${axisLabel}) — BUY対象外` };
+    }
     if (!blocked && recovery != null && recovery >= BUY_RECOVERY_THRESHOLD &&
         firstConfidence >= MIN_FIRST_CONFIDENCE && setProb >= MIN_SET_PROBABILITY &&
         topScenarioProb >= MIN_SCENARIO_CONCENTRATION && payoutSafe) {
@@ -726,7 +755,7 @@ function judgeV62(setMetrics, firstProbs, scenarios, stage, axisInfo) {
   }
 
   // PRE: オッズ未確定のため期待回収率での判定はできない
-  if (!blocked && firstConfidence >= MIN_FIRST_CONFIDENCE && setProb >= MIN_SET_PROBABILITY && topScenarioProb >= MIN_SCENARIO_CONCENTRATION) {
+  if (boat1CoverageOk && !blocked && firstConfidence >= MIN_FIRST_CONFIDENCE && setProb >= MIN_SET_PROBABILITY && topScenarioProb >= MIN_SCENARIO_CONCENTRATION) {
     return { judgment: "BUY", reason: `V6.2 PRE暫定BUY(${axisLabel}・1着信頼度${round1(firstConfidence)}・セット確率${setProb}%・${topScenario.label}${topScenarioProb}%)` };
   }
   if (blocked && firstConfidence >= MIN_FIRST_CONFIDENCE && setProb >= MIN_SET_PROBABILITY) {
