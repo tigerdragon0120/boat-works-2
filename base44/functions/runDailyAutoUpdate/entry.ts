@@ -958,46 +958,26 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
       if (entries.length >= 6) {
         const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
 
-        // V1系(V1/V2/V3/V3.1/V4)の120通りは画面表示に使わないため、
-        // 直前予想を確定するこのタイミングだけ実オッズを反映する(書き込み量削減)。
-        const latestPreds = await sr.RacePrediction.filter({ race_id: race.id }, '-computed_at', 2).catch(() => []);
-        for (const pred of latestPreds) {
-          const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: pred.id }, 'rank', 120).catch(() => []);
-          const updates = trifectas.map((t: any) => {
-            const actualOdds = oddsMap[t.combination] || null;
-            const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
-            return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev };
-          });
-          if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates).catch(() => {});
-        }
-
+        // 旧エンジン(V1/V2/V3/V3.1/V4)のFINALは書き込み量が非常に多く、これを先に実行すると
+        // レート制限でメインエンジン(V6.1/V6.2)の保存に失敗し、画面の「直前予想」が未生成になる。
+        // よってV6.1/V6.2と合成を先に確定させ、旧エンジンは後段で処理する。
         let coreFinalOk = false;
         let v61FinalOk = false;
         let v62FinalOk = false;
         let ensembleFinalOk = false;
-        try {
-          const finResult = await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg, forceFinalRefresh);
-          if (finResult?.skipped) {
-            logs.push(`${venueName} R${raceNumber}: FINALスキップ(${finResult.reason || 'exhibition_not_ready'})`);
-          } else {
-            const sub = finResult?.subversion_status || {};
-            coreFinalOk = !forceFinalRefresh || ['v2', 'v3', 'v31', 'v4'].every((key) => sub[key] === true);
-            finalGenerated++;
-            logs.push(`${venueName} R${raceNumber}: 実オッズ${oddsCount}件反映+FINAL予想生成`);
-            if (forceFinalRefresh && !coreFinalOk) {
-              errors.push(`${venueName} R${raceNumber}: V2/V3/V3.1/V4の一部再計算失敗 ${JSON.stringify(finResult?.subversion_errors || {})}`);
-            }
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
-        }
 
         // V6.1はメインエンジン。展示・直前オッズが揃った同じタイミングでFINALを生成する。
         // 合成予想がV6.1を参照するため、必ず合成より先に生成する。
         try {
-          const v61Result = await runAndSavePredictionV61(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          let v61Result = await runAndSavePredictionV61(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          // 保存がレート制限などで失敗すると skipped で戻る。放置すると画面が「直前予想 未生成」の
+          // まま次の自動更新まで待つことになるため、少し待って一度だけ再試行する。
           if (v61Result?.skipped) {
-            logs.push(`${venueName} R${raceNumber}: V6.1 FINALスキップ(${v61Result.reason || 'unknown'})`);
+            await sleep(2500);
+            v61Result = await runAndSavePredictionV61(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          }
+          if (v61Result?.skipped) {
+            errors.push(`${venueName} R${raceNumber}: V6.1 FINAL未生成(${v61Result.reason || 'unknown'})`);
           } else {
             v61FinalOk = true;
             v61FinalGenerated++;
@@ -1009,9 +989,14 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
 
         // V6.2: 回収率重視の発展エンジン。同じく展示・直前オッズが揃った時点でFINALを生成する。
         try {
-          const v62Result = await runAndSavePredictionV62(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          let v62Result = await runAndSavePredictionV62(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          // V6.1と同じく、保存失敗時は一度だけ再試行してから次回へ回す。
           if (v62Result?.skipped) {
-            logs.push(`${venueName} R${raceNumber}: V6.2 FINALスキップ(${v62Result.reason || 'unknown'})`);
+            await sleep(2500);
+            v62Result = await runAndSavePredictionV62(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          }
+          if (v62Result?.skipped) {
+            errors.push(`${venueName} R${raceNumber}: V6.2 FINAL未生成(${v62Result.reason || 'unknown'})`);
           } else {
             v62FinalOk = true;
             v62FinalGenerated++;
@@ -1032,6 +1017,36 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: 合成FINAL予想失敗 ${e.message}`);
+        }
+
+        // 旧エンジン(V1/V2/V3/V3.1/V4)のFINAL。120通りへ実オッズを反映し、FINAL予想を生成する。
+        // メインエンジンの保存を優先するため、V6.1/V6.2・合成の後に実行する。
+        const latestPreds = await sr.RacePrediction.filter({ race_id: race.id }, '-computed_at', 2).catch(() => []);
+        for (const pred of latestPreds) {
+          const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: pred.id }, 'rank', 120).catch(() => []);
+          const updates = trifectas.map((t: any) => {
+            const actualOdds = oddsMap[t.combination] || null;
+            const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
+            return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev };
+          });
+          if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates).catch(() => {});
+        }
+
+        try {
+          const finResult = await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg, forceFinalRefresh);
+          if (finResult?.skipped) {
+            logs.push(`${venueName} R${raceNumber}: FINALスキップ(${finResult.reason || 'exhibition_not_ready'})`);
+          } else {
+            const sub = finResult?.subversion_status || {};
+            coreFinalOk = !forceFinalRefresh || ['v2', 'v3', 'v31', 'v4'].every((key) => sub[key] === true);
+            finalGenerated++;
+            logs.push(`${venueName} R${raceNumber}: 旧エンジンV1〜V4 FINAL予想生成`);
+            if (forceFinalRefresh && !coreFinalOk) {
+              errors.push(`${venueName} R${raceNumber}: V2/V3/V3.1/V4の一部再計算失敗 ${JSON.stringify(finResult?.subversion_errors || {})}`);
+            }
+          }
+        } catch (e: any) {
+          errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
         }
 
         if (forceFinalRefresh) {
