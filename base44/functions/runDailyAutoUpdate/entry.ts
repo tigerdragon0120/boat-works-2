@@ -834,7 +834,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
         raceUpdate.final_refresh_reason = 'EXHIBITION_CHANGED';
         raceUpdate.final_refresh_requested_at = new Date().toISOString();
       }
-      await sr.Race.update(race.id, raceUpdate);
+      await withRateLimitRetry(() => sr.Race.update(race.id, raceUpdate), 4);
       fetched++;
       if (raceUpdate.final_refresh_required) {
         logs.push(`${venueName} R${raceNumber}: 展示変更のため全FINAL予想の再計算を予約`);
@@ -903,10 +903,11 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
 
     if (oddsChanged) {
       // OddsSnapshot保存
-      await sr.OddsSnapshot.create({
+      // 1件の429で自動更新全体が失敗扱いにならないよう、リトライで吸収する。
+      await withRateLimitRetry(() => sr.OddsSnapshot.create({
         race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
         captured_at: new Date().toISOString(), source: 'LOCAL',
-      });
+      }), 4);
       oddsFetched++;
 
       // V6.1(PRE/FINAL)の120通りへも実オッズと期待値を反映する。
