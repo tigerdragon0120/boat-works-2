@@ -293,31 +293,31 @@ export function parseRaceCard(html, raceDate, venueCode, venueName, raceNumber =
     const nameMatch2 = text.match(/\d{4}\s*\/\s*[AB][12]\s*([^\d\s][^\d]+)/);
     const playerName = nameMatch2 ? nameMatch2[1].trim().replace(/\s+/g, "") : "";
 
-    // F数・L数・平均ST抽出
+    // F数・L数抽出
     const fMatch = text.match(/F(\d+)/);
     const lMatch = text.match(/L(\d+)/);
-    const stMatch = text.match(/F\d+\s*L\d+\s*(\d+\.\d+)/);
     const fCount = fMatch ? num(fMatch[1]) : null;
     const lCount = lMatch ? num(lMatch[1]) : null;
-    const avgSt = stMatch ? num(stMatch[1]) : null;
 
-    // 全国勝率・2連率・3連率 (F/L/STの直後の3つの小数)
-    const statsAfterSt = text.match(/F\d+\s*L\d+\s*\d+\.\d+\s*(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)/);
-    const nationalWinRate = statsAfterSt ? num(statsAfterSt[1]) : null;
-    const national2rate = statsAfterSt ? num(statsAfterSt[2]) : null;
-    const national3rate = statsAfterSt ? num(statsAfterSt[3]) : null;
+    // 平均ST + 全国勝率/2連率/3連率 + 当地勝率/2連率/3連率 をまとめて抽出する。
+    // 新人など平均ST未公表の選手は「F1 L0 - 2.11 2.63 …」とSTが記号になるため、
+    // STが数値でも記号でも同じ位置から6つの数値を読めるようにしている。
+    // (以前はSTの数値を必須アンカーにしていたため、STが"-"の選手は
+    //  全国・当地・モーター・ボートの全項目が欠落し、出走表に「—」と表示されていた)
+    const rateBlock = text.match(
+      /F\s*\d+\s*L\s*\d+\s*(?:(\d+\.\d+)\s*|[-－ー−]\s*)(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)\s*(\d+\.\d+)/
+    );
+    const avgSt = rateBlock?.[1] != null ? num(rateBlock[1]) : null;
+    const nationalWinRate = rateBlock ? num(rateBlock[2]) : null;
+    const national2rate = rateBlock ? num(rateBlock[3]) : null;
+    const national3rate = rateBlock ? num(rateBlock[4]) : null;
+    const localWinRate = rateBlock ? num(rateBlock[5]) : null;
+    const local2rate = rateBlock ? num(rateBlock[6]) : null;
+    const local3rate = rateBlock ? num(rateBlock[7]) : null;
 
-    // 当地勝率・2連率・3連率 (全国の直後の3つ)
-    const localMatch = statsAfterSt ? text.match(
-      new RegExp(statsAfterSt[3].replace(".", "\\.") + "\\s*(\\d+\\.\\d+)\\s*(\\d+\\.\\d+)\\s*(\\d+\\.\\d+)")
-    ) : null;
-    const localWinRate = localMatch ? num(localMatch[1]) : null;
-    const local2rate = localMatch ? num(localMatch[2]) : null;
-    const local3rate = localMatch ? num(localMatch[3]) : null;
-
-    // モーターNo・2連率・3連率 (当地の直後)
-    const motorMatch = localMatch ? text.match(
-      new RegExp(localMatch[3].replace(".", "\\.") + "\\s*(\\d+)\\s*(\\d+\\.\\d+)\\s*(\\d+\\.\\d+)")
+    // モーターNo・2連率・3連率 (当地3連率の直後)
+    const motorMatch = rateBlock ? text.match(
+      new RegExp(rateBlock[7].replace(".", "\\.") + "\\s*(\\d+)\\s*(\\d+\\.\\d+)\\s*(\\d+\\.\\d+)")
     ) : null;
     const motorNumber = motorMatch ? num(motorMatch[1]) : null;
     const motor2rate = motorMatch ? num(motorMatch[2]) : null;

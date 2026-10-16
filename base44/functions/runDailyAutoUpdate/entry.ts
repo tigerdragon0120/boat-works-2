@@ -173,8 +173,15 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       if (!entriesByRace[rn]) entriesByRace[rn] = [];
       entriesByRace[rn].push(e);
     }
+    // 6艇未満のレースに加えて、全国勝率が欠けているレースも再取得する。
+    // 公式出走表は新人など平均ST未公表の選手で「F1 L0 - 2.11 …」とSTが記号になり、
+    // 以前はその選手の全国・当地・モーター・ボートの全項目が欠落したまま保存されていた。
+    // 値を取得できた時点でこの条件は満たなくなるため、再取得は1回で収束する。
     const targetRaceNos = Array.from({ length: 12 }, (_, i) => i + 1).filter(
-      (rno) => (entriesByRace[String(rno)] || []).length < 6,
+      (rno) => {
+        const rows = entriesByRace[String(rno)] || [];
+        return rows.length < 6 || rows.some((e: any) => e.national_win_rate == null);
+      },
     );
     if (!targetRaceNos.length) {
       skippedVenues++;
@@ -266,8 +273,15 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
         };
         for (const [k, v] of Object.entries(optional)) if (v !== null && v !== undefined && v !== '') entryData[k] = v;
         const old = existingEntryByKey.get(`${rno}_${Number(e.boat_number)}`);
-        if (old) entryUpdates.push({ id: old.id, ...entryData });
-        else entryCreates.push(entryData);
+        if (old) {
+          // 出走表の再取得で、検知済みの欠場・欠場予定フラグを消さない。
+          entryUpdates.push({
+            id: old.id,
+            ...entryData,
+            is_absent: old.is_absent === true,
+            is_scratched: old.is_scratched === true,
+          });
+        } else entryCreates.push(entryData);
       }
     }
 
