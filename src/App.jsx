@@ -19,6 +19,7 @@ import Verification from '@/pages/Verification';
 import Admin from '@/pages/Admin';
 import Database from '@/pages/Database';
 import RacerDetail from '@/pages/RacerDetail';
+import BuyAlerts from '@/pages/BuyAlerts';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -59,6 +60,7 @@ const AuthenticatedApp = () => {
           <Route path="/database" element={<Database />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/racer/:reg" element={<RacerDetail />} />
+          <Route path="/alerts" element={<BuyAlerts />} />
         </Route>
       </Route>
       <Route path="*" element={<PageNotFound />} />
