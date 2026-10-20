@@ -30,6 +30,14 @@ export default function EngineAlertBlock({ version, pred, stage }) {
         <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-black", isFinal ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-amber-50 text-amber-700 border border-amber-200")}>
           {isFinal ? "直前予想・確定" : "事前予想・暫定"}
         </span>
+        {pred?.final_judgment && (
+          <span className={cn(
+            "px-1.5 py-0.5 rounded text-[10px] font-black border",
+            pred.final_judgment === "BUY" ? "bg-[#fff1f6] text-[#d92d72] border-[#f6b6d0]" : "bg-slate-100 text-slate-600 border-slate-200",
+          )}>
+            {pred.final_judgment}
+          </span>
+        )}
         {pred?.ticket_count != null && <span className="text-[10px] text-slate-500">{pred.ticket_count}点買い</span>}
         {pred?.set_probability != null && (
           <span className="text-[10px] text-slate-600">セット的中率 <b className="text-slate-900">{pred.set_probability}%</b></span>

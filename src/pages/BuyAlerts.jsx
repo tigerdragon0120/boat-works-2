@@ -39,7 +39,7 @@ export default function BuyAlerts() {
         const [racePage, predPage] = await Promise.all([
           base44.entities.Race.filter({ race_date: { $in: dates } }, "deadline", 300),
           base44.entities.PredictionV6.filter(
-            { race_key: { $regex: `^(${dates.join("|")})` }, final_judgment: "BUY" },
+            { race_key: { $regex: `^(${dates.join("|")})` }, final_judgment: { $in: ["BUY", "WATCH"] } },
             { sort: "-computed_at", limit: 300, fields: ALERT_FIELDS },
           ),
         ]);
@@ -49,7 +49,7 @@ export default function BuyAlerts() {
         const raceByKey = new Map(races.map((r) => [String(r.race_key), r]));
         const raceById = new Map(races.map((r) => [r.id, r]));
 
-        // race_key単位でエンジン(v6.1/v6.2)・ステージ(PRE/FINAL)ごとに最新のBUY予想を持たせる
+        // race_key単位でエンジン(v6.1/v6.2)・ステージ(PRE/FINAL)ごとに最新のBUY/WATCH予想を持たせる
         const grouped = new Map();
         for (const p of preds) {
           if (p.status && p.status !== "COMPLETED") continue;
@@ -66,8 +66,15 @@ export default function BuyAlerts() {
 
         const stamp = Date.now();
         const list = [...grouped.values()]
-          .map((e) => ({ ...e, confirmed: Object.values(e.versions).some((v) => !!v.FINAL) }))
+          .map((e) => {
+            const preds = Object.values(e.versions).flatMap((v) => Object.values(v));
+            // エンジン(v6.1/v6.2)のどちらかがBUYならBUY、それ以外はWATCH候補として並べる
+            const judgment = preds.some((p) => p?.final_judgment === "BUY") ? "BUY" : "WATCH";
+            return { ...e, judgment, confirmed: Object.values(e.versions).some((v) => !!v.FINAL) };
+          })
           .sort((a, b) => {
+            // BUYを上、WATCHを下に。同じ判定内は締切が近い順(締切済みは末尾)。
+            if (a.judgment !== b.judgment) return a.judgment === "BUY" ? -1 : 1;
             const am = deadlineMs(a.race);
             const bm = deadlineMs(b.race);
             const aPast = am <= stamp;
@@ -93,6 +100,8 @@ export default function BuyAlerts() {
     return () => clearInterval(id);
   }, []);
 
+  const buyCount = rows.filter((r) => r.judgment === "BUY").length;
+  const watchCount = rows.length - buyCount;
   const confirmedCount = rows.filter((r) => r.confirmed).length;
   const urgentCount = rows.filter((r) => {
     const ms = deadlineMs(r.race);
@@ -108,8 +117,8 @@ export default function BuyAlerts() {
               <BellRing className="w-5 h-5 text-[#f02f7d]" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-lg sm:text-xl font-black text-[#123d9c]">BUYアラート</h1>
-              <div className="text-[10px] text-slate-500">合成(V6.1) または V6.2 がBUY判定したレース</div>
+              <h1 className="text-lg sm:text-xl font-black text-[#123d9c]">予想アラート</h1>
+              <div className="text-[10px] text-slate-500">合成(V6.1)・V6.2 が BUY / WATCH 判定したレース（BUY優先）</div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -139,9 +148,10 @@ export default function BuyAlerts() {
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
-          <span className="px-2.5 py-1 rounded-lg bg-[#fff1f6] border border-[#f6b6d0] font-black text-[#d92d72]">BUY {rows.length}レース</span>
-          <span className="px-2.5 py-1 rounded-lg bg-white border border-[#d4dde9] font-bold text-slate-600">確定 {confirmedCount}</span>
-          <span className="px-2.5 py-1 rounded-lg bg-white border border-[#d4dde9] font-bold text-slate-600">暫定 {rows.length - confirmedCount}</span>
+          <span className="px-2.5 py-1 rounded-lg bg-[#fff1f6] border border-[#f6b6d0] font-black text-[#d92d72]">BUY {buyCount}</span>
+          <span className="px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 font-black text-slate-600">WATCH {watchCount}</span>
+          <span className="px-2.5 py-1 rounded-lg bg-white border border-[#d4dde9] font-bold text-slate-600">直前予想確定 {confirmedCount}</span>
+          <span className="px-2.5 py-1 rounded-lg bg-white border border-[#d4dde9] font-bold text-slate-600">事前予想のみ {rows.length - confirmedCount}</span>
           <span className="px-2.5 py-1 rounded-lg bg-white border border-[#d4dde9] font-bold text-slate-600">30分以内に締切 {urgentCount}</span>
           <span className="ml-auto text-[10px] text-slate-500">{scope === "today" ? jstDate(0) : jstDate(1)} 開催分・締切が近い順（2分ごと自動更新）</span>
         </div>
@@ -156,7 +166,7 @@ export default function BuyAlerts() {
         <div className="rounded-xl border border-[#d4dde9] bg-white p-8 text-center text-xs text-slate-500">読み込み中…</div>
       ) : rows.length === 0 ? (
         <div className="rounded-xl border border-[#d4dde9] bg-white p-8 text-center">
-          <div className="text-sm font-black text-slate-900">{scope === "today" ? "本日" : "明日"}はBUY判定のレースがありません</div>
+          <div className="text-sm font-black text-slate-900">{scope === "today" ? "本日" : "明日"}はBUY/WATCH判定のレースがありません</div>
           <div className="mt-1 text-[11px] text-slate-500">
             展示・オッズ取得後に判定が確定すると、ここに表示されます。
           </div>

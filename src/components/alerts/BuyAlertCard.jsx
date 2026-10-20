@@ -11,7 +11,8 @@ function fmtTime(v) {
 }
 
 export default function BuyAlertCard({ row, now }) {
-  const { race, versions, confirmed } = row;
+  const { race, versions, confirmed, judgment } = row;
+  const isBuy = judgment === "BUY";
   const deadline = race?.deadline ? new Date(race.deadline).getTime() : null;
   const minutes = deadline != null ? Math.ceil((deadline - now) / 60000) : null;
   const expired = minutes != null && minutes <= 0;
@@ -22,11 +23,11 @@ export default function BuyAlertCard({ row, now }) {
     : Object.keys(versions);
 
   return (
-    <div className={cn("rounded-xl border bg-white overflow-hidden shadow-sm", confirmed ? "border-[#f6b6d0]" : "border-[#e8d8a6]")}>
-      <div className={cn("h-1", confirmed ? "bg-[#f02f7d]" : "bg-[#f2b500]")} />
+    <div className={cn("rounded-xl border bg-white overflow-hidden shadow-sm", !isBuy ? "border-[#d4dde9]" : confirmed ? "border-[#f6b6d0]" : "border-[#e8d8a6]")}>
+      <div className={cn("h-1", !isBuy ? "bg-slate-400" : confirmed ? "bg-[#f02f7d]" : "bg-[#f2b500]")} />
       <div className="px-3 py-2 flex items-center gap-2 flex-wrap border-b border-slate-100">
-        <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-black text-white", confirmed ? "bg-[#f02f7d]" : "bg-[#d99f00]")}>
-          {confirmed ? "確定BUY" : "暫定BUY"}
+        <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-black text-white", !isBuy ? "bg-slate-500" : confirmed ? "bg-[#f02f7d]" : "bg-[#d99f00]")}>
+          {!isBuy ? "WATCH" : confirmed ? "確定BUY" : "暫定BUY"}
         </span>
         <span className="font-black text-slate-900 text-sm sm:text-base">
           {race.venue_name || race.venue || race.venue_code} {race.race_number}R
