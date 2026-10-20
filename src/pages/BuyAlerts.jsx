@@ -27,6 +27,7 @@ export default function BuyAlerts() {
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(Date.now());
   const [refreshToken, setRefreshToken] = useState(0);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,7 +40,7 @@ export default function BuyAlerts() {
           base44.entities.Race.filter({ race_date: { $in: dates } }, "deadline", 300),
           base44.entities.PredictionV6.filter(
             { race_key: { $regex: `^(${dates.join("|")})` }, final_judgment: "BUY" },
-            "-computed_at", 300, ALERT_FIELDS,
+            { sort: "-computed_at", limit: 300, fields: ALERT_FIELDS },
           ),
         ]);
         if (cancelled) return;
@@ -75,6 +76,9 @@ export default function BuyAlerts() {
             return aPast ? bm - am : am - bm;
           });
         setRows(list);
+        setError(null);
+      } catch (e) {
+        if (!cancelled) setError(e?.message || String(e));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -143,7 +147,12 @@ export default function BuyAlerts() {
         </div>
       </div>
 
-      {loading && !rows.length ? (
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-center">
+          <div className="text-sm font-black text-red-700">予想の取得に失敗しました</div>
+          <div className="mt-1 text-[11px] text-red-600">{error}</div>
+        </div>
+      ) : loading && !rows.length ? (
         <div className="rounded-xl border border-[#d4dde9] bg-white p-8 text-center text-xs text-slate-500">読み込み中…</div>
       ) : rows.length === 0 ? (
         <div className="rounded-xl border border-[#d4dde9] bg-white p-8 text-center">
