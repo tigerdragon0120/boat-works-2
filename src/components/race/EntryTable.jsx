@@ -365,6 +365,7 @@ function TrifectaView({ probRank, evRank, rankMode, setRankMode }) {
 // 表示中エンジンの名称(買い目タブの見出し用)
 function engineLabel(version) {
   if (version === "v62") return "V6.2";
+  if (version === "v63") return "V6.3";
   if (version === "v5") return "V5";
   return "合成(V6.1)";
 }

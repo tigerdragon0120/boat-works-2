@@ -53,7 +53,7 @@ export default function BuyAlerts() {
         const grouped = new Map();
         for (const p of preds) {
           if (p.status && p.status !== "COMPLETED") continue;
-          if (!["v6.1", "v6.2"].includes(String(p.prediction_version))) continue;
+          if (!["v6.1", "v6.2", "v6.3"].includes(String(p.prediction_version))) continue;
           const race = raceByKey.get(String(p.race_key)) || raceById.get(p.race_id);
           if (!race) continue;
           const entry = grouped.get(String(p.race_key)) || { race, versions: {} };

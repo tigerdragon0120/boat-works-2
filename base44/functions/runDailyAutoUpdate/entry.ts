@@ -9,6 +9,8 @@ import { runAndSaveEnsemble } from '../../shared/predictionServiceEnsemble.js';
 // V6.1 policy bundle: 本命・買い目・シナリオ整合 + 1号艇逃げ利益型BUY
 import { runAndSavePredictionV61, verifyV61Prediction } from '../../shared/predictionServiceV61.js';
 import { runAndSavePredictionV62, verifyV62Prediction } from '../../shared/predictionServiceV62.js';
+// V6.3: V4・V6.2・V5を統合した合成エンジン
+import { runAndSavePredictionV63, verifyV63Prediction } from '../../shared/predictionServiceV63.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
@@ -453,6 +455,12 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
             payout: savedResult.payout || 0,
           });
           if (v62Verified) logs.push(`${venueName} R${raceNumber}: V6.2検証完了`);
+
+          const v63Verified = await verifyV63Prediction(base44, race, {
+            result_trifecta: savedResult.result_trifecta,
+            payout: savedResult.payout || 0,
+          });
+          if (v63Verified) logs.push(`${venueName} R${raceNumber}: V6.3検証完了`);
         }
       } catch (e: any) {
         errors.push(`${venueName} R${raceNumber}: V6.1検証失敗 ${e.message}`);
@@ -509,9 +517,10 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
   const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   if (!races.length) return { total: 0, v61_generated: 0, v62_generated: 0, remaining: 0 };
 
-  const [v61Preds, v62Preds] = await Promise.all([
+  const [v61Preds, v62Preds, v63Preds] = await Promise.all([
     withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
     withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.2', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
+    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.3', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
   ]);
   const doneKeys = (rows: any[]) => new Set(
     (rows || [])
@@ -520,6 +529,7 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
   );
   const v61Done = doneKeys(v61Preds);
   const v62Done = doneKeys(v62Preds);
+  const v63Done = doneKeys(v63Preds);
 
   // 締切が残っているレースを優先し、終了済みレースで時間予算を使わない。
   const priority = (r: any) => {
@@ -528,12 +538,12 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
     return Number.isFinite(ms) && ms > Date.now() ? 0 : 1;
   };
   const pending = races
-    .filter((r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key)))
+    .filter((r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key)) || !v63Done.has(String(r.race_key)))
     .sort((a: any, b: any) => priority(a) - priority(b));
 
   // 全レース分を限られた実行時間で埋めるため、4レースずつ並行して生成する。
   // 書き込み競合はwithRateLimitRetryが吸収し、失敗したレースは次回実行で再試行する。
-  let v61Generated = 0, v62Generated = 0;
+  let v61Generated = 0, v62Generated = 0, v63Generated = 0;
   const CONCURRENCY = 4;
   for (let i = 0; i < pending.length; i += CONCURRENCY) {
     if (Date.now() - startTime > timeBudgetMs - 3000) {
@@ -561,6 +571,15 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
             v62Generated++;
           }
         }
+        if (!v63Done.has(raceKey)) {
+          const savedV63 = await runAndSavePredictionV63(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+          if (savedV63?.skipped) {
+            errors.push(`V6.3 PRE ${race.venue_code} R${race.race_number}: ${savedV63.reason || 'skipped'}`);
+          } else {
+            v63Done.add(raceKey);
+            v63Generated++;
+          }
+        }
       } catch (e: any) {
         errors.push(`メインPRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
       }
@@ -570,10 +589,10 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
   // 「残り」は処理を試みた数ではなく、両エンジンとも保存できていない実レース数で数える。
   // 一時的なレート制限などで取りこぼしたレースを次回実行へ確実に残すため。
   const remaining = pending.filter(
-    (r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key))
+    (r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key)) || !v63Done.has(String(r.race_key))
   ).length;
-  logs.push(`メインPRE(${raceDate}): V6.1 ${v61Generated}R / V6.2 ${v62Generated}R 生成 / 残り${remaining}R`);
-  return { total: races.length, v61_generated: v61Generated, v62_generated: v62Generated, remaining, errors };
+  logs.push(`メインPRE(${raceDate}): V6.1 ${v61Generated}R / V6.2 ${v62Generated}R / V6.3 ${v63Generated}R 生成 / 残り${remaining}R`);
+  return { total: races.length, v61_generated: v61Generated, v62_generated: v62Generated, v63_generated: v63Generated, remaining, errors };
 }
 
 // =====================================================
@@ -932,10 +951,10 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
       // V6.1(PRE/FINAL)の120通りへも実オッズと期待値を反映する。
       // これにより事前予想タブでも締切前の実オッズ・期待値が表示される。
       // 予想確率自体は変更しない。
-      const v61Rows = await sr.PredictionV6.filter(
-        { race_id: race.id, prediction_version: 'v6.1' }, '-computed_at', 2
+      const oddsRows = await sr.PredictionV6.filter(
+        { race_id: race.id, prediction_version: { $in: ['v6.1', 'v6.3'] } }, '-computed_at', 8
       ).catch(() => []);
-      for (const row of v61Rows || []) {
+      for (const row of oddsRows || []) {
         const tris = (row.trifectas || []).map((t: any) => {
           const odds = oddsMap[t.combination] ?? null;
           return {
@@ -960,12 +979,13 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     let needsFinal = inFinalWindow && (forceFinalRefresh || oddsChanged || !race.has_final);
     if (inFinalWindow && !needsFinal) {
       // V6.1/V6.2は画面の「直前予想」そのもの。どちらか欠けていれば作り直す。
-      const [v61Fin, v62Fin, ensembleFin] = await Promise.all([
+      const [v61Fin, v62Fin, v63Fin, ensembleFin] = await Promise.all([
         sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.1' }, '-computed_at', 1).catch(() => []),
         sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.2' }, '-computed_at', 1).catch(() => []),
+        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.3' }, '-computed_at', 1).catch(() => []),
         sr.PredictionEnsemble.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1).catch(() => []),
       ]);
-      if (!v61Fin?.length || !v62Fin?.length || !ensembleFin?.length) needsFinal = true;
+      if (!v61Fin?.length || !v62Fin?.length || !v63Fin?.length || !ensembleFin?.length) needsFinal = true;
     }
     if (needsFinal) {
       const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
@@ -1018,6 +1038,22 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: V6.2 FINAL予想失敗 ${e.message}`);
+        }
+
+        // V6.3: V4(的中率)・V6.2(期待値)・V5(展開)を統合した買い目。
+        try {
+          let v63Result = await runAndSavePredictionV63(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          if (v63Result?.skipped) {
+            await sleep(2500);
+            v63Result = await runAndSavePredictionV63(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+          }
+          if (v63Result?.skipped) {
+            errors.push(`${venueName} R${raceNumber}: V6.3 FINAL未生成(${v63Result.reason || 'unknown'})`);
+          } else {
+            logs.push(`${venueName} R${raceNumber}: V6.3 FINAL予想生成 → ${v63Result?.result?.final_judgment || '判定保存'}`);
+          }
+        } catch (e: any) {
+          errors.push(`${venueName} R${raceNumber}: V6.3 FINAL予想失敗 ${e.message}`);
         }
 
         // V4・V3.1・V5展開・V6.1を合成した最終判断。画面と検証の主判定に使う。

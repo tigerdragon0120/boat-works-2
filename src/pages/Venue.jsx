@@ -6,6 +6,7 @@ import {
   getV61Stages, ensureV61Final,
   generateV61PredictionForRace,
   getV62Stages, ensureV62Final, generateV62PredictionForRace,
+  getV63Stages, ensureV63Final, generateV63PredictionForRace,
 } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
@@ -29,6 +30,8 @@ export default function Venue() {
   // v62Stages: V6.2(回収率重視)の事前予想(PRE)と直前予想(FINAL)。
   // V6.2タブを開いた時だけ読み込む。
   const [v62Stages, setV62Stages] = useState({ pre: null, final: null });
+  // v63Stages: V6.3(V4・V6.2・V5統合)の事前予想と直前予想。V6.3タブを開いた時だけ読み込む。
+  const [v63Stages, setV63Stages] = useState({ pre: null, final: null });
   const [stageTab, setStageTab] = useState(null);
   const [predictionVersion, setPredictionVersion] = useState("mix");
   const [busy, setBusy] = useState(false);
@@ -81,6 +84,7 @@ export default function Venue() {
     // レース切替時は必ず事前予想(PRE)を先に見せる
     setV61Stages({ pre: null, final: null });
     setV62Stages({ pre: null, final: null });
+    setV63Stages({ pre: null, final: null });
     setStageTab("PRE");
     setRaceResult(null);
 
@@ -171,6 +175,23 @@ export default function Venue() {
     return () => { cancelled = true; };
   }, [predictionVersion, selectedId, race?.race_key, race?.exhibition_ready]);
 
+  // V6.3タブを開いた時だけV6.3予想を読み込む。未生成なら背景で生成する。
+  useEffect(() => {
+    if (predictionVersion !== "v63" || !selectedId || !race) return undefined;
+    let cancelled = false;
+    const raceKey = race.race_key;
+    (async () => {
+      const stages = await getV63Stages(selectedId, raceKey);
+      if (cancelled) return;
+      setV63Stages(stages);
+      if (stages.final || !race.exhibition_ready) return;
+      await generateV63PredictionForRace(selectedId, "FINAL", false).catch(() => null);
+      if (cancelled) return;
+      setV63Stages(await getV63Stages(selectedId, raceKey));
+    })().catch((e) => console.warn("[Venue] V6.3 load failed:", e?.message || e));
+    return () => { cancelled = true; };
+  }, [predictionVersion, selectedId, race?.race_key, race?.exhibition_ready]);
+
   // 締切直前にバックエンドで生成されたFINAL予想を、ページを開いたままでも反映する。
   // loadDetailのように表示を一度クリアせず、予想部分だけを静かに更新する。
   const refreshPredictions = async () => {
@@ -239,6 +260,12 @@ export default function Venue() {
     if (predictionVersion === "v62" || ensuredV62) {
       setV62Stages(await getV62Stages(selectedRace.id, selectedRace.race_key));
     }
+
+    // V6.3は表示タブの時だけ生成・更新する(毎レースV4+V6.2を走らせないため)
+    if (predictionVersion === "v63") {
+      await ensureV63Final(selectedRace);
+      setV63Stages(await getV63Stages(selectedRace.id, selectedRace.race_key));
+    }
     } finally {
       refreshBusy.current = false;
     }
@@ -269,12 +296,16 @@ export default function Venue() {
       // (V5も合成予想の評価から算出するためV6.1を再実行する)。
       if (predictionVersion === "v62") {
         await generateV62PredictionForRace(selectedId, stage, true);
+      } else if (predictionVersion === "v63") {
+        await generateV63PredictionForRace(selectedId, stage, true);
       } else {
         await generateV61PredictionForRace(selectedId, stage, true);
       }
       await loadDetail();
       if (predictionVersion === "v62") {
         setV62Stages(await getV62Stages(selectedId, race?.race_key));
+      } else if (predictionVersion === "v63") {
+        setV63Stages(await getV63Stages(selectedId, race?.race_key));
       }
       await loadList();
       // 再実行した段階(事前/直前)のタブを表示したままにする
@@ -286,6 +317,10 @@ export default function Venue() {
         if (predictionVersion === "v62") {
           const refreshed = await getV62Stages(selectedId, race?.race_key);
           setV62Stages(refreshed);
+          recovered = !!refreshed[stage === "FINAL" ? "final" : "pre"];
+        } else if (predictionVersion === "v63") {
+          const refreshed = await getV63Stages(selectedId, race?.race_key);
+          setV63Stages(refreshed);
           recovered = !!refreshed[stage === "FINAL" ? "final" : "pre"];
         } else {
           const refreshed = await getV61Stages(selectedId, race?.race_key);
@@ -309,7 +344,9 @@ export default function Venue() {
   // 既定は事前予想。直前予想はタブを押した時だけ表示する。
   const effectiveStageTab = stageTab === "FINAL" ? "FINAL" : "PRE";
   // 表示ソースは選択中のエンジン(V6.2タブ選択時はV6.2予想)
-  const displayStages = predictionVersion === "v62" ? v62Stages : v61Stages;
+  const displayStages = predictionVersion === "v62" ? v62Stages
+    : predictionVersion === "v63" ? v63Stages
+    : v61Stages;
   const displayedCurrent = displayStages[effectiveStageTab === "FINAL" ? "final" : "pre"];
   const activePred = displayedCurrent?.pred;
   const activeBoats = [...(displayedCurrent?.boats || [])].sort((a, b) => a.boat_number - b.boat_number);

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 const STYLES = {
   "v6.1": { label: "合成(V6.1)", badge: "bg-fuchsia-600" },
   "v6.2": { label: "V6.2", badge: "bg-teal-500" },
+  "v6.3": { label: "V6.3", badge: "bg-indigo-500" },
 };
 
 const SCENARIO_LABEL = {

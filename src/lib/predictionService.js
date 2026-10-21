@@ -1078,6 +1078,95 @@ export async function ensureV62Final(race) {
   }
 }
 
+// ============================================================
+// V6.3(V4・V6.2・V5統合) — 保存形式はV6.2と同じ PredictionV6 / prediction_version="v6.3"
+// ============================================================
+export async function getV63Prediction(raceId, stage, raceKey) {
+  let list = await withRetry(() => base44.entities.PredictionV6.filter({
+    race_id: raceId, stage, prediction_version: "v6.3",
+  }, "-computed_at", 1)).catch(() => []);
+  if ((!list || !list.length) && raceKey) {
+    list = await withRetry(() => base44.entities.PredictionV6.filter({
+      race_key: raceKey, stage, prediction_version: "v6.3",
+    }, "-computed_at", 1)).catch(() => []);
+  }
+  return list && list[0];
+}
+
+// V6.3も艇評価は1着力までしか保存しないため、未保存項目は「—」表示にする。
+export function mapV63ToUI(v63Pred, stage) {
+  return mapV62ToUI(v63Pred, stage);
+}
+
+const v63PreRecoveryTried = new Set();
+export async function getV63Stages(raceId, raceKey) {
+  const [fin, pre] = await Promise.all([
+    getV63Prediction(raceId, "FINAL", raceKey),
+    getV63Prediction(raceId, "PRE", raceKey),
+  ]);
+
+  let prePred = pre;
+  // 事前予想が未生成なら画面表示時に一度だけ自動生成する(V6.1/V6.2と同じ挙動)
+  if ((!prePred || prePred.status !== "COMPLETED") && !v63PreRecoveryTried.has(raceId)) {
+    try {
+      await generateV63PredictionForRace(raceId, "PRE", false);
+      const retried = await getV63Prediction(raceId, "PRE", raceKey);
+      if (retried && (retried.status === "COMPLETED" || !retried.status)) {
+        prePred = retried;
+        v63PreRecoveryTried.add(raceId);
+      }
+    } catch (e) {
+      console.warn("[V6.3] PRE auto generation failed:", e?.message || e);
+    }
+  }
+
+  const finalMapped = fin && (fin.status === "COMPLETED" || !fin.status) ? mapV63ToUI(fin, "FINAL") : null;
+  const preMapped = prePred && (prePred.status === "COMPLETED" || !prePred.status) ? mapV63ToUI(prePred, "PRE") : null;
+
+  return {
+    final: finalMapped ? { stage: "FINAL", ...finalMapped } : null,
+    pre: preMapped ? { stage: "PRE", ...preMapped } : null,
+  };
+}
+
+export async function generateV63PredictionForRace(raceId, stage, force = false) {
+  const key = `v63:${raceId}:${stage}`;
+  const active = predictionGenerationInFlight.get(key);
+  if (active) return active;
+
+  const task = base44.functions.invoke("generateV63PredictionForRace", {
+    race_id: raceId, stage, force,
+  }).then(res => res?.data || res)
+    .finally(() => predictionGenerationInFlight.delete(key));
+  predictionGenerationInFlight.set(key, task);
+  return task;
+}
+
+const v63FinalRecoveryTriedAt = new Map();
+export async function ensureV63Final(race) {
+  if (!race?.id || !race?.exhibition_ready || !race?.deadline) return null;
+  if (new Date(race.deadline).getTime() <= Date.now()) return null;
+  const existing = await getV63Prediction(race.id, "FINAL", race.race_key);
+  if (existing && (existing.status === "COMPLETED" || !existing.status)) return existing;
+
+  const now = Date.now();
+  const lastTriedAt = Number(v63FinalRecoveryTriedAt.get(race.id) || 0);
+  if (now - lastTriedAt < PREDICTION_RETRY_COOLDOWN_MS) return null;
+  v63FinalRecoveryTriedAt.set(race.id, now);
+  try {
+    await generateV63PredictionForRace(race.id, "FINAL", false);
+    const generated = await getV63Prediction(race.id, "FINAL", race.race_key);
+    if (generated && (generated.status === "COMPLETED" || !generated.status)) {
+      v63FinalRecoveryTriedAt.delete(race.id);
+      return generated;
+    }
+    return null;
+  } catch (e) {
+    console.warn("[V6.3] FINAL auto generation failed:", e?.message || e);
+    return null;
+  }
+}
+
 // V4・V3.1・V5展開・V6.1を締切前データだけで合成した最終予想。
 export async function resolveEnsemblePrediction(raceId, raceKey) {
   let list = await withRetry(() => base44.entities.PredictionEnsemble.filter({

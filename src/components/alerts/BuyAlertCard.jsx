@@ -4,7 +4,7 @@ import { ChevronRight, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import EngineAlertBlock from "@/components/alerts/EngineAlertBlock";
 
-const ENGINE_ORDER = ["v6.1", "v6.2"];
+const ENGINE_ORDER = ["v6.1", "v6.3", "v6.2"];
 
 function fmtTime(v) {
   return v ? new Date(v).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "--:--";
