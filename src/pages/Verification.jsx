@@ -12,6 +12,7 @@ import V3V31Comparison from "@/components/verification/V3V31Comparison";
 import V2V5Comparison from "@/components/verification/V2V5Comparison";
 import V61Performance from "@/components/verification/V61Performance";
 import V62Performance from "@/components/verification/V62Performance";
+import V63Performance from "@/components/verification/V63Performance";
 import AllVersionsSummary from "@/components/verification/AllVersionsSummary";
 
 export default function Verification() {
@@ -31,12 +32,12 @@ export default function Verification() {
 
   if (loading) return <div className="text-center py-20 text-slate-400 text-sm">読み込み中…</div>;
 
-  if (!summary || summary.total === 0) {
+  if (!summary) {
     return (
       <div>
         <Header onReload={load} />
         <div className="text-center py-20 text-slate-400 text-sm bg-white rounded-2xl border border-dashed border-slate-200">
-          まだ合成FINALの検証結果がありません。<br />次の結果確定から、V4・V3.1・V5・V6.1合成BUYの的中率と回収率を自動集計します。
+          検証データを取得できませんでした。しばらくしてから更新してください。
         </div>
       </div>
     );
@@ -158,6 +159,19 @@ export default function Verification() {
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
           <V62Performance />
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-end justify-between gap-2 mb-2">
+          <div>
+            <div className="text-[10px] font-bold text-indigo-600">V6.3 INTEGRATED ENGINE — V4 × V6.2 × V5</div>
+            <h2 className="font-display font-black text-slate-900 text-lg">的中率・期待値・展開を統合した買い目の成績</h2>
+          </div>
+          <div className="text-[10px] text-slate-400">V4 3点 + V6.2 2点 + V5 1〜2点</div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <V63Performance />
         </div>
       </section>
 
