@@ -88,7 +88,7 @@ function buildV5Scenarios(entries, v4, v62) {
   const scenarios = boats.map((x) => {
     const p5 = ownProb.get(x.boat) || 0;
     const p62s = v62ByFirst.get(x.boat) || 0;
-    const probability = v62s > 0 ? p5 * 0.6 + p62s * 0.4 : p5;
+    const probability = p62s > 0 ? p5 * 0.6 + p62s * 0.4 : p5;
     return {
       first_boat: x.boat,
       probability: round2(probability),
@@ -212,17 +212,22 @@ function selectTicketsV63(fused, v4, v62, v5, boat1Active) {
   const valueSource = "V5";
   const valuePicks = [];
   for (const scenario of (v5?.scenarios || []).slice(0, 2)) {
+    // オッズ未取得(PRE)の時は期待値が計算できないため、融合確率で中配当枠を選ぶ
     const candidates = fused.filter((t) => {
       const parts = t.combination.split("-").map(Number);
-      return parts[0] === scenario.first_boat &&
-        (t.actual_odds || 0) >= VALUE_MIN_ODDS &&
-        (t.expected_value || 0) >= VALUE_MIN_EV;
+      if (parts[0] !== scenario.first_boat) return false;
+      if (t.actual_odds != null) {
+        return t.actual_odds >= VALUE_MIN_ODDS && num(t.expected_value, 0) >= VALUE_MIN_EV;
+      }
+      return t.probability >= 1.0;
     });
     const followers = new Set(scenario.followers || []);
+    const byValue = (a, b) =>
+      (a.actual_odds != null ? num(b.expected_value, 0) - num(a.expected_value, 0) : b.probability - a.probability);
     const preferred = candidates
       .filter((t) => followers.has(Number(t.combination.split("-")[1])))
-      .sort((a, b) => num(b.expected_value, 0) - num(a.expected_value, 0))[0];
-    const best = preferred || candidates.sort((a, b) => num(b.expected_value, 0) - num(a.expected_value, 0))[0];
+      .sort(byValue)[0];
+    const best = preferred || candidates.sort(byValue)[0];
     if (best) valuePicks.push(best);
   }
   valuePicks.slice(0, 2).forEach((t) => push(t.combination, valueSource));
@@ -313,9 +318,9 @@ function computeSetMetricsV63(selected, fused) {
     set_expected_recovery: recovery,
     synthetic_odds: setProbability > 0 ? round1(10000 / setProbability) : null,
     investment: rows.length * 100,
-    min_payout: oddsValues.length ? Math.min(...oddsValues) * 100 : null,
-    max_payout: oddsValues.length ? Math.max(...oddsValues) * 100 : null,
-    avg_payout: oddsValues.length ? (oddsValues.reduce((s, o) => s + o, 0) / oddsValues.length) * 100 : null,
+    min_payout: oddsValues.length ? Math.round(Math.min(...oddsValues) * 100) : null,
+    max_payout: oddsValues.length ? Math.round(Math.max(...oddsValues) * 100) : null,
+    avg_payout: oddsValues.length ? Math.round((oddsValues.reduce((s, o) => s + o, 0) / oddsValues.length) * 100) : null,
     odds_complete: oddsComplete,
     best_ev_ticket: [...rows].sort((a, b) => num(b.expected_value, -1) - num(a.expected_value, -1))[0]?.combination || null,
   };
