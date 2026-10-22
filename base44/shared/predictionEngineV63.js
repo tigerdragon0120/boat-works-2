@@ -34,10 +34,19 @@ const V63_PROBABILITY_WEIGHTS = { v4: 0.40, v62: 0.45, v5: 0.15 };
 
 const MIN_TICKETS = 6;
 const MAX_TICKETS = 8;
-const BUY_RECOVERY_THRESHOLD = 100;
-const MIN_PAYOUT_RATIO = 1.25;
-const MIN_SET_PROBABILITY = 20;
-const MIN_FIRST_CONFIDENCE = 48;
+// ============================================================
+// V6.3の目標: 的中率16% / 回収率150%
+//   セット的中確率(6〜8点の確率合計)がそのまま的中率の見込みになるため、
+//   16%前後の帯だけを対象にし、上限を超える帯(人気サイド)は配当が細るので除外する。
+//   回収率は「想定回収150%以上」+「1点の上限払戻が投資の1.5倍以上」の両方で担保する。
+// ============================================================
+const TARGET_HIT_RATE = 16;
+const TARGET_RECOVERY = 150;
+const BUY_RECOVERY_THRESHOLD = TARGET_RECOVERY;
+const MIN_SET_PROBABILITY = TARGET_HIT_RATE - 6;   // 10%: 目標的中率に届きうる下限
+const MAX_SET_PROBABILITY = TARGET_HIT_RATE + 6;   // 22%: これ以上は配当が細り回収率が落ちる
+const MIN_PAYOUT_RATIO = TARGET_RECOVERY / 100;    // 的中1点で投資の1.5倍以上
+const MIN_FIRST_CONFIDENCE = 45;
 const VALUE_MIN_ODDS = 15;   // V5枠で拾う中配当の下限オッズ
 const VALUE_MIN_EV = 105;    // V5枠に求める最低期待値(%)
 
@@ -335,58 +344,72 @@ function judgeV63({ stage, setMetrics, firstProbs, v4, v62, v5, selection, boat1
   const setProb = setMetrics?.set_probability ?? 0;
   const recovery = setMetrics?.set_expected_recovery;
   const investment = setMetrics?.investment || 0;
-  const minPayout = setMetrics?.min_payout;
-  const payoutSafe = minPayout != null && investment > 0 && minPayout >= investment * MIN_PAYOUT_RATIO;
+  const maxPayout = setMetrics?.max_payout;
+  // 的中した1点で投資額の1.5倍(回収率150%)を取り返せる構成か
+  const payoutUpsideOk = maxPayout != null && investment > 0 && maxPayout >= investment * MIN_PAYOUT_RATIO;
   const scenarioKey = v62?.winning_scenario || null;
   const blocked = BLOCKED_SCENARIOS.includes(scenarioKey);
   const engineBuy = v4?.final_judgment === "BUY" || v62?.final_judgment === "BUY";
+  // 目標(的中16%/回収150%)を狙うため、片方のエンジンがBUYなら支持とみなす。
+  // 両方がSKIPのレースだけは支持なしとして除外する。
+  const engineSupport = engineBuy ||
+    (v4?.final_judgment != null && v62?.final_judgment != null &&
+     v4.final_judgment !== "SKIP" && v62.final_judgment !== "SKIP");
+  const inTargetBand = setProb >= MIN_SET_PROBABILITY && setProb <= MAX_SET_PROBABILITY;
   const boat1CoverageOk = !boat1Active || selection.boat1Covered === true;
 
   const votes = `V4(${v4?.final_judgment || "—"})・V6.2(${v62?.final_judgment || "—"})・V5(${v5?.verdict || "—"})`;
 
   if (stage === "FINAL") {
-    if (blocked && engineBuy && setProb >= MIN_SET_PROBABILITY) {
+    if (!inTargetBand) {
+      return setProb > MAX_SET_PROBABILITY
+        ? { judgment: "SKIP", reason: `V6.3 セット${setProb}%は目標的中率${TARGET_HIT_RATE}%に対して過剰(配当細り) — ${votes}` }
+        : { judgment: "SKIP", reason: `V6.3 セット${setProb}%は目標的中率${TARGET_HIT_RATE}%に届かず — ${votes}` };
+    }
+    if (blocked) {
       return { judgment: "WATCH", reason: `V6.3 弱点シナリオ除外(${scenarioKey}) — ${votes}` };
     }
-    if (!boat1CoverageOk && engineBuy && setProb >= MIN_SET_PROBABILITY) {
+    if (!boat1CoverageOk) {
       return { judgment: "WATCH", reason: `V6.3 1号艇カバー外 — ${votes}` };
     }
-    if (engineBuy && boat1CoverageOk && recovery != null && recovery >= BUY_RECOVERY_THRESHOLD &&
-        setProb >= MIN_SET_PROBABILITY && firstConfidence >= MIN_FIRST_CONFIDENCE && payoutSafe) {
-      return {
-        judgment: "BUY",
-        reason: `V6.3 統合BUY(${votes} / 想定回収${recovery}%・セット${setProb}%・1着信頼度${round1(firstConfidence)}・最低払戻¥${Math.round(minPayout)})`,
-      };
-    }
-    if (engineBuy && setProb >= MIN_SET_PROBABILITY && !payoutSafe) {
+    if (!payoutUpsideOk) {
       return {
         judgment: "WATCH",
-        reason: `V6.3 配当不足(最低払戻¥${minPayout != null ? Math.round(minPayout) : "—"} < 投資¥${investment}×${MIN_PAYOUT_RATIO}) — ${votes}`,
+        reason: `V6.3 配当上限不足(最高払戻¥${maxPayout != null ? Math.round(maxPayout) : "—"} < 投資¥${investment}×${MIN_PAYOUT_RATIO}=回収${TARGET_RECOVERY}%) — ${votes}`,
       };
     }
-    if (engineBuy && setProb >= MIN_SET_PROBABILITY && recovery != null && recovery < BUY_RECOVERY_THRESHOLD) {
+    if (recovery == null) {
+      return { judgment: "WATCH", reason: `V6.3 オッズ未取得 — ${votes}` };
+    }
+    if (engineSupport && recovery >= BUY_RECOVERY_THRESHOLD && firstConfidence >= MIN_FIRST_CONFIDENCE) {
+      return {
+        judgment: "BUY",
+        reason: `V6.3 目標BUY(的中${TARGET_HIT_RATE}%・回収${TARGET_RECOVERY}%狙い / ${votes} / 想定回収${recovery}%・セット${setProb}%・1着信頼度${round1(firstConfidence)}・最高払戻¥${Math.round(maxPayout)})`,
+      };
+    }
+    if (recovery < BUY_RECOVERY_THRESHOLD) {
       return { judgment: "WATCH", reason: `V6.3 想定回収${recovery}%<${BUY_RECOVERY_THRESHOLD}% — ${votes}` };
     }
-    if (setProb >= 15) {
-      return { judgment: "WATCH", reason: `V6.3 根拠不足(セット${setProb}%・1着信頼度${round1(firstConfidence)}) — ${votes}` };
+    if (!engineSupport) {
+      return { judgment: "WATCH", reason: `V6.3 エンジン支持なし(V4・V6.2ともSKIP以外の買いなし) — ${votes}` };
     }
-    return { judgment: "SKIP", reason: `V6.3 予測不安定(セット${setProb}%) — ${votes}` };
+    return { judgment: "WATCH", reason: `V6.3 1着信頼度${round1(firstConfidence)}<${MIN_FIRST_CONFIDENCE} — ${votes}` };
   }
 
-  // PRE: オッズ未確定のため期待回収率は判定に使わない
-  if (engineBuy && boat1CoverageOk && !blocked && setProb >= MIN_SET_PROBABILITY && firstConfidence >= MIN_FIRST_CONFIDENCE) {
-    return {
-      judgment: "BUY",
-      reason: `V6.3 PRE暫定BUY(${votes} / セット${setProb}%・1着信頼度${round1(firstConfidence)})`,
-    };
+  // PRE: オッズ未確定のため期待回収率は判定に使わない(目標はセット確率の帯で担保)
+  if (!inTargetBand) {
+    return { judgment: "SKIP", reason: `V6.3 PRE セット${setProb}%は目標的中率${TARGET_HIT_RATE}%の帯外 — ${votes}` };
   }
-  if (engineBuy && blocked) {
+  if (blocked) {
     return { judgment: "WATCH", reason: `V6.3 PRE弱点シナリオ(${scenarioKey}) — ${votes}` };
   }
-  if (setProb >= 15) {
-    return { judgment: "WATCH", reason: `V6.3 PRE(セット${setProb}%・1着信頼度${round1(firstConfidence)}) — ${votes}` };
+  if (engineSupport && boat1CoverageOk && firstConfidence >= MIN_FIRST_CONFIDENCE) {
+    return {
+      judgment: "BUY",
+      reason: `V6.3 PRE暫定BUY(目標 的中${TARGET_HIT_RATE}%/回収${TARGET_RECOVERY}% / ${votes} / セット${setProb}%・1着信頼度${round1(firstConfidence)})`,
+    };
   }
-  return { judgment: "SKIP", reason: `V6.3 PRE予測不安定 — ${votes}` };
+  return { judgment: "WATCH", reason: `V6.3 PRE(セット${setProb}%・1着信頼度${round1(firstConfidence)}) — ${votes}` };
 }
 
 // ============================================================

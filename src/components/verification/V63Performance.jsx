@@ -4,6 +4,10 @@ import { getV63Summary } from "@/lib/v63ComparisonSummary";
 import { Target, Coins, CheckCircle2, RefreshCw, DollarSign, AlertTriangle, Layers, PlayCircle, CalendarDays, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// V6.3エンジンの目標値(predictionEngineV63.jsと同一)
+const TARGET_HIT_RATE = 16;
+const TARGET_RECOVERY = 150;
+
 const PERIODS = [
   { label: "7日", value: 7 },
   { label: "30日", value: 30 },
@@ -115,14 +119,14 @@ export default function V63Performance() {
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Stat icon={Target} label="BUY数" value={data.buy_count} unit="R" tone="text-indigo-600" />
-            <Stat icon={CheckCircle2} label="的中数" value={data.hits} unit="R" tone="text-emerald-600" sub={`的中率 ${data.hit_rate}%`} />
+            <Stat icon={CheckCircle2} label="的中数" value={data.hits} unit="R" tone="text-emerald-600" sub={`的中率 ${data.hit_rate}% ・目標${TARGET_HIT_RATE}%`} />
             <Stat
               icon={Coins}
               label="回収率"
               value={data.recovery_rate}
               unit="%"
-              tone={data.recovery_rate >= 110 ? "text-emerald-600" : "text-rose-500"}
-              sub={`投資¥${fmt(data.investment)} → 払戻¥${fmt(data.payout)}`}
+              tone={data.recovery_rate >= TARGET_RECOVERY ? "text-emerald-600" : "text-rose-500"}
+              sub={`目標${TARGET_RECOVERY}% ・投資¥${fmt(data.investment)} → 払戻¥${fmt(data.payout)}`}
             />
             <Stat icon={DollarSign} label="利益額" value={fmt(data.profit)} unit="円" tone={data.profit > 0 ? "text-emerald-600" : "text-rose-500"} />
           </div>
@@ -155,7 +159,7 @@ export default function V63Performance() {
                         <div className="text-[11px] font-black text-slate-700">{t.tickets}点</div>
                         <div className="text-lg font-black text-slate-900 mt-0.5">{t.hit_rate}<span className="text-[10px] text-slate-400">%</span></div>
                         <div className="text-[9px] text-slate-400">的中 {t.hits}/{t.count}</div>
-                        <div className={cn("mt-1 text-[11px] font-bold", t.recovery_rate >= 110 ? "text-emerald-600" : "text-slate-500")}>回収 {t.recovery_rate}%</div>
+                        <div className={cn("mt-1 text-[11px] font-bold", t.recovery_rate >= TARGET_RECOVERY ? "text-emerald-600" : "text-slate-500")}>回収 {t.recovery_rate}%</div>
                       </div>
                     ))}
                   </div>
@@ -174,7 +178,7 @@ export default function V63Performance() {
                     <div className="text-[9px] text-slate-400">的中率 {data.watch?.hits || 0}R</div>
                   </div>
                   <div>
-                    <div className={cn("text-lg font-black", (data.watch?.recovery_rate || 0) >= 110 ? "text-emerald-600" : "text-slate-900")}>
+                    <div className={cn("text-lg font-black", (data.watch?.recovery_rate || 0) >= TARGET_RECOVERY ? "text-emerald-600" : "text-slate-900")}>
                       {data.watch?.recovery_rate ?? 0}%
                     </div>
                     <div className="text-[9px] text-slate-400">仮回収率</div>
@@ -184,11 +188,12 @@ export default function V63Performance() {
             </div>
           </div>
 
-          {data.recovery_rate < 110 && data.buy_count > 0 && (
+          {data.buy_count > 0 && (data.recovery_rate < TARGET_RECOVERY || data.hit_rate < TARGET_HIT_RATE) && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
               <div className="text-[11px] text-amber-700 font-medium">
-                目標110%まであと{Math.max(0, 110 - data.recovery_rate).toFixed(1)}pt。検証レースが増えるほど精度が上がります。
+                目標は的中率{TARGET_HIT_RATE}%・回収率{TARGET_RECOVERY}%。現在は的中率{Math.max(0, TARGET_HIT_RATE - data.hit_rate).toFixed(1)}pt差・回収率
+                {Math.max(0, TARGET_RECOVERY - data.recovery_rate).toFixed(1)}pt差。検証レースが増えるほど精度が上がります。
               </div>
             </div>
           )}
@@ -247,7 +252,7 @@ function V63RecordRow({ row }) {
         {judgment === "BUY" && (
           <span className="ml-auto text-slate-600">
             払戻 ¥{fmt(row.v63_payout)} ·{" "}
-            <b className={cn((row.v63_recovery_rate || 0) >= 110 ? "text-emerald-600" : "text-slate-500")}>回収率 {row.v63_recovery_rate || 0}%</b>
+            <b className={cn((row.v63_recovery_rate || 0) >= TARGET_RECOVERY ? "text-emerald-600" : "text-slate-500")}>回収率 {row.v63_recovery_rate || 0}%</b>
           </span>
         )}
       </div>
