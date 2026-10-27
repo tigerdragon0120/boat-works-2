@@ -13,6 +13,7 @@ const STAGE_TABS = [
 // 表示は「合成(V6.1)」と「V5」の2タブのみ。合成=V6.1が唯一の予想ソース。
 const VERSION_TABS = [
   { key: "mix", label: "合成", sub: "V6.1", activeCls: "bg-fuchsia-600 text-white shadow-sm" },
+  { key: "v64", label: "V6.4", sub: "合議", activeCls: "bg-emerald-600 text-white shadow-sm" },
   { key: "v63", label: "V6.3", sub: "統合", activeCls: "bg-indigo-500 text-white shadow-sm" },
   { key: "v62", label: "V6.2", sub: "回収型", activeCls: "bg-teal-500 text-white shadow-sm" },
   { key: "v5", label: "V5", sub: "展開", activeCls: "bg-cyan-500 text-slate-950 shadow-sm" },
@@ -31,7 +32,11 @@ export default function PredictionPanel({
 
   const hasPred = !!activePred;
   const isV5 = predictionVersion === "v5";
-  const engineLabel = isV5 ? "V5" : predictionVersion === "v62" ? "V6.2" : predictionVersion === "v63" ? "V6.3" : "合成(V6.1)";
+  const engineLabel = isV5 ? "V5"
+    : predictionVersion === "v62" ? "V6.2"
+    : predictionVersion === "v63" ? "V6.3"
+    : predictionVersion === "v64" ? "V6.4"
+    : "合成(V6.1)";
   const stageLabel = stage === "FINAL" ? "直前予想" : stage === "PRE" ? "事前予想" : "予想待ち";
 
   return (
@@ -46,8 +51,9 @@ export default function PredictionPanel({
           {isV5 && <span className="text-[10px] font-bold text-cyan-500">展開シナリオ</span>}
           {predictionVersion === "v62" && <span className="text-[10px] font-bold text-teal-600">回収率重視</span>}
           {predictionVersion === "v63" && <span className="text-[10px] font-bold text-indigo-600">V4+V6.2+V5</span>}
+          {predictionVersion === "v64" && <span className="text-[10px] font-bold text-emerald-600">V6.1+V6.2+V6.3 合議</span>}
         </div>
-        <div className="grid grid-cols-4 gap-1 rounded-lg bg-slate-100 p-1">
+        <div className="grid grid-cols-5 gap-1 rounded-lg bg-slate-100 p-1">
           {VERSION_TABS.map((v) => (
             <button
               key={v.key}

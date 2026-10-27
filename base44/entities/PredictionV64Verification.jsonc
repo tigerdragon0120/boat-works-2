@@ -1,0 +1,131 @@
+{
+  "name": "PredictionV64Verification",
+  "type": "object",
+  "description": "V6.4(V6.1\u30fbV6.2\u30fbV6.3\u5408\u8b70)\u691c\u8a3c\u7d50\u679c\u3002\u5408\u8b70\u3067\u7d5e\u3063\u305f6\u301c8\u70b9\u306e\u7684\u4e2d\u30fb\u56de\u53ce\u7387\u3092\u8a18\u9332\u3059\u308b\u3002",
+  "properties": {
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "actual_result": {
+      "type": "string"
+    },
+    "actual_first_boat": {
+      "type": "number"
+    },
+    "v64_pre_prediction": {
+      "type": "string"
+    },
+    "v64_final_prediction": {
+      "type": "string"
+    },
+    "v64_pre_hit": {
+      "type": "boolean"
+    },
+    "v64_final_hit": {
+      "type": "boolean"
+    },
+    "v64_recommended_hit": {
+      "type": "boolean",
+      "description": "V6.4\u63a8\u5968\u8cb7\u3044\u76ee(6-8\u70b9)\u7684\u4e2d"
+    },
+    "v64_final_judgment": {
+      "type": "string",
+      "enum": [
+        "BUY",
+        "WATCH",
+        "SKIP"
+      ]
+    },
+    "v64_ticket_count": {
+      "type": "number"
+    },
+    "v64_ticket_strategy": {
+      "type": "string",
+      "description": "\u5408\u8b70/\u5358\u72ec\u306e\u70b9\u6570\u5185\u8a33"
+    },
+    "v64_selected_trifectas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "v64_payout": {
+      "type": "number"
+    },
+    "v64_investment": {
+      "type": "number"
+    },
+    "v64_recovery_rate": {
+      "type": "number"
+    },
+    "v64_first_boat": {
+      "type": "number"
+    },
+    "v64_axis_count": {
+      "type": "number"
+    },
+    "v64_escape_probability": {
+      "type": "number"
+    },
+    "v64_winning_scenario": {
+      "type": "string"
+    },
+    "v64_set_expected_recovery": {
+      "type": "number",
+      "description": "\u4fdd\u5b58\u6642\u306e\u30bb\u30c3\u30c8\u671f\u5f85\u56de\u53ce\u7387(\u4fdd\u5b88\u7684\u898b\u7a4d\u308a)"
+    },
+    "v64_min_payout": {
+      "type": "number"
+    },
+    "v64_consensus_votes": {
+      "type": "string",
+      "description": "\u5224\u5b9a\u7406\u7531(3\u30a8\u30f3\u30b8\u30f3\u306e\u5224\u5b9a\u5185\u8a33)"
+    },
+    "outcome_class": {
+      "type": "string",
+      "enum": [
+        "HIT_PROFIT",
+        "HIT_LOW_VALUE",
+        "MISS_FIRST",
+        "MISS_SECOND",
+        "MISS_THIRD",
+        "MISS_OTHER"
+      ]
+    },
+    "miss_reason_primary": {
+      "type": "string"
+    },
+    "miss_reason_secondary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "miss_analysis": {
+      "type": "object"
+    },
+    "factor_snapshot": {
+      "type": "object"
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "race_id"
+  ]
+}

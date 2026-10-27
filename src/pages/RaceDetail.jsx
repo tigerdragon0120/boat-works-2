@@ -7,6 +7,7 @@ import {
   generateV61PredictionForRace,
   getV62Stages, ensureV62Final, generateV62PredictionForRace,
   getV63Stages, generateV63PredictionForRace,
+  getV64Stages, generateV64PredictionForRace,
 } from "@/lib/predictionService";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
@@ -25,6 +26,8 @@ export default function RaceDetail() {
   const [v62Stages, setV62Stages] = useState({ pre: null, final: null });
   // v63Stages: V6.3(V4・V6.2・V5統合)の事前予想と直前予想。V6.3タブを開いた時だけ読み込む。
   const [v63Stages, setV63Stages] = useState({ pre: null, final: null });
+  // v64Stages: V6.4(V6.1・V6.2・V6.3合議)の事前予想と直前予想。V6.4タブを開いた時だけ読み込む。
+  const [v64Stages, setV64Stages] = useState({ pre: null, final: null });
   const [stageTab, setStageTab] = useState(null);
   const [predictionVersion, setPredictionVersion] = useState("mix");
   const [loading, setLoading] = useState(true);
@@ -43,6 +46,7 @@ export default function RaceDetail() {
       setV61Stages({ pre: null, final: null });
       setV62Stages({ pre: null, final: null });
       setV63Stages({ pre: null, final: null });
+      setV64Stages({ pre: null, final: null });
       setStageTab("PRE");
     }
 
@@ -62,6 +66,8 @@ export default function RaceDetail() {
       setV62Stages(await getV62Stages(id, r?.race_key));
     } else if (predictionVersion === "v63") {
       setV63Stages(await getV63Stages(id, r?.race_key));
+    } else if (predictionVersion === "v64") {
+      setV64Stages(await getV64Stages(id, r?.race_key));
     }
 
     // 表示タブに依存せずV6.2も自動生成し、オッズ取得後の再試行を保証する。
@@ -126,6 +132,23 @@ export default function RaceDetail() {
     return () => { cancelled = true; };
   }, [predictionVersion, id, race?.race_key, race?.exhibition_ready]);
 
+  // V6.4タブを開いた時だけV6.4予想を読み込む。未生成なら背景で生成する。
+  useEffect(() => {
+    if (predictionVersion !== "v64" || !id || !race) return undefined;
+    let cancelled = false;
+    const raceKey = race.race_key;
+    (async () => {
+      const stages = await getV64Stages(id, raceKey);
+      if (cancelled) return;
+      setV64Stages(stages);
+      if (stages.final || !race.exhibition_ready) return;
+      await generateV64PredictionForRace(id, "FINAL", false).catch(() => null);
+      if (cancelled) return;
+      setV64Stages(await getV64Stages(id, raceKey));
+    })().catch((e) => console.warn("[RaceDetail] V6.4 load failed:", e?.message || e));
+    return () => { cancelled = true; };
+  }, [predictionVersion, id, race?.race_key, race?.exhibition_ready]);
+
   // 締切6分前から締切1分後まで、最新FINAL予想を10秒ごとに再取得する。
   // オッズはバックエンドで取得・保存されるため、ここでは画面の古い表示だけを更新する。
   useEffect(() => {
@@ -181,6 +204,8 @@ export default function RaceDetail() {
         await generateV62PredictionForRace(id, stage, true);
       } else if (predictionVersion === "v63") {
         await generateV63PredictionForRace(id, stage, true);
+      } else if (predictionVersion === "v64") {
+        await generateV64PredictionForRace(id, stage, true);
       } else {
         await generateV61PredictionForRace(id, stage, true);
       }
@@ -200,6 +225,10 @@ export default function RaceDetail() {
         } else if (predictionVersion === "v63") {
           const refreshed = await getV63Stages(id, race?.race_key);
           setV63Stages(refreshed);
+          recovered = !!refreshed[stage === "FINAL" ? "final" : "pre"];
+        } else if (predictionVersion === "v64") {
+          const refreshed = await getV64Stages(id, race?.race_key);
+          setV64Stages(refreshed);
           recovered = !!refreshed[stage === "FINAL" ? "final" : "pre"];
         } else {
           const refreshed = await getV61Stages(id, race?.race_key);
@@ -224,6 +253,7 @@ export default function RaceDetail() {
   // 表示ソースは選択中のエンジン(V6.2タブ選択時はV6.2予想)
   const displayStages = predictionVersion === "v62" ? v62Stages
     : predictionVersion === "v63" ? v63Stages
+    : predictionVersion === "v64" ? v64Stages
     : v61Stages;
   const displayedCurrent = displayStages[effectiveStageTab === "FINAL" ? "final" : "pre"];
   const activePred = displayedCurrent?.pred;

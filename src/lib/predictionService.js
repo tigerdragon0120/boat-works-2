@@ -1142,6 +1142,94 @@ export async function generateV63PredictionForRace(raceId, stage, force = false)
   return task;
 }
 
+// ============================================================
+// V6.4(V6.1・V6.2・V6.3合議) — 保存形式はV6.3と同じ PredictionV6 / prediction_version="v6.4"
+// ============================================================
+export async function getV64Prediction(raceId, stage, raceKey) {
+  let list = await withRetry(() => base44.entities.PredictionV6.filter({
+    race_id: raceId, stage, prediction_version: "v6.4",
+  }, "-computed_at", 1)).catch(() => []);
+  if ((!list || !list.length) && raceKey) {
+    list = await withRetry(() => base44.entities.PredictionV6.filter({
+      race_key: raceKey, stage, prediction_version: "v6.4",
+    }, "-computed_at", 1)).catch(() => []);
+  }
+  return list && list[0];
+}
+
+// V6.4も艇評価は1着力までしか保存しないため、未保存項目は「—」表示にする。
+export function mapV64ToUI(v64Pred, stage) {
+  return mapV62ToUI(v64Pred, stage);
+}
+
+const v64PreRecoveryTried = new Set();
+export async function getV64Stages(raceId, raceKey) {
+  const [fin, pre] = await Promise.all([
+    getV64Prediction(raceId, "FINAL", raceKey),
+    getV64Prediction(raceId, "PRE", raceKey),
+  ]);
+
+  let prePred = pre;
+  if ((!prePred || prePred.status !== "COMPLETED") && !v64PreRecoveryTried.has(raceId)) {
+    try {
+      await generateV64PredictionForRace(raceId, "PRE", false);
+      const retried = await getV64Prediction(raceId, "PRE", raceKey);
+      if (retried && (retried.status === "COMPLETED" || !retried.status)) {
+        prePred = retried;
+        v64PreRecoveryTried.add(raceId);
+      }
+    } catch (e) {
+      console.warn("[V6.4] PRE auto generation failed:", e?.message || e);
+    }
+  }
+
+  const finalMapped = fin && (fin.status === "COMPLETED" || !fin.status) ? mapV64ToUI(fin, "FINAL") : null;
+  const preMapped = prePred && (prePred.status === "COMPLETED" || !prePred.status) ? mapV64ToUI(prePred, "PRE") : null;
+
+  return {
+    final: finalMapped ? { stage: "FINAL", ...finalMapped } : null,
+    pre: preMapped ? { stage: "PRE", ...preMapped } : null,
+  };
+}
+
+export async function generateV64PredictionForRace(raceId, stage, force = false) {
+  const key = `v64:${raceId}:${stage}`;
+  const active = predictionGenerationInFlight.get(key);
+  if (active) return active;
+
+  const task = base44.functions.invoke("generateV64PredictionForRace", {
+    race_id: raceId, stage, force,
+  }).then(res => res?.data || res)
+    .finally(() => predictionGenerationInFlight.delete(key));
+  predictionGenerationInFlight.set(key, task);
+  return task;
+}
+
+const v64FinalRecoveryTriedAt = new Map();
+export async function ensureV64Final(race) {
+  if (!race?.id || !race?.exhibition_ready || !race?.deadline) return null;
+  if (new Date(race.deadline).getTime() <= Date.now()) return null;
+  const existing = await getV64Prediction(race.id, "FINAL", race.race_key);
+  if (existing && (existing.status === "COMPLETED" || !existing.status)) return existing;
+
+  const now = Date.now();
+  const lastTriedAt = Number(v64FinalRecoveryTriedAt.get(race.id) || 0);
+  if (now - lastTriedAt < PREDICTION_RETRY_COOLDOWN_MS) return null;
+  v64FinalRecoveryTriedAt.set(race.id, now);
+  try {
+    await generateV64PredictionForRace(race.id, "FINAL", false);
+    const generated = await getV64Prediction(race.id, "FINAL", race.race_key);
+    if (generated && (generated.status === "COMPLETED" || !generated.status)) {
+      v64FinalRecoveryTriedAt.delete(race.id);
+      return generated;
+    }
+    return null;
+  } catch (e) {
+    console.warn("[V6.4] FINAL auto generation failed:", e?.message || e);
+    return null;
+  }
+}
+
 const v63FinalRecoveryTriedAt = new Map();
 export async function ensureV63Final(race) {
   if (!race?.id || !race?.exhibition_ready || !race?.deadline) return null;
