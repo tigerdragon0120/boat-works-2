@@ -325,7 +325,7 @@ function computeSetMetricsV63(selected, fused) {
   return {
     set_probability: round2(setProbability),
     set_expected_recovery: recovery,
-    synthetic_odds: setProbability > 0 ? round1(10000 / setProbability) : null,
+    synthetic_odds: setProbability > 0 ? round1(100 / setProbability) : null,
     investment: rows.length * 100,
     min_payout: oddsValues.length ? Math.round(Math.min(...oddsValues) * 100) : null,
     max_payout: oddsValues.length ? Math.round(Math.max(...oddsValues) * 100) : null,
