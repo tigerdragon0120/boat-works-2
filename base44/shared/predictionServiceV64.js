@@ -77,7 +77,17 @@ export async function runAndSavePredictionV64(client, race, entries, settings, s
     });
 
     const effectiveOddsMap = normalizeOddsMap(oddsMap);
-    const result = runPredictionV64(entriesWithProfiles, race, settings, { stage, oddsMap: effectiveOddsMap });
+
+    // その日最初に取得したオッズ(EARLY)を読み、直前オッズの動き判定に使う
+    let earlyOddsMap = {};
+    try {
+      const earlyRows = await sr.OddsSnapshot.filter({ race_id: race.id, stage: "EARLY" }, "-captured_at", 1);
+      earlyOddsMap = normalizeOddsMap(earlyRows?.[0]?.odds_map || {});
+    } catch { earlyOddsMap = {}; }
+
+    const result = runPredictionV64(entriesWithProfiles, race, settings, {
+      stage, oddsMap: effectiveOddsMap, earlyOddsMap,
+    });
     if (result?.error) return { skipped: true, reason: result.error };
 
     const { id: predictionId } = await getOrCreateV64Prediction(client, race.id, race.race_key, stage);

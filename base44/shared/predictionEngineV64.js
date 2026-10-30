@@ -40,6 +40,11 @@ const PRE_MAX_SET_PROBABILITY = 25; // PRE(オッズ未取得)で配当細りを
 const MAX_ODDS = 500;             // 現実的に拾える上限オッズ
 const MIN_FIRST_CONFIDENCE = 40;
 const BLOCKED_SCENARIOS = ["5_6_ATTACK"];
+// モデル確率が市場確率を上回ってよい上限(pt)。これを超える乖離は
+// 「モデルが市場の見立てを無視して強気になっている」状態で、実際に外れている。
+const MAX_MARKET_GAP = 12;
+// 直前オッズの上昇率上限(%)。買い目が直前に売れずに上がる=市場が離れた合図。
+const MAX_ODDS_DRIFT = 40;
 
 const probOf = (t) => num(t?.race_probability ?? t?.calibrated_probability ?? t?.probability, 0);
 
@@ -237,8 +242,15 @@ function computeSetMetricsV64(selected, combos) {
     ? round1(rows.reduce((s, t) => s + num(t.p_min) * t.actual_odds, 0) / rows.length)
     : null;
 
+  // 市場(オッズ)が示すセット確率。全120通りの implied 合計で正規化して控除率を消す。
+  const impliedAll = combos.reduce((s, t) => s + (t.actual_odds > 0 ? 1 / t.actual_odds : 0), 0);
+  const impliedSet = rows.reduce((s, t) => s + (t.actual_odds > 0 ? 1 / t.actual_odds : 0), 0);
+  const marketSetProbability = impliedAll > 0 ? round2((impliedSet / impliedAll) * 100) : null;
+
   return {
     set_probability: round2(setProbability),
+    market_set_probability: marketSetProbability,
+    market_gap: marketSetProbability != null ? round2(setProbability - marketSetProbability) : null,
     set_expected_recovery: recovery,
     conservative_recovery: conservativeRecovery,
     synthetic_odds: setProbability > 0 ? round1(10000 / setProbability) : null,
@@ -254,7 +266,7 @@ function computeSetMetricsV64(selected, combos) {
 // ============================================================
 // 判定
 // ============================================================
-function judgeV64({ stage, setMetrics, firstProbs, v61, v62, v63, selection, boat1Active }) {
+function judgeV64({ stage, setMetrics, firstProbs, v61, v62, v63, selection, boat1Active, oddsMovement }) {
   const sortedFirst = [...firstProbs].sort((a, b) => b - a);
   const firstConfidence = clamp(sortedFirst[0] + ((sortedFirst[0] - sortedFirst[1]) || 0) * 0.5, 0, 100);
   const setProb = setMetrics?.set_probability ?? 0;
@@ -270,6 +282,14 @@ function judgeV64({ stage, setMetrics, firstProbs, v61, v62, v63, selection, boa
   const blocked = BLOCKED_SCENARIOS.includes(scenarioKey);
   const boat1CoverageOk = !boat1Active || selection.boat1Covered === true;
   const payoutFloorOk = minPayout != null && investment > 0 && minPayout >= investment * MIN_PAYOUT_RATIO;
+  const marketGap = setMetrics?.market_gap ?? null;
+  const marketSetProb = setMetrics?.market_set_probability ?? null;
+  const marketGapOk = marketGap == null || marketGap <= MAX_MARKET_GAP;
+  const driftOk = oddsMovement == null || oddsMovement <= MAX_ODDS_DRIFT;
+  const marketText = marketGap != null
+    ? `市場乖離+${marketGap}pt(モデル${setProb}% / 市場${marketSetProb}%)`
+    : "市場乖離—";
+  const moveText = oddsMovement != null ? `オッズ動向${oddsMovement > 0 ? "+" : ""}${oddsMovement}%` : "オッズ動向—";
 
   if (stage === "FINAL") {
     if (buyVotes === 0) {
@@ -283,6 +303,18 @@ function judgeV64({ stage, setMetrics, firstProbs, v61, v62, v63, selection, boa
     }
     if (blocked) {
       return { judgment: "WATCH", reason: `V6.4 弱点シナリオ除外(${scenarioKey}) — ${voteText}` };
+    }
+    if (!marketGapOk) {
+      return {
+        judgment: "WATCH",
+        reason: `V6.4 市場乖離が過大(+${marketGap}pt>${MAX_MARKET_GAP}pt / モデル${setProb}% vs 市場${marketSetProb}%) — ${voteText}`,
+      };
+    }
+    if (!driftOk) {
+      return {
+        judgment: "WATCH",
+        reason: `V6.4 直前にオッズが上昇(${oddsMovement}%>${MAX_ODDS_DRIFT}%・市場が離れた) — ${voteText}`,
+      };
     }
     if (conservative == null) {
       return { judgment: "WATCH", reason: `V6.4 オッズ未取得(保守的期待値を算出できず) — ${voteText}` };
@@ -304,7 +336,7 @@ function judgeV64({ stage, setMetrics, firstProbs, v61, v62, v63, selection, boa
     }
     return {
       judgment: "BUY",
-      reason: `V6.4 BUY(合議${buyVotes}/3・保守的回収${conservative}%・セット${setProb}%・1着信頼度${round1(firstConfidence)}・最低払戻¥${Math.round(minPayout)}) — ${voteText}`,
+      reason: `V6.4 BUY(合議${buyVotes}/3・保守的回収${conservative}%・セット${setProb}%・1着信頼度${round1(firstConfidence)}・最低払戻¥${Math.round(minPayout)}・${marketText}・${moveText}) — ${voteText}`,
     };
   }
 
@@ -355,6 +387,18 @@ export function runPredictionV64(entries, race, settings, options = {}) {
   // 4. セット指標
   const setMetrics = computeSetMetricsV64(selection.selected, combos);
 
+  // 4b. 直前オッズの動き(その日最初のオッズ → 締切直前オッズ)を選択買い目で平均する
+  const earlyOddsMap = options.earlyOddsMap || {};
+  const comboOdds = new Map(combos.map((c) => [c.combination, c.actual_odds]));
+  const moves = selection.selected
+    .map((c) => {
+      const a = num(earlyOddsMap[c], 0);
+      const b = num(comboOdds.get(c), 0);
+      return a > 0 && b > 0 ? ((b - a) / a) * 100 : null;
+    })
+    .filter((x) => x != null);
+  const oddsMovement = moves.length >= 3 ? round1(moves.reduce((s, x) => s + x, 0) / moves.length) : null;
+
   // 5. 1着確率(合議後)
   const firstTotals = new Map();
   for (const c of combos) {
@@ -366,7 +410,7 @@ export function runPredictionV64(entries, race, settings, options = {}) {
 
   // 6. 判定
   const { judgment, reason } = judgeV64({
-    stage, setMetrics, firstProbs, v61, v62, v63, selection, boat1Active,
+    stage, setMetrics, firstProbs, v61, v62, v63, selection, boat1Active, oddsMovement,
   });
 
   const firstSorted = [...firstProbs].sort((a, b) => b - a);
@@ -417,6 +461,9 @@ export function runPredictionV64(entries, race, settings, options = {}) {
     ticket_strategy: `合議${selection.consensusCount}点 + 単独${selection.selected.length - selection.consensusCount}点`,
     expand_reason: `合議=2エンジン以上の一致 / 期待値は最も低い確率×オッズ / 配当下限=投資×${MIN_PAYOUT_RATIO}`,
     set_metrics: setMetrics,
+    market_set_probability: setMetrics?.market_set_probability ?? null,
+    market_gap: setMetrics?.market_gap ?? null,
+    odds_movement: oddsMovement,
     data_confidence: round1(
       [v61?.data_confidence, v62?.data_confidence, v63?.data_confidence]
         .filter((d) => Number.isFinite(Number(d)))
@@ -455,6 +502,9 @@ export function runPredictionV64(entries, race, settings, options = {}) {
       first_confidence: round1(firstConfidence),
       set_probability: setMetrics?.set_probability ?? null,
       conservative_recovery: setMetrics?.conservative_recovery ?? null,
+      market_set_probability: setMetrics?.market_set_probability ?? null,
+      market_gap: setMetrics?.market_gap ?? null,
+      odds_movement: oddsMovement,
     },
     engine_votes: {
       v61: v61?.final_judgment || null,

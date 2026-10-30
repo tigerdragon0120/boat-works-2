@@ -961,6 +961,20 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     const forceFinalRefresh = race.final_refresh_required === true;
 
     if (oddsChanged) {
+      // その日最初に取得したオッズをEARLYとして1件だけ残す。
+      // 締切直前のFINALオッズと比べることで「直前にどちらへ動いたか」を判定できる。
+      try {
+        const earlyRows = await sr.OddsSnapshot.filter({ race_id: race.id, stage: 'EARLY' }, '-captured_at', 1);
+        if (!earlyRows?.length) {
+          await withRateLimitRetry(() => sr.OddsSnapshot.create({
+            race_id: race.id, stage: 'EARLY', odds_map: oddsMap,
+            captured_at: new Date().toISOString(), source: 'LOCAL',
+          }), 3);
+        }
+      } catch (e: any) {
+        errors.push(`${venueName} R${raceNumber}: EARLYオッズ保存 ${e.message}`);
+      }
+
       // OddsSnapshot保存
       // 1件の429で自動更新全体が失敗扱いにならないよう、リトライで吸収する。
       await withRateLimitRetry(() => sr.OddsSnapshot.create({

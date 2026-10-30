@@ -9,8 +9,10 @@
       "type": "string",
       "enum": [
         "PRE",
+        "EARLY",
         "FINAL"
-      ]
+      ],
+      "description": "PRE=\u4e8b\u524d\u4e88\u60f3\u7528 / EARLY=\u305d\u306e\u65e5\u6700\u521d\u306b\u53d6\u5f97\u3057\u305f\u30aa\u30c3\u30ba(\u76f4\u524d\u30aa\u30c3\u30ba\u306e\u52d5\u304d\u5224\u5b9a\u306e\u57fa\u6e96) / FINAL=\u7de0\u5207\u76f4\u524d\u306e\u30aa\u30c3\u30ba"
     },
     "odds_map": {
       "type": "object",
