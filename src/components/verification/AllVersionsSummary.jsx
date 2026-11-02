@@ -5,6 +5,7 @@ import { getV61Summary } from "@/lib/v61ComparisonSummary";
 import { getV62Summary } from "@/lib/v62ComparisonSummary";
 import { getV63Summary } from "@/lib/v63ComparisonSummary";
 import { getV64Summary } from "@/lib/v64ComparisonSummary";
+import { getV65Summary } from "@/lib/v65ComparisonSummary";
 import { dedupeVerifications } from "@/lib/verificationUtils";
 
 const pct = n => Math.round(Number(n || 0) * 10) / 10;
@@ -34,7 +35,7 @@ function v5FromV2(rows) {
 export default function AllVersionsSummary(){
  const [rows,setRows]=useState(null);
  useEffect(()=>{(async()=>{try{
-  const [v12,v3,v31,v4,v2rows,v61,v62,v63,v64]=await Promise.all([
+  const [v12,v3,v31,v4,v2rows,v61,v62,v63,v64,v65]=await Promise.all([
    getV2VerificationSummary().catch(()=>null),
    base44.entities.PredictionV3Verification.list("-verified_at",1000).catch(()=>[]),
    base44.entities.PredictionV31Verification.list("-created_date",1000).catch(()=>[]),
@@ -43,7 +44,8 @@ export default function AllVersionsSummary(){
    getV61Summary(0).catch(()=>null),
    getV62Summary(0).catch(()=>null),
    getV63Summary(0).catch(()=>null),
-   getV64Summary(0).catch(()=>null)
+   getV64Summary(0).catch(()=>null),
+   getV65Summary(0).catch(()=>null)
   ]);
   const data=[
    normal("V1",v12?.v1?.buy_count,v12?.v1?.buy_hits,v12?.v1?.buy_hit_rate,v12?.v1?.buy_recovery_rate),
@@ -55,7 +57,8 @@ export default function AllVersionsSummary(){
    normal("V6.1",v61?.buy_count,v61?.hits,v61?.hit_rate,v61?.recovery_rate),
    normal("V6.2",v62?.buy_count,v62?.hits,v62?.hit_rate,v62?.recovery_rate),
    normal("V6.3",v63?.buy_count,v63?.hits,v63?.hit_rate,v63?.recovery_rate),
-   normal("V6.4",v64?.buy_count,v64?.hits,v64?.hit_rate,v64?.recovery_rate)
+   normal("V6.4",v64?.buy_count,v64?.hits,v64?.hit_rate,v64?.recovery_rate),
+   normal("V6.5",v65?.buy_count,v65?.hits,v65?.hit_rate,v65?.recovery_rate)
   ]; setRows(data);
  }catch(e){console.error("AllVersionsSummary",e);setRows([])}})()},[]);
  if(rows===null)return <div className="py-5 text-center text-sm text-slate-400">V1〜V6.4を集計中…</div>;

@@ -35,7 +35,7 @@ const MIN_TICKETS = 6;
 const MAX_TICKETS = 8;
 const MIN_TICKET_PROBABILITY = 0.8;   // これ未満の薄い買い目は6点を超えて足さない
 const MAX_ODDS = 500;
-const MIN_FIRST_CONFIDENCE = 45;
+const MIN_AXIS_CONFIDENCE = 50;       // 軸艇が1着を取る確率(セットの土台)
 const BUY_SET_PROBABILITY = { PRE: 24, FINAL: 28 };
 const WATCH_SET_PROBABILITY = 18;
 const AXIS_SINGLE_THRESHOLD = 55;     // 1着1位がこの確率以上なら1軸に絞る
@@ -153,11 +153,11 @@ function computeSetMetrics(selected, combos) {
 // ============================================================
 // 判定
 // ============================================================
-function judge({ stage, setMetrics, firstConfidence, axisBoats, boat1Active, boat1Covered }) {
+function judge({ stage, setMetrics, axisConfidence, axisBoats, boat1Active, boat1Covered }) {
   const setProb = setMetrics?.set_probability ?? 0;
   const axisText = `軸${axisBoats.join("・")}号艇`;
   const setText = `セット的中率${setProb}%`;
-  const confText = `1着信頼度${round1(firstConfidence)}`;
+  const confText = `軸1着率${round1(axisConfidence)}%`;
   const buyThreshold = BUY_SET_PROBABILITY[stage] ?? BUY_SET_PROBABILITY.FINAL;
 
   if (stage === "FINAL" && boat1Active && !boat1Covered) {
@@ -166,10 +166,10 @@ function judge({ stage, setMetrics, firstConfidence, axisBoats, boat1Active, boa
   if (setProb < WATCH_SET_PROBABILITY) {
     return { judgment: "SKIP", reason: `V6.5 女子戦 荒れ想定(${setText}<${WATCH_SET_PROBABILITY}%) — ${axisText}・${confText}` };
   }
-  if (setProb < buyThreshold || firstConfidence < MIN_FIRST_CONFIDENCE) {
+  if (setProb < buyThreshold || axisConfidence < MIN_AXIS_CONFIDENCE) {
     return {
       judgment: "WATCH",
-      reason: `V6.5 女子戦 ${setText}/${buyThreshold}%未満 または ${confText}<${MIN_FIRST_CONFIDENCE} — ${axisText}`,
+      reason: `V6.5 女子戦 ${setText}/${buyThreshold}%未満 または ${confText}<${MIN_AXIS_CONFIDENCE}% — ${axisText}`,
     };
   }
   const recoveryText = setMetrics?.set_expected_recovery != null
@@ -200,10 +200,15 @@ export function runPredictionV65(entries, race, settings, options = {}) {
 
   const firstProbs = firstRanking.map((x) => x.probability);
   const gap = firstProbs.length > 1 ? firstProbs[0] - firstProbs[1] : 0;
-  const firstConfidence = clamp(firstProbs[0] + gap * 0.5, 0, 100);
+  // 軸(1着候補)が1着を取る確率。買い目は軸の1着から組むため、この値で判定する。
+  const axisConfidence = clamp(
+    axisBoats.reduce((s, boat) => s + (firstRanking.find((x) => x.boat === boat)?.probability || 0), 0),
+    0,
+    100
+  );
 
   const { judgment, reason } = judge({
-    stage, setMetrics, firstConfidence, axisBoats, boat1Active, boat1Covered,
+    stage, setMetrics, axisConfidence, axisBoats, boat1Active, boat1Covered,
   });
 
   const firstBoats = firstRanking.map((x) => x.boat);
@@ -268,7 +273,7 @@ export function runPredictionV65(entries, race, settings, options = {}) {
     second_ranking: secondRanking,
     third_ranking: thirdRanking,
     first_probability_gap: round2(gap),
-    first_confidence: round1(firstConfidence),
+    first_confidence: round1(axisConfidence),
     escape_probability: base.escape_probability ?? null,
     winning_scenario: base.winning_scenario || null,
     scenario_scores: base.scenario_scores || [],
@@ -284,7 +289,7 @@ export function runPredictionV65(entries, race, settings, options = {}) {
       odds: base.factor_snapshot?.odds ?? null,
       scenario: null,
       escape_prob: base.escape_probability ?? null,
-      first_confidence: round1(firstConfidence),
+      first_confidence: round1(axisConfidence),
       set_probability: setMetrics?.set_probability ?? null,
       womens_axis: axisBoats,
       womens_first_factor: WOMENS_FIRST_FACTOR,

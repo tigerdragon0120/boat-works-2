@@ -19,6 +19,9 @@ const VERSION_TABS = [
   { key: "v5", label: "V5", sub: "展開", activeCls: "bg-cyan-500 text-slate-950 shadow-sm" },
 ];
 
+// V6.5は女子戦専用エンジン。女子戦のレースだけタブに表示する。
+const V65_TAB = { key: "v65", label: "V6.5", sub: "女子", activeCls: "bg-rose-500 text-white shadow-sm" };
+
 export default function PredictionPanel({
   race, stage, stageTab, stages, onStageTabChange,
   run, busy, entries, activePred, activeBoats, allTri, compareData,
@@ -32,10 +35,14 @@ export default function PredictionPanel({
 
   const hasPred = !!activePred;
   const isV5 = predictionVersion === "v5";
+  const isWomensRace = race?.is_womens === true
+    || /女子|レディース|ヴィーナス/i.test(`${race?.series_name || ""} ${race?.race_name || ""}`);
+  const versionTabs = isWomensRace ? [...VERSION_TABS, V65_TAB] : VERSION_TABS;
   const engineLabel = isV5 ? "V5"
     : predictionVersion === "v62" ? "V6.2"
     : predictionVersion === "v63" ? "V6.3"
     : predictionVersion === "v64" ? "V6.4"
+    : predictionVersion === "v65" ? "V6.5(女子)"
     : "合成(V6.1)";
   const stageLabel = stage === "FINAL" ? "直前予想" : stage === "PRE" ? "事前予想" : "予想待ち";
 
@@ -52,9 +59,10 @@ export default function PredictionPanel({
           {predictionVersion === "v62" && <span className="text-[10px] font-bold text-teal-600">回収率重視</span>}
           {predictionVersion === "v63" && <span className="text-[10px] font-bold text-indigo-600">V4+V6.2+V5</span>}
           {predictionVersion === "v64" && <span className="text-[10px] font-bold text-emerald-600">V6.1+V6.2+V6.3 合議</span>}
+          {predictionVersion === "v65" && <span className="text-[10px] font-bold text-rose-500">女子戦 的中率特化</span>}
         </div>
-        <div className="grid grid-cols-5 gap-1 rounded-lg bg-slate-100 p-1">
-          {VERSION_TABS.map((v) => (
+        <div className={cn("grid gap-1 rounded-lg bg-slate-100 p-1", versionTabs.length >= 6 ? "grid-cols-6" : "grid-cols-5")}>
+          {versionTabs.map((v) => (
             <button
               key={v.key}
               type="button"

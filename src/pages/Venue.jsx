@@ -8,6 +8,7 @@ import {
   getV62Stages, ensureV62Final, generateV62PredictionForRace,
   getV63Stages, ensureV63Final, generateV63PredictionForRace,
   getV64Stages, ensureV64Final, generateV64PredictionForRace,
+  getV65Stages, ensureV65Final, generateV65PredictionForRace,
 } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
@@ -35,6 +36,8 @@ export default function Venue() {
   const [v63Stages, setV63Stages] = useState({ pre: null, final: null });
   // v64Stages: V6.4(V6.1・V6.2・V6.3合議)の事前予想と直前予想。V6.4タブを開いた時だけ読み込む。
   const [v64Stages, setV64Stages] = useState({ pre: null, final: null });
+  // v65Stages: V6.5(女子戦・的中率特化)の事前予想と直前予想。女子戦のレースだけ読み込む。
+  const [v65Stages, setV65Stages] = useState({ pre: null, final: null });
   const [stageTab, setStageTab] = useState(null);
   const [predictionVersion, setPredictionVersion] = useState("mix");
   const [busy, setBusy] = useState(false);
@@ -88,6 +91,7 @@ export default function Venue() {
     setV61Stages({ pre: null, final: null });
     setV62Stages({ pre: null, final: null });
     setV63Stages({ pre: null, final: null });
+    setV65Stages({ pre: null, final: null });
     setStageTab("PRE");
     setRaceResult(null);
 
@@ -212,6 +216,23 @@ export default function Venue() {
     return () => { cancelled = true; };
   }, [predictionVersion, selectedId, race?.race_key, race?.exhibition_ready]);
 
+  // V6.5(女子戦)タブを開いた時だけV6.5予想を読み込む。未生成なら背景で生成する。
+  useEffect(() => {
+    if (predictionVersion !== "v65" || !selectedId || !race) return undefined;
+    let cancelled = false;
+    const raceKey = race.race_key;
+    (async () => {
+      const stages = await getV65Stages(selectedId, raceKey);
+      if (cancelled) return;
+      setV65Stages(stages);
+      if (stages.final || !race.exhibition_ready) return;
+      await generateV65PredictionForRace(selectedId, "FINAL", false).catch(() => null);
+      if (cancelled) return;
+      setV65Stages(await getV65Stages(selectedId, raceKey));
+    })().catch((e) => console.warn("[Venue] V6.5 load failed:", e?.message || e));
+    return () => { cancelled = true; };
+  }, [predictionVersion, selectedId, race?.race_key, race?.exhibition_ready]);
+
   // 締切直前にバックエンドで生成されたFINAL予想を、ページを開いたままでも反映する。
   // loadDetailのように表示を一度クリアせず、予想部分だけを静かに更新する。
   const refreshPredictions = async () => {
@@ -292,6 +313,12 @@ export default function Venue() {
       await ensureV64Final(selectedRace);
       setV64Stages(await getV64Stages(selectedRace.id, selectedRace.race_key));
     }
+
+    // V6.5(女子戦)も表示タブの時だけ生成・更新する
+    if (predictionVersion === "v65") {
+      await ensureV65Final(selectedRace);
+      setV65Stages(await getV65Stages(selectedRace.id, selectedRace.race_key));
+    }
     } finally {
       refreshBusy.current = false;
     }
@@ -326,6 +353,8 @@ export default function Venue() {
         await generateV63PredictionForRace(selectedId, stage, true);
       } else if (predictionVersion === "v64") {
         await generateV64PredictionForRace(selectedId, stage, true);
+      } else if (predictionVersion === "v65") {
+        await generateV65PredictionForRace(selectedId, stage, true);
       } else {
         await generateV61PredictionForRace(selectedId, stage, true);
       }
@@ -336,6 +365,8 @@ export default function Venue() {
         setV63Stages(await getV63Stages(selectedId, race?.race_key));
       } else if (predictionVersion === "v64") {
         setV64Stages(await getV64Stages(selectedId, race?.race_key));
+      } else if (predictionVersion === "v65") {
+        setV65Stages(await getV65Stages(selectedId, race?.race_key));
       }
       await loadList();
       // 再実行した段階(事前/直前)のタブを表示したままにする
@@ -355,6 +386,10 @@ export default function Venue() {
         } else if (predictionVersion === "v64") {
           const refreshed = await getV64Stages(selectedId, race?.race_key);
           setV64Stages(refreshed);
+          recovered = !!refreshed[stage === "FINAL" ? "final" : "pre"];
+        } else if (predictionVersion === "v65") {
+          const refreshed = await getV65Stages(selectedId, race?.race_key);
+          setV65Stages(refreshed);
           recovered = !!refreshed[stage === "FINAL" ? "final" : "pre"];
         } else {
           const refreshed = await getV61Stages(selectedId, race?.race_key);
@@ -381,6 +416,7 @@ export default function Venue() {
   const displayStages = predictionVersion === "v62" ? v62Stages
     : predictionVersion === "v63" ? v63Stages
     : predictionVersion === "v64" ? v64Stages
+    : predictionVersion === "v65" ? v65Stages
     : v61Stages;
   const displayedCurrent = displayStages[effectiveStageTab === "FINAL" ? "final" : "pre"];
   const activePred = displayedCurrent?.pred;

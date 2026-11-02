@@ -1230,6 +1230,94 @@ export async function ensureV64Final(race) {
   }
 }
 
+// ============================================================
+// V6.5(女子戦・的中率特化) — 保存形式はV6.4と同じ PredictionV6 / prediction_version="v6.5"
+// ============================================================
+export async function getV65Prediction(raceId, stage, raceKey) {
+  let list = await withRetry(() => base44.entities.PredictionV6.filter({
+    race_id: raceId, stage, prediction_version: "v6.5",
+  }, "-computed_at", 1)).catch(() => []);
+  if ((!list || !list.length) && raceKey) {
+    list = await withRetry(() => base44.entities.PredictionV6.filter({
+      race_key: raceKey, stage, prediction_version: "v6.5",
+    }, "-computed_at", 1)).catch(() => []);
+  }
+  return list && list[0];
+}
+
+// V6.5も艇評価は1着力までしか保存しないため、V6.2と同じマッピングを使う。
+export function mapV65ToUI(v65Pred, stage) {
+  return mapV62ToUI(v65Pred, stage);
+}
+
+const v65PreRecoveryTried = new Set();
+export async function getV65Stages(raceId, raceKey) {
+  const [fin, pre] = await Promise.all([
+    getV65Prediction(raceId, "FINAL", raceKey),
+    getV65Prediction(raceId, "PRE", raceKey),
+  ]);
+
+  let prePred = pre;
+  if ((!prePred || prePred.status !== "COMPLETED") && !v65PreRecoveryTried.has(raceId)) {
+    try {
+      await generateV65PredictionForRace(raceId, "PRE", false);
+      const retried = await getV65Prediction(raceId, "PRE", raceKey);
+      if (retried && (retried.status === "COMPLETED" || !retried.status)) {
+        prePred = retried;
+        v65PreRecoveryTried.add(raceId);
+      }
+    } catch (e) {
+      console.warn("[V6.5] PRE auto generation failed:", e?.message || e);
+    }
+  }
+
+  const finalMapped = fin && (fin.status === "COMPLETED" || !fin.status) ? mapV65ToUI(fin, "FINAL") : null;
+  const preMapped = prePred && (prePred.status === "COMPLETED" || !prePred.status) ? mapV65ToUI(prePred, "PRE") : null;
+
+  return {
+    final: finalMapped ? { stage: "FINAL", ...finalMapped } : null,
+    pre: preMapped ? { stage: "PRE", ...preMapped } : null,
+  };
+}
+
+export async function generateV65PredictionForRace(raceId, stage, force = false) {
+  const key = `v65:${raceId}:${stage}`;
+  const active = predictionGenerationInFlight.get(key);
+  if (active) return active;
+
+  const task = base44.functions.invoke("generateV65PredictionForRace", {
+    race_id: raceId, stage, force,
+  }).then(res => res?.data || res)
+    .finally(() => predictionGenerationInFlight.delete(key));
+  predictionGenerationInFlight.set(key, task);
+  return task;
+}
+
+const v65FinalRecoveryTriedAt = new Map();
+export async function ensureV65Final(race) {
+  if (!race?.id || !race?.exhibition_ready || !race?.deadline) return null;
+  if (new Date(race.deadline).getTime() <= Date.now()) return null;
+  const existing = await getV65Prediction(race.id, "FINAL", race.race_key);
+  if (existing && (existing.status === "COMPLETED" || !existing.status)) return existing;
+
+  const now = Date.now();
+  const lastTriedAt = Number(v65FinalRecoveryTriedAt.get(race.id) || 0);
+  if (now - lastTriedAt < PREDICTION_RETRY_COOLDOWN_MS) return null;
+  v65FinalRecoveryTriedAt.set(race.id, now);
+  try {
+    await generateV65PredictionForRace(race.id, "FINAL", false);
+    const generated = await getV65Prediction(race.id, "FINAL", race.race_key);
+    if (generated && (generated.status === "COMPLETED" || !generated.status)) {
+      v65FinalRecoveryTriedAt.delete(race.id);
+      return generated;
+    }
+    return null;
+  } catch (e) {
+    console.warn("[V6.5] FINAL auto generation failed:", e?.message || e);
+    return null;
+  }
+}
+
 const v63FinalRecoveryTriedAt = new Map();
 export async function ensureV63Final(race) {
   if (!race?.id || !race?.exhibition_ready || !race?.deadline) return null;

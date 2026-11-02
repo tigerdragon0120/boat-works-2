@@ -493,6 +493,15 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
             payout: savedResult.payout || 0,
           });
           if (v64Verified) logs.push(`${venueName} R${raceNumber}: V6.4検証完了`);
+
+          // V6.5は女子戦のみ。予想が無いレースでは何も作らない。
+          if (isWomensRace(race)) {
+            const v65Verified = await verifyV65Prediction(base44, race, {
+              result_trifecta: savedResult.result_trifecta,
+              payout: savedResult.payout || 0,
+            });
+            if (v65Verified) logs.push(`${venueName} R${raceNumber}: V6.5検証完了`);
+          }
         }
       } catch (e: any) {
         errors.push(`${venueName} R${raceNumber}: V6.1検証失敗 ${e.message}`);
@@ -1053,14 +1062,16 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     let needsFinal = inFinalWindow && (forceFinalRefresh || oddsChanged || !race.has_final);
     if (inFinalWindow && !needsFinal) {
       // V6.1/V6.2は画面の「直前予想」そのもの。どちらか欠けていれば作り直す。
-      const [v61Fin, v62Fin, v63Fin, v64Fin, ensembleFin] = await Promise.all([
+      const [v61Fin, v62Fin, v63Fin, v64Fin, v65Fin, ensembleFin] = await Promise.all([
         sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.1' }, '-computed_at', 1).catch(() => []),
         sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.2' }, '-computed_at', 1).catch(() => []),
         sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.3' }, '-computed_at', 1).catch(() => []),
         sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.4' }, '-computed_at', 1).catch(() => []),
+        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.5' }, '-computed_at', 1).catch(() => []),
         sr.PredictionEnsemble.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1).catch(() => []),
       ]);
-      if (!v61Fin?.length || !v62Fin?.length || !v63Fin?.length || !v64Fin?.length || !ensembleFin?.length) needsFinal = true;
+      if (!v61Fin?.length || !v62Fin?.length || !v63Fin?.length || !v64Fin?.length
+          || (isWomensRace(race) && !v65Fin?.length) || !ensembleFin?.length) needsFinal = true;
     }
     if (needsFinal) {
       const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
@@ -1145,6 +1156,24 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: V6.4 FINAL予想失敗 ${e.message}`);
+        }
+
+        // V6.5: 女子戦専用の的中率特化エンジン。女子戦のみ生成する。
+        if (isWomensRace(race)) {
+          try {
+            let v65Result = await runAndSavePredictionV65(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+            if (v65Result?.skipped && v65Result?.reason !== 'NOT_WOMENS_RACE') {
+              await sleep(2500);
+              v65Result = await runAndSavePredictionV65(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
+            }
+            if (v65Result?.skipped) {
+              errors.push(`${venueName} R${raceNumber}: V6.5 FINAL未生成(${v65Result.reason || 'unknown'})`);
+            } else {
+              logs.push(`${venueName} R${raceNumber}: V6.5 FINAL予想生成 → ${v65Result?.result?.final_judgment || '判定保存'}`);
+            }
+          } catch (e: any) {
+            errors.push(`${venueName} R${raceNumber}: V6.5 FINAL予想失敗 ${e.message}`);
+          }
         }
 
         // V4・V3.1・V5展開・V6.1を合成した最終判断。画面と検証の主判定に使う。
