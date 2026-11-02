@@ -41,9 +41,11 @@ export default async function(req: Request) {
     const body = await req.json().catch(() => ({}));
     const requestedDate = typeof body?.race_date === "string" ? body.race_date : null;
     const backfillDays = Number.isFinite(Number(body?.days)) ? Math.min(30, Math.max(1, Number(body.days))) : 7;
+    // 当日分も対象に含める。夜の開催が終わった時点で回せば、翌日を待たずに
+    // その日の女子戦の勝敗データが貯まる(結果未確定のレースは自動でスキップ)。
     const dates = requestedDate
       ? [requestedDate]
-      : Array.from({ length: backfillDays }, (_, i) => jstDateOffset(-(i + 1)));
+      : Array.from({ length: backfillDays }, (_, i) => jstDateOffset(-i));
 
     const sr = base44.asServiceRole.entities;
 
