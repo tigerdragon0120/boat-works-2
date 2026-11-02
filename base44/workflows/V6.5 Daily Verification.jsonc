@@ -1,6 +1,6 @@
 {
   "name": "V6.5 Daily Verification",
-  "description": "V6.5(\u5973\u5b50\u6226\u30fb\u7684\u4e2d\u7387\u7279\u5316)\u306e\u4e88\u60f3\u3068\u78ba\u5b9a\u7d50\u679c\u3092\u6bce\u65e52\u56de(21:20\u30fb0:20)\u7167\u5408\u3057\u3001\u52dd\u7387\u30c7\u30fc\u30bf\u3092\u7d99\u7d9a\u7684\u306b\u84c4\u7a4d\u3059\u308b\u3002",
+  "description": "V6.5(\u5973\u5b50\u6226\u30fb\u7684\u4e2d\u7387\u7279\u5316)\u306e\u4e88\u60f3\u3068\u78ba\u5b9a\u7d50\u679c\u3092\u6bce\u65e52\u56de(21:20\u30fb0:20)\u7167\u5408\u3057\u3001\u305d\u306e\u7d50\u679c\u3092\u88dc\u6b63\u5024\u3068\u3057\u3066\u4e88\u60f3\u3078\u9084\u5143\u3059\u308b\u3002",
   "trigger": {
     "condition": null,
     "config": {
@@ -22,7 +22,7 @@
     "document": {
       "dsl": "1.0.0",
       "name": "v65_daily_verification",
-      "version": "1.0",
+      "version": "1.1",
       "namespace": "base44"
     },
     "do": [
@@ -33,10 +33,24 @@
             "function_name": "verifyV65Daily",
             "args": {}
           },
+          "then": "rebuild_calibration",
+          "x-base44": {
+            "title": "V6.5 \u7167\u5408",
+            "description": "\u5f53\u65e5\u3092\u542b\u3080\u76f4\u8fd17\u65e5\u5206\u306e\u5973\u5b50\u6226V6.5\u4e88\u60f3\u3068\u78ba\u5b9a\u7d50\u679c\u3092\u7167\u5408\u3057\u3001\u672a\u53cd\u6620\u306e\u52dd\u6557\u30c7\u30fc\u30bf\u3092\u88dc\u5b8c\u3059\u308b"
+          }
+        }
+      },
+      {
+        "rebuild_calibration": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "buildV65Calibration",
+            "args": {}
+          },
           "then": "end",
           "x-base44": {
-            "title": "V6.5 \u81ea\u52d5\u7167\u5408",
-            "description": "\u5f53\u65e5\u3092\u542b\u3080\u76f4\u8fd17\u65e5\u5206\u306e\u5973\u5b50\u6226V6.5\u4e88\u60f3\u3068\u78ba\u5b9a\u7d50\u679c\u3092\u7167\u5408\u3057\u3001\u672a\u53cd\u6620\u306e\u52dd\u6557\u30c7\u30fc\u30bf\u3092\u88dc\u5b8c\u3059\u308b"
+            "title": "\u88dc\u6b63\u5024\u3092\u518d\u8a08\u7b97",
+            "description": "\u7167\u5408\u7d50\u679c\u304b\u3089\u5e2f\u5225\u306e\u5b9f\u6e2c\u52dd\u7387\u3092\u7b97\u51fa\u3057\u3001\u6b21\u56de\u306eV6.5\u4e88\u60f3\u306e\u5224\u5b9a\u306b\u53cd\u6620\u3059\u308b"
           }
         }
       }

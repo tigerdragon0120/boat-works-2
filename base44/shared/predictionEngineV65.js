@@ -21,6 +21,7 @@
 //  - 配当の下限は問わない(的中率を優先するため)。
 // ============================================================
 import { runPredictionV61 } from "./predictionEngineV61.js";
+import { calibrateSetProbability } from "./v65Calibration.js";
 
 const num = (v, fallback = 0) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
 const maybeNum = (v) => (v === null || v === undefined || v === "" ? null : (Number.isFinite(Number(v)) ? Number(v) : null));
@@ -153,10 +154,15 @@ function computeSetMetrics(selected, combos) {
 // ============================================================
 // 判定
 // ============================================================
-function judge({ stage, setMetrics, axisConfidence, axisBoats, boat1Active, boat1Covered }) {
-  const setProb = setMetrics?.set_probability ?? 0;
+// calibration: 日次検証から算出した補正値。判定に使うセット的中率だけを補正し、
+// 買い目の構成(組み合わせ)は変更しない。
+function judge({ stage, setMetrics, axisConfidence, axisBoats, boat1Active, boat1Covered, calibration }) {
+  const rawSetProb = setMetrics?.set_probability ?? 0;
+  const setProb = calibration?.applied ? calibration.value : rawSetProb;
   const axisText = `軸${axisBoats.join("・")}号艇`;
-  const setText = `セット的中率${setProb}%`;
+  const setText = calibration?.applied
+    ? `セット的中率${setProb}%(予想${rawSetProb}%・実測${calibration.measured_rate}%)`
+    : `セット的中率${rawSetProb}%`;
   const confText = `軸1着率${round1(axisConfidence)}%`;
   const buyThreshold = BUY_SET_PROBABILITY[stage] ?? BUY_SET_PROBABILITY.FINAL;
 
@@ -207,8 +213,11 @@ export function runPredictionV65(entries, race, settings, options = {}) {
     100
   );
 
+  // 日次検証の実績で「予想セット的中率」を補正してから判定する
+  const calibration = calibrateSetProbability(setMetrics?.set_probability, options.calibration || null);
+
   const { judgment, reason } = judge({
-    stage, setMetrics, axisConfidence, axisBoats, boat1Active, boat1Covered,
+    stage, setMetrics, axisConfidence, axisBoats, boat1Active, boat1Covered, calibration,
   });
 
   const firstBoats = firstRanking.map((x) => x.boat);
@@ -258,6 +267,8 @@ export function runPredictionV65(entries, race, settings, options = {}) {
     ticket_strategy: `${axisBoats.length}軸${selected.length}点(的中率優先)`,
     expand_reason: "女子戦補正(1コース優位) + 1着軸を上位艇に限定 + 確率上位6〜8点",
     set_metrics: setMetrics,
+    set_probability_calibrated: calibration.applied ? calibration.value : null,
+    calibration_applied: calibration.applied,
     data_confidence: round1(num(base.data_confidence, 60)),
     final_judgment: judgment,
     judgment_reason: reason,
@@ -291,6 +302,11 @@ export function runPredictionV65(entries, race, settings, options = {}) {
       escape_prob: base.escape_probability ?? null,
       first_confidence: round1(axisConfidence),
       set_probability: setMetrics?.set_probability ?? null,
+      set_probability_calibrated: calibration.applied ? calibration.value : null,
+      calibration_applied: calibration.applied,
+      calibration_band: calibration.band ?? null,
+      calibration_measured_rate: calibration.applied ? calibration.measured_rate : null,
+      calibration_sample_count: calibration.applied ? calibration.sample_count : null,
       womens_axis: axisBoats,
       womens_first_factor: WOMENS_FIRST_FACTOR,
     },

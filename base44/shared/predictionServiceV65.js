@@ -9,6 +9,7 @@
 //   - PredictionV65Verification
 // ============================================================
 import { runPredictionV65 } from "./predictionEngineV65.js";
+import { loadV65Calibration } from "./v65Calibration.js";
 import { isWomensRace } from "./womensRace.js";
 
 const V65_VERSION = "v6.5";
@@ -81,7 +82,12 @@ export async function runAndSavePredictionV65(client, race, entries, settings, s
 
     const effectiveOddsMap = normalizeOddsMap(oddsMap);
 
-    const result = runPredictionV65(entriesWithProfiles, race, settings, { stage, oddsMap: effectiveOddsMap });
+    // 日次検証で蓄積した補正値を読み込み、判定に反映する(5分キャッシュ)
+    const calibration = await loadV65Calibration(client);
+
+    const result = runPredictionV65(entriesWithProfiles, race, settings, {
+      stage, oddsMap: effectiveOddsMap, calibration,
+    });
     if (result?.error) return { skipped: true, reason: result.error };
 
     const { id: predictionId } = await getOrCreateV65Prediction(client, race.id, race.race_key, stage);
