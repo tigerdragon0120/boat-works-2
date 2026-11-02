@@ -13,6 +13,7 @@ import V2V5Comparison from "@/components/verification/V2V5Comparison";
 import V61Performance from "@/components/verification/V61Performance";
 import V62Performance from "@/components/verification/V62Performance";
 import V63Performance from "@/components/verification/V63Performance";
+import V65WinProbability from "@/components/verification/V65WinProbability";
 import AllVersionsSummary from "@/components/verification/AllVersionsSummary";
 
 export default function Verification() {
@@ -172,6 +173,19 @@ export default function Verification() {
         </div>
         <div className="bg-white rounded-2xl border border-slate-200 p-4">
           <V63Performance />
+        </div>
+      </section>
+
+      <section>
+        <div className="flex items-end justify-between gap-2 mb-2">
+          <div>
+            <div className="text-[10px] font-bold text-rose-600">V6.5 WOMENS — PREDICTION vs RESULT</div>
+            <h2 className="font-display font-black text-slate-900 text-lg">予想と結果の比較から勝敗の確率を推計</h2>
+          </div>
+          <div className="text-[10px] text-slate-400">女子戦専用エンジン</div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4">
+          <V65WinProbability />
         </div>
       </section>
 
