@@ -1,6 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { waitUntil } from 'base44:runtime';
-import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
+import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseSeriesName, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 import { upsertRace, upsertEntry, dedupRace, dedupEntriesForRace, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
 import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
 import { runAndSavePredictionV31 } from '../../shared/predictionServiceV31.js';
@@ -13,6 +13,9 @@ import { runAndSavePredictionV62, verifyV62Prediction } from '../../shared/predi
 import { runAndSavePredictionV63, verifyV63Prediction } from '../../shared/predictionServiceV63.js';
 // V6.4: V6.1・V6.2・V6.3の合議 + 保守的期待値で買い目を絞る回収率重視エンジン
 import { runAndSavePredictionV64, verifyV64Prediction } from '../../shared/predictionServiceV64.js';
+// V6.5: 女子戦専用・的中率特化エンジン
+import { runAndSavePredictionV65, verifyV65Prediction } from '../../shared/predictionServiceV65.js';
+import { isWomensRace } from '../../shared/womensRace.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
@@ -150,10 +153,16 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     }
 
     let deadlineTimes: string[] = [];
+    let seriesName = '';
     try {
       const sched = await fetchHtml(buildUrl('racelist', raceDate, venueCode, 1));
-      if (sched.ok) deadlineTimes = parseDeadlineTimes(sched.html);
+      if (sched.ok) {
+        deadlineTimes = parseDeadlineTimes(sched.html);
+        seriesName = parseSeriesName(sched.html);
+      }
     } catch {}
+    // 開催大会名から女子戦かどうかを判定する(V6.5の対象判定に使用)
+    const venueIsWomens = seriesName ? isWomensRace({ series_name: seriesName }) : false;
 
     const deadlineFixes: any[] = [];
     for (const er of existingRaces) {
@@ -164,6 +173,17 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       if (er.deadline !== correctDeadline) deadlineFixes.push({ id: er.id, deadline: correctDeadline });
     }
     if (deadlineFixes.length) await sr.Race.bulkUpdate(deadlineFixes).catch((e: any) => errors.push(`${venueName}: 締切補正 ${e.message}`));
+
+    // 大会名と女子戦フラグをRaceへ保存する。
+    // 値が変わったレースだけ書き込むため、2回目以降は書き込みが発生しない。
+    if (seriesName) {
+      const seriesFixes = existingRaces
+        .filter((r: any) => r.series_name !== seriesName || r.is_womens !== venueIsWomens)
+        .map((r: any) => ({ id: r.id, series_name: seriesName, is_womens: venueIsWomens }));
+      if (seriesFixes.length) {
+        await sr.Race.bulkUpdate(seriesFixes).catch((e: any) => errors.push(`${venueName}: 大会名保存 ${e.message}`));
+      }
+    }
 
     // 6艇揃っているレースは再取得しない。
     // 以前は「節間成績が空ならracelistを再取得」としていたが、1Rなど今節成績が
@@ -237,6 +257,10 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       if (race.race_name) doc.race_name = race.race_name;
       if (race.race_type) doc.race_type = race.race_type;
       if (t) doc.deadline = `${raceDate}T${t}:00+09:00`;
+      if (seriesName) {
+        doc.series_name = seriesName;
+        doc.is_womens = venueIsWomens;
+      }
       // 1件の保存失敗(429等)で自動更新の実行全体を落とさない。失敗分は次回実行で補完する。
       const saved = await withRateLimitRetry(() => upsertRace(base44, doc))
         .catch((e: any) => { errors.push(`${venueName} R${rno}: Race保存 ${e.message}`); return null; });
@@ -525,11 +549,12 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
   const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   if (!races.length) return { total: 0, v61_generated: 0, v62_generated: 0, remaining: 0 };
 
-  const [v61Preds, v62Preds, v63Preds, v64Preds] = await Promise.all([
+  const [v61Preds, v62Preds, v63Preds, v64Preds, v65Preds] = await Promise.all([
     withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
     withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.2', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
     withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.3', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
     withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.4', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
+    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.5', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
   ]);
   const doneKeys = (rows: any[]) => new Set(
     (rows || [])
@@ -540,6 +565,8 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
   const v62Done = doneKeys(v62Preds);
   const v63Done = doneKeys(v63Preds);
   const v64Done = doneKeys(v64Preds);
+  // V6.5は女子戦のみ対象。非女子戦はdone扱いにして余計な生成をしない。
+  const v65Done = doneKeys(v65Preds);
 
   // 締切が残っているレースを優先し、終了済みレースで時間予算を使わない。
   const priority = (r: any) => {
@@ -549,12 +576,13 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
   };
   const pending = races
     .filter((r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key))
-      || !v63Done.has(String(r.race_key)) || !v64Done.has(String(r.race_key)))
+      || !v63Done.has(String(r.race_key)) || !v64Done.has(String(r.race_key))
+      || (isWomensRace(r) && !v65Done.has(String(r.race_key))))
     .sort((a: any, b: any) => priority(a) - priority(b));
 
   // 全レース分を限られた実行時間で埋めるため、4レースずつ並行して生成する。
   // 書き込み競合はwithRateLimitRetryが吸収し、失敗したレースは次回実行で再試行する。
-  let v61Generated = 0, v62Generated = 0, v63Generated = 0, v64Generated = 0;
+  let v61Generated = 0, v62Generated = 0, v63Generated = 0, v64Generated = 0, v65Generated = 0;
   const CONCURRENCY = 4;
   for (let i = 0; i < pending.length; i += CONCURRENCY) {
     if (Date.now() - startTime > timeBudgetMs - 3000) {
@@ -600,6 +628,16 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
             v64Generated++;
           }
         }
+        // V6.5(女子戦)は女子戦だけを対象にする
+        if (isWomensRace(race) && !v65Done.has(raceKey)) {
+          const savedV65 = await runAndSavePredictionV65(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
+          if (savedV65?.skipped) {
+            errors.push(`V6.5 PRE ${race.venue_code} R${race.race_number}: ${savedV65.reason || 'skipped'}`);
+          } else {
+            v65Done.add(raceKey);
+            v65Generated++;
+          }
+        }
       } catch (e: any) {
         errors.push(`メインPRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
       }
@@ -611,9 +649,10 @@ async function generateMainPrePredictions(base44: any, raceDate: string, timeBud
   const remaining = pending.filter(
     (r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key))
       || !v63Done.has(String(r.race_key)) || !v64Done.has(String(r.race_key))
+      || (isWomensRace(r) && !v65Done.has(String(r.race_key)))
   ).length;
-  logs.push(`メインPRE(${raceDate}): V6.1 ${v61Generated}R / V6.2 ${v62Generated}R / V6.3 ${v63Generated}R / V6.4 ${v64Generated}R 生成 / 残り${remaining}R`);
-  return { total: races.length, v61_generated: v61Generated, v62_generated: v62Generated, v63_generated: v63Generated, v64_generated: v64Generated, remaining, errors };
+  logs.push(`メインPRE(${raceDate}): V6.1 ${v61Generated}R / V6.2 ${v62Generated}R / V6.3 ${v63Generated}R / V6.4 ${v64Generated}R / V6.5 ${v65Generated}R 生成 / 残り${remaining}R`);
+  return { total: races.length, v61_generated: v61Generated, v62_generated: v62Generated, v63_generated: v63Generated, v64_generated: v64Generated, v65_generated: v65Generated, remaining, errors };
 }
 
 // =====================================================

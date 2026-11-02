@@ -29,6 +29,15 @@
       "type": "string",
       "description": "\u30ec\u30fc\u30b9\u540d"
     },
+    "series_name": {
+      "type": "string",
+      "description": "\u958b\u50ac\u5927\u4f1a\u540d(\u516c\u5f0f\u756a\u7d44\u8868\u306e\u30d8\u30c3\u30c0\u30fc\u7531\u6765)"
+    },
+    "is_womens": {
+      "type": "boolean",
+      "default": false,
+      "description": "\u5973\u5b50\u6226\u30d5\u30e9\u30b0(\u5927\u4f1a\u540d\u304c\u5973\u5b50/\u30ec\u30c7\u30a3\u30fc\u30b9/\u30f4\u30a3\u30fc\u30ca\u30b9\u7b49)\u3002V6.5\u306e\u5bfe\u8c61\u5224\u5b9a\u306b\u4f7f\u7528"
+    },
     "race_type": {
       "type": "string",
       "enum": [
