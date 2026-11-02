@@ -14,7 +14,9 @@ export async function withRetry(fn, max = 4) {
       last = e;
       const msg = String(e?.message || e || "");
       if (!/rate\s*limit|429|too many requests/i.test(msg) || i === max) throw e;
-      await sleep(Math.min(8000, 500 * 2 ** i));
+      // レート制限は窓が60秒のため、1秒未満の即時再試行は同じ制限に当たる。
+      // 1.2秒から待機し、最大10秒まで広げる。
+      await sleep(Math.min(10000, 1200 * 2 ** i));
     }
   }
   throw last;
@@ -78,9 +80,15 @@ function dedupeRacesForDisplay(races) {
 }
 
 // 今日のレース一覧。同一race_keyが重複していても画面には1Rにつき1件だけ返す。
+// 複数の画面・更新処理が同時に同じ一覧を取りにいくとエンティティ一覧の
+// レート制限(429)に達するため、12秒だけ結果を共有する。
+let todayRacesCache = { at: 0, value: null };
 export async function listTodayRaces({ includeFinished = false } = {}) {
-  const races = await withRetry(() => base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500));
-  const unique = dedupeRacesForDisplay(races || []);
+  if (!todayRacesCache.value || Date.now() - todayRacesCache.at > 12000) {
+    const races = await withRetry(() => base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500));
+    todayRacesCache = { at: Date.now(), value: dedupeRacesForDisplay(races || []) };
+  }
+  const unique = todayRacesCache.value;
   if (!includeFinished) return unique.filter((r) => r.status !== "finished" && r.status !== "cancelled");
   return unique;
 };

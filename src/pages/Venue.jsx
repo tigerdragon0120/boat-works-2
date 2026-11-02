@@ -326,13 +326,13 @@ export default function Venue() {
 
   useEffect(() => {
     if (!selectedId) return undefined;
-    // 締切前後30分は15秒、それ以外は60秒で静かに更新する。
-    // 開いたままの画面への反映は保ちつつ、APIレート制限に達しない頻度に抑える。
+    // 締切前後30分は20秒、それ以外は90秒で静かに更新する。
+    // 15秒間隔ではエンティティ一覧のレート制限(429)に達し、更新が失敗していた。
     const deadlineMs = race?.deadline ? new Date(race.deadline).getTime() : NaN;
     const nearDeadline = Number.isFinite(deadlineMs) && Math.abs(Date.now() - deadlineMs) <= 30 * 60 * 1000;
     const intervalId = window.setInterval(() => {
       refreshPredictions().catch((e) => console.warn("[Venue] prediction refresh failed:", e?.message || e));
-    }, nearDeadline ? 15000 : 60000);
+    }, nearDeadline ? 20000 : 90000);
     return () => window.clearInterval(intervalId);
   }, [selectedId, races, race?.deadline, predictionVersion]);
 

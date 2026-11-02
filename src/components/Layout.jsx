@@ -45,7 +45,7 @@ export default function Layout() {
         const active = job && ["queued", "preparing", "running"].includes(job.status);
         if (!active) {
           setTermImport((prev) => ({ ...prev, running: false, uploading: false }));
-          return;
+          return false;
         }
 
         let item = null;
@@ -66,17 +66,27 @@ export default function Layout() {
           recordCurrent: Number(item?.offset || 0),
           recordTotal: Number(item?.total_records || 0),
         }));
+        return true;
       } catch {
         // 一時的に取得できなくても既存表示は消さない。
+        return false;
       }
     };
 
-    refreshTermBannerFromServer();
-    const timer = setInterval(refreshTermBannerFromServer, 2500);
+    // 以前は2.5秒ごとに問い合わせていたため、エンティティ一覧のレート制限(429)に
+    // 達して各画面の読み込みが失敗していた。取り込み実行中だけ5秒、
+    // 通常は20秒間隔にし、状態が変わらない無駄な問い合わせを減らす。
+    let timer = null;
+    const tick = async () => {
+      const active = await refreshTermBannerFromServer();
+      if (cancelled) return;
+      timer = window.setTimeout(tick, active ? 5000 : 20000);
+    };
+    tick();
 
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      clearTimeout(timer);
       unsubK?.();
       unsubTerm?.();
     };
