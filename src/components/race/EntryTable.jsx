@@ -81,7 +81,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
 
       {/* サブタブ */}
       <div className="px-2 sm:px-3 py-2 border-b border-slate-200 flex gap-1 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-        {subTabs.map((t) => (
+        {(predictionVersion === "v7" ? subTabs.filter(t => !["買い目", "3連単", "6艇評価", "オッズ"].includes(t)) : subTabs).map((t) => (
           <button key={t} onClick={() => setSubTab(t)}
             className={cn("px-2.5 h-8 rounded-md text-xs font-bold whitespace-nowrap transition-colors", subTab === t ? "bg-[#f9c836] text-slate-950" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100")}>
             {t}
