@@ -2,17 +2,22 @@ import React, {useMemo} from "react";
 import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
 import {buildV5ScenarioForecast} from "@/lib/v5ScenarioEngine";
 
-function completeExhibition(race, entries) {
+// A partial exhibition is enough for an explicitly labelled, provisional V7 view.
+// Missing inputs remain missing in the engine; never imply full exhibition quality.
+export function exhibitionProgress(race, entries) {
   const active=(entries||[]).filter(e=>!e.is_absent&&!e.is_scratched);
-  return Boolean(race?.exhibition_ready && active.length >= 3 &&
-    active.every(e=>Number.isFinite(Number(e.exhibition_time)) && Number(e.exhibition_time)>0 &&
-      e.exhibition_st!=null && e.exhibition_course!=null &&
-      Number.isInteger(Number(e.exhibition_course)) && +e.exhibition_course>=1 && +e.exhibition_course<=6) &&
-    new Set(active.map(e=>Number(e.exhibition_course))).size===active.length);
+  const valid=active.filter(e=>Number.isFinite(Number(e.exhibition_time)) && Number(e.exhibition_time)>0 &&
+    e.exhibition_st!=null && Number.isFinite(Number(e.exhibition_st)) &&
+    Number.isInteger(Number(e.exhibition_course)) && +e.exhibition_course>=1 && +e.exhibition_course<=6);
+  const unique=new Set(valid.map(e=>Number(e.exhibition_course))).size===valid.length;
+  const complete=active.length>=3 && valid.length===active.length && unique;
+  return {ready:active.length===6 && unique && (race?.exhibition_ready===true || valid.length>=3) && valid.length>=3,
+    complete, valid:valid.length, total:active.length};
 }
 
 export default function UnifiedRaceView({race, entries}) {
-  const exhibitReady=completeExhibition(race,entries);
+  const exhibition=exhibitionProgress(race,entries);
+  const exhibitReady=exhibition.ready;
   const originalEntries=useMemo(()=>entries.map(({exhibition_course,exhibition_st,exhibition_time,exhibition_rank,...rest})=>rest),[entries]);
   const scenarios=useMemo(()=>originalEntries.length===6 ? buildV5ScenarioForecast(originalEntries,null) : null,[originalEntries]);
   return <section className="rounded-xl border border-blue-200 bg-white p-3 sm:p-4 space-y-3">
@@ -20,11 +25,11 @@ export default function UnifiedRaceView({race, entries}) {
       <div>
         <h2 className="text-lg font-black text-slate-900">レース予想</h2>
         <p className="text-xs text-slate-600">
-          {exhibitReady ? "展示データを反映した統合V7の予想判定" : "展示前：出走表から展開を予想。展示が揃うとV7の予想判定を表示"}
+          {exhibitReady ? "展示を反映したV7の予想を先行表示。オッズ更新で買い目判定を締切まで更新" : "展示前：出走表から展開を予想。展示が取得でき次第、V7を表示"}
         </p>
       </div>
       <span className={exhibitReady?"rounded-lg bg-emerald-100 px-3 py-2 text-sm font-bold text-emerald-800":"rounded-lg bg-amber-100 px-3 py-2 text-sm font-bold text-amber-800"}>
-        {exhibitReady?"展示反映・V7":"展開予想"}
+        {exhibitReady?(exhibition.complete?"展示反映・V7":"展示一部反映・暫定V7"):"展開予想"}
       </span>
     </div>
     {!exhibitReady ? <div className="space-y-3">
@@ -42,8 +47,8 @@ export default function UnifiedRaceView({race, entries}) {
         <p className="text-xs text-slate-500">事前の展開シナリオ（未校正の参考分析）。展示ST・展示タイムを先取りしません。</p>
       </> : <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">出走表が6艇揃うまで展開予想を保留しています。</p>}
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-        展示進入・ST・タイムの取得待ちです。揃ったら、この位置に統合V7のFINAL判定と買い目を自動表示します。
+        展示進入・ST・タイムの取得待ちです。取得できたデータが予想に足り次第、V7の予想候補を表示します。オッズの確定は待ちません。
       </div>
-    </div> : <LiveV7Panel key={race.id} race={race} finalOnly />}
+    </div> : <LiveV7Panel key={race.id} race={race} finalOnly exhibitionComplete={exhibition.complete} exhibitionCount={exhibition.valid} />}
   </section>;
 }
