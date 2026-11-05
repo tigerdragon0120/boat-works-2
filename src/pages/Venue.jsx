@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
 import RaceResultCard from "@/components/race/RaceResultCard";
+import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
 import { fetchOnlineData } from "@/lib/dataManagementService";
 import { getRaceResult } from "@/lib/raceResultService";
 
@@ -40,6 +41,7 @@ export default function Venue() {
   const [v65Stages, setV65Stages] = useState({ pre: null, final: null });
   const [stageTab, setStageTab] = useState(null);
   const [predictionVersion, setPredictionVersion] = useState("mix");
+  const [showLegacy, setShowLegacy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rankMode, setRankMode] = useState("prob");
   const [raceResult, setRaceResult] = useState(null);
@@ -477,8 +479,24 @@ export default function Venue() {
 
       {race && <RaceResultCard race={race} entries={entries} raceResult={raceResult} />}
 
-      {/* スプリットレイアウト */}
-      {race && (
+      {/* 統合V7を場別画面の標準予想として先に表示。旧版は比較用に温存する。 */}
+      {race && <section className="space-y-3">
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="font-extrabold text-indigo-950">統合V7 · 研究用予想</h2>
+            <p className="text-xs text-indigo-800">既存の保存データを読み取り、PRE/FINALを自動判定。実績未校正のため購入推奨ではありません。</p>
+          </div>
+          <button type="button" onClick={() => setShowLegacy(value => !value)}
+            className="min-h-11 rounded-lg bg-white border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-900">
+            {showLegacy ? "旧予想を閉じる" : "旧V6系を比較表示"}
+          </button>
+        </div>
+        <LiveV7Panel key={race.id} race={race} />
+      </section>}
+
+      {/* スプリットレイアウト：旧版は必要な時だけ比較表示 */}
+
+      {race && showLegacy && (
         <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
           <PredictionPanel
             race={race} stage={stage} pendingOdds={pendingOdds} waitingFinalOdds={waitingFinalOdds}
