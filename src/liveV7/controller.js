@@ -46,7 +46,11 @@ export class LiveV7Controller{
   for(const stage of ['PRE','FINAL']){
    const identity=JSON.stringify([key,stage]),prior=old.stages?.[stage];
    if(deadline==null||timeMs(now)==null||timeMs(now)>=deadline||['finished','cancelled'].includes(data.race.status)){
-    const frozen=prior?.record||this.records.get(this.first.get(identity));
+    // On reload after the deadline, display the latest immutable pre-deadline
+    // revision, not the first (outdated-odds) record.
+    const historical=[...this.records.values()].filter(r=>r.payload?.race_key===key&&r.payload?.stage===stage&&
+      timeMs(r.payload.generated_at)!=null&&timeMs(r.payload.generated_at)<deadline).sort((a,b)=>timeMs(b.payload.generated_at)-timeMs(a.payload.generated_at));
+    const frozen=prior?.record||historical[0]||this.records.get(this.first.get(identity));
     state.stages[stage]=frozen?{status:'READY',record:frozen,closed:true}:{status:'UNAVAILABLE',reason:deadline==null?'締切時刻不明。生成しません':'締切後・終了済み。事後生成しません'};continue;
    }
    if(data.race.saved_input_status==='STALE'){state.stages[stage]={status:'UNAVAILABLE',reason:'保存済み出走表の有効期限切れ'};continue;}
