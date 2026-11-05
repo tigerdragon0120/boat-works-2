@@ -14,8 +14,7 @@ import { cn } from "@/lib/utils";
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
 import RaceResultCard from "@/components/race/RaceResultCard";
-import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
-import { buildV5ScenarioForecast } from "@/lib/v5ScenarioEngine";
+import UnifiedRaceView from "@/components/liveV7/UnifiedRaceView";
 import { fetchOnlineData } from "@/lib/dataManagementService";
 import { getRaceResult } from "@/lib/raceResultService";
 
@@ -479,43 +478,19 @@ export default function Venue() {
 
       {race && <RaceResultCard race={race} entries={entries} raceResult={raceResult} />}
 
-      {/* 統合V7を場別画面の標準予想として先に表示。旧版は比較用に温存する。 */}
-      {race && <section className="space-y-3">
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="font-extrabold text-indigo-950">統合V7 · 研究用予想</h2>
-            <p className="text-xs text-indigo-800">既存の保存データを読み取り、PRE/FINALを自動判定。実績未校正のため購入推奨ではありません。</p>
-          </div>
-          <button type="button" onClick={() => setShowLegacy(value => !value)}
-            className="min-h-11 rounded-lg bg-white border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-900">
-            {showLegacy ? "旧予想を閉じる" : "旧V6系を比較表示"}
-          </button>
-        </div>
-        <LiveV7Panel key={race.id} race={race} />
+      {/* 表示は一つ。展示前は展開、展示後はV7 FINAL。 */}
+      {race && <UnifiedRaceView key={race.id} race={race} entries={entries} />}
+
+      {race && <section className="rounded-xl border border-slate-200 bg-white p-3">
+        <h2 className="font-bold mb-3 text-slate-900">出走表・展示・選手情報</h2>
+        <EntryTable
+          race={race} entries={entries}
+          activePred={null} activeBoats={[]} allTri={[]}
+          probRank={[]} evRank={[]}
+          rankMode={rankMode} setRankMode={setRankMode}
+          predictionVersion="v7"
+        />
       </section>}
-
-      {/* スプリットレイアウト：旧版は必要な時だけ比較表示 */}
-
-      {race && showLegacy && (
-        <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
-          <PredictionPanel
-            race={race} stage={stage} pendingOdds={pendingOdds} waitingFinalOdds={waitingFinalOdds}
-            run={run} busy={busy} entries={entries}
-            activePred={activePred} activeBoats={activeBoats} allTri={allTri}
-            compareData={compareData}
-            stageTab={effectiveStageTab} stages={displayStages} onStageTabChange={setStageTab}
-            predictionVersion={predictionVersion}
-            onPredictionVersionChange={setPredictionVersion}
-          />
-          <EntryTable
-            race={race} entries={entries}
-            activePred={activePred} activeBoats={activeBoats} allTri={allTri}
-            probRank={probRank} evRank={evRank}
-            rankMode={rankMode} setRankMode={setRankMode}
-            predictionVersion={predictionVersion}
-          />
-        </div>
-      )}
     </div>
   );
 }
