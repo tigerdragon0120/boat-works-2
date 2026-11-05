@@ -15,6 +15,7 @@ import V62Performance from "@/components/verification/V62Performance";
 import V63Performance from "@/components/verification/V63Performance";
 import V65WinProbability from "@/components/verification/V65WinProbability";
 import AllVersionsSummary from "@/components/verification/AllVersionsSummary";
+import LiveV7Comparison from "@/components/liveV7/LiveV7Comparison";
 
 export default function Verification() {
   const [summary, setSummary] = useState(null);
@@ -52,6 +53,7 @@ export default function Verification() {
     <div className="space-y-5">
       <Header onReload={load} />
 
+      <LiveV7Comparison />
       <AllVersionsSummary />
 
       <section className="rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-indigo-50 p-4">
