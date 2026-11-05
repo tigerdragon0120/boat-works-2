@@ -21,7 +21,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
   <h3 className="font-bold text-indigo-900">統合V7・{finalOnly?'展示後の予想判定':`試験予想 ${selected}`}</h3><p className="text-xs text-amber-900">未学習・未校正の試算です。既存BUYは置き換えません。更新プレビューと比較用の初回記録は分けて保持します。</p>
   {!finalOnly&&<div className="flex flex-wrap gap-2">{['AUTO','PRE','FINAL'].map(s=><button key={s} aria-pressed={stage===s} onClick={()=>setStage(s)} className={'rounded p-2 text-sm '+(stage===s?'bg-indigo-700 text-white':'bg-slate-100')}>{s==='AUTO'?'V7 自動切替':`V7 ${s}`}</button>)}</div>}
   <div className="rounded-lg bg-sky-50 border border-sky-200 p-3 space-y-1 text-sm">
-   <p className="font-semibold text-sky-900">{state.closed?'締切後：最後の締切前予想を表示':`締切まで ${remaining==null?'不明':remaining+'分'} · 最新オッズに追従して判定を更新`}</p>
+   <p className="font-semibold text-sky-900">{state.closed?(p?'締切後：保存された締切前の予想を表示':'締切後：締切前のV7予想記録がありません'):`締切まで ${remaining==null?'不明':remaining+'分'} · 取得オッズで買い目判定を更新`}</p>
    <p className="text-xs text-sky-900">{!exhibitionComplete?`展示一部反映（${exhibitionCount}艇分）：暫定予想。未取得の展示情報は補完していません。`:'展示反映済み。'} 三連単の着順予想は先に表示し、オッズ取得後に期待回収と買い目判定を更新。オッズの確定は待ちません。</p>
    <p className="text-xs text-slate-600">読込 {state.lastRead||'未取得'} / 使用オッズ {oddsCaptured||'未取得・期待値保留'} / 初回記録 {firstRecord?.payload?.generated_at||'未記録'} / 更新記録 {revisionCount?revisionCount-1:0}件（端末内）</p>
    <div className="flex items-center gap-2"><button type="button" onClick={refreshNow} disabled={refreshing||state.closed} className="rounded-md border border-sky-400 bg-white px-3 py-2 text-xs font-bold text-sky-900 disabled:opacity-50">{refreshing?'確認中…':'予想・オッズを再確認'}</button><span className="text-xs text-slate-600">開いている間、約30秒ごとに自動確認。締切後は予想を新規生成しません。</span></div>
@@ -29,7 +29,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
   {state.error&&<p role="alert" className="text-red-700">{state.error}。表示が残っている場合は前回取得分です。</p>}
   {liveV7.storageError&&<p role="alert" className="text-red-700">{liveV7.storageError}</p>}
   {settled&&<p className="rounded bg-slate-100 p-2 text-sm" data-testid="trial-v7-result">確定三連単 {settled.combination} · 払戻 {payout==null?'不明':`${payout.toLocaleString('ja-JP')}円`}</p>}
-  {!o?<p data-testid="live-v7-waiting">{result?.reason||(p?'この初回記録に対象モデルはありません':'展示情報を確認し、統合V7の判定を準備中…')}</p>:<>
+  {!o?<p data-testid="live-v7-waiting">{result?.reason||(p?'保存済み予想に対象モデルはありません':'展示情報を確認し、統合V7の判定を準備中…')}</p>:<>
    <p className="font-bold">{o.model==='WOMENS'?'女子戦モデル':'通常戦モデル'} · {state.error?'判定保留':(plan?.judgment==='BUY'?'研究用BUY':plan?.judgment??'SKIP')} · 三連単 {o.combinations.length}通り · 実績信頼度は未評価</p>
    <p className="text-xs">{o.coverage<1?"入力不足のため参考度低下。性能信頼度は未評価。":"性能信頼度は未評価。"}評価項目充足率 {pct(o.coverage)}（オッズは別） / 進入：{o.course_basis}</p>
    <p className="text-xs break-all">観測 {p.observed_at} / 生成 {p.generated_at} / 締切 {p.deadline} {result.closed?'· 締切後の固定表示':''}</p>

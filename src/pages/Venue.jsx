@@ -78,6 +78,13 @@ export default function Venue() {
   useEffect(() => { loadList(); }, [code]);
 
   const raceList = useMemo(() => races, [races]);
+  // A closed race must not trap users on an empty V7 view when a future race is available.
+  const nextOpenRace = useMemo(() => {
+    const now = Date.now();
+    return races.find(r => r.id !== selectedId && !['finished','cancelled','final'].includes(r.status) &&
+      r.deadline && Number.isFinite(Date.parse(r.deadline)) && Date.parse(r.deadline) > now);
+  }, [races, selectedId]);
+
   const venueName = races[0]?.venue || races[0]?.venue_name || `場コード ${code}`;
 
   // 選択中レースの詳細読み込み
@@ -478,7 +485,7 @@ export default function Venue() {
       {race && <RaceResultCard race={race} entries={entries} raceResult={raceResult} />}
 
       {/* 表示は一つ。展示前は展開、展示後はV7 FINAL。 */}
-      {race && <UnifiedRaceView key={race.id} race={race} entries={entries} />}
+      {race && <UnifiedRaceView key={race.id} race={race} entries={entries} nextOpenRace={nextOpenRace} onSelectNextRace={() => nextOpenRace && setSelectedId(nextOpenRace.id)} />}
 
       {race && <section className="rounded-xl border border-slate-200 bg-white p-3">
         <h2 className="font-bold mb-3 text-slate-900">出走表・展示・選手情報</h2>

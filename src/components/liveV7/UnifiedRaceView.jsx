@@ -15,9 +15,12 @@ export function exhibitionProgress(race, entries) {
     complete, valid:valid.length, total:active.length};
 }
 
-export default function UnifiedRaceView({race, entries}) {
+export default function UnifiedRaceView({race, entries, nextOpenRace=null, onSelectNextRace=()=>{}}) {
   const exhibition=exhibitionProgress(race,entries);
   const exhibitReady=exhibition.ready;
+  const deadlineMs=Date.parse(race?.deadline||'');
+  const raceClosed=['finished','cancelled','final'].includes(race?.status) || (Number.isFinite(deadlineMs)&&Date.now()>=deadlineMs);
+
   const originalEntries=useMemo(()=>entries.map(({exhibition_course,exhibition_st,exhibition_time,exhibition_rank,...rest})=>rest),[entries]);
   const scenarios=useMemo(()=>originalEntries.length===6 ? buildV5ScenarioForecast(originalEntries,null) : null,[originalEntries]);
   return <section className="rounded-xl border border-blue-200 bg-white p-3 sm:p-4 space-y-3">
@@ -32,6 +35,10 @@ export default function UnifiedRaceView({race, entries}) {
         {exhibitReady?(exhibition.complete?"展示反映・V7":"展示一部反映・暫定V7"):"展開予想"}
       </span>
     </div>
+    {raceClosed && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 space-y-2">
+      <p className="font-bold">このレースは締切済みです。締切前のV7予想が端末に保存されていなければ、後から買い目は作りません。</p>
+      {nextOpenRace && <button type="button" onClick={onSelectNextRace} className="rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-900">締切前の {nextOpenRace.race_number}R を見る（締切 {String(nextOpenRace.deadline).slice(11,16)}）</button>}
+    </div>}
     {!exhibitReady ? <div className="space-y-3">
       {scenarios ? <>
         <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
