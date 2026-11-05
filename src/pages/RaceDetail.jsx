@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
+import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
+import { liveV7 } from "@/liveV7/runtime";
 import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
 import {
@@ -17,6 +19,7 @@ import { ArrowLeft } from "lucide-react";
 
 export default function RaceDetail() {
   const { id } = useParams();
+  useEffect(() => liveV7.watch(id), [id]);
   const [race, setRace] = useState(null);
   const [entries, setEntries] = useState([]);
   // v61Stages: 合成(V6.1)の事前予想(PRE)と直前予想(FINAL)。
