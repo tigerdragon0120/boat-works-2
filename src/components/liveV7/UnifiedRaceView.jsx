@@ -19,7 +19,7 @@ export default function UnifiedRaceView({race, entries, nextOpenRace=null, onSel
   const exhibition=exhibitionProgress(race,entries);
   const exhibitReady=exhibition.ready;
   const deadlineMs=Date.parse(race?.deadline||'');
-  const raceClosed=['finished','cancelled','final'].includes(race?.status) || (Number.isFinite(deadlineMs)&&Date.now()>=deadlineMs);
+  const raceClosed=['finished','cancelled'].includes(race?.status) || (Number.isFinite(deadlineMs)&&Date.now()>=deadlineMs);
 
   const originalEntries=useMemo(()=>entries.map(({exhibition_course,exhibition_st,exhibition_time,exhibition_rank,...rest})=>rest),[entries]);
   const scenarios=useMemo(()=>originalEntries.length===6 ? buildV5ScenarioForecast(originalEntries,null) : null,[originalEntries]);

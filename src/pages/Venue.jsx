@@ -81,7 +81,7 @@ export default function Venue() {
   // A closed race must not trap users on an empty V7 view when a future race is available.
   const nextOpenRace = useMemo(() => {
     const now = Date.now();
-    return races.find(r => r.id !== selectedId && !['finished','cancelled','final'].includes(r.status) &&
+    return races.find(r => r.id !== selectedId && !['finished','cancelled'].includes(r.status) &&
       r.deadline && Number.isFinite(Date.parse(r.deadline)) && Date.parse(r.deadline) > now);
   }, [races, selectedId]);
 
