@@ -15,6 +15,7 @@ import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
 import RaceResultCard from "@/components/race/RaceResultCard";
 import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
+import { buildV5ScenarioForecast } from "@/lib/v5ScenarioEngine";
 import { fetchOnlineData } from "@/lib/dataManagementService";
 import { getRaceResult } from "@/lib/raceResultService";
 
@@ -41,7 +42,6 @@ export default function Venue() {
   const [v65Stages, setV65Stages] = useState({ pre: null, final: null });
   const [stageTab, setStageTab] = useState(null);
   const [predictionVersion, setPredictionVersion] = useState("mix");
-  const [showLegacy, setShowLegacy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rankMode, setRankMode] = useState("prob");
   const [raceResult, setRaceResult] = useState(null);
