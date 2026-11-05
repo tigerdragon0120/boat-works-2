@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { resumeKBatchImport, subscribeKBatchImport, getKBatchImportState } from "@/lib/kBatchImportManager";
 import { resumeRacerTermImport, subscribeRacerTermImport, getRacerTermImportState } from "@/lib/racerTermImportManager";
 import { base44 } from "@/api/base44Client";
+import V7ResultMonitor from "@/components/liveV7/V7ResultMonitor";
 
 const nav = [
   { to: "/", label: "レース一覧", icon: Home },
@@ -93,6 +94,7 @@ export default function Layout() {
   }, []);
   return (
     <div className="min-h-screen bg-[#eef2f7] text-[#26364d]">
+      <V7ResultMonitor />
       <header className="sticky top-0 z-30 bg-gradient-to-r from-[#153aa8] to-[#075ee8] border-b border-blue-700 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-3 sm:px-5 h-14 sm:h-16 flex items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-2.5 min-w-0 shrink-0">
