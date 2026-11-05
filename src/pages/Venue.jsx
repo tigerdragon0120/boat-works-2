@@ -11,7 +11,6 @@ import {
   getV65Stages, ensureV65Final, generateV65PredictionForRace,
 } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
-import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
 import RaceResultCard from "@/components/race/RaceResultCard";
 import UnifiedRaceView from "@/components/liveV7/UnifiedRaceView";
