@@ -345,6 +345,9 @@ export default function RaceDetail() {
         </div>
       )}
 
+      {/* 統合V7試験予想：既存データ読取のみ、購入判定・旧エンジン・履歴を変更しない */}
+      <LiveV7Panel race={race} />
+
       {/* スプリットレイアウト: 左=予想サマリー / 右=出走表 */}
       <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
         <PredictionPanel
