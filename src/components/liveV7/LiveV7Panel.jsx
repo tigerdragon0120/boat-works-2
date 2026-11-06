@@ -1,51 +1,57 @@
 import React,{useEffect,useState} from 'react';
 import {liveV7} from '@/liveV7/runtime';
-const pct=x=>x==null?'—':`${(x*100).toFixed(1)}%`;
+const pct=x=>x==null?'—':(x*100).toFixed(1)+'%';
+const fmt=v=>{const d=Date.parse(v||'');return Number.isFinite(d)?new Intl.DateTimeFormat('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Tokyo',hour12:false}).format(d):'未取得';};
+const COLORS=['','bg-white text-slate-900 border-slate-400','bg-slate-900 text-white border-slate-900','bg-red-600 text-white border-red-600','bg-blue-600 text-white border-blue-600','bg-yellow-400 text-slate-900 border-yellow-400','bg-emerald-600 text-white border-emerald-600'];
+const Boat=({n})=><span className={'inline-flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-md border font-black text-lg sm:text-xl '+(COLORS[+n]||'bg-slate-100 text-slate-900')}>{n}</span>;
+function Combination({value}){return <span className="inline-flex items-center gap-1">{String(value).split('-').map((n,i)=><React.Fragment key={i}>{i>0&&<span className="font-bold text-slate-400">-</span>}<Boat n={n}/></React.Fragment>)}</span>;}
 export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=true,exhibitionCount=6}){
  const [,refresh]=useState(0),[stage,setStage]=useState('AUTO'),[mode,setMode]=useState('hit'),[count,setCount]=useState(8),[refreshing,setRefreshing]=useState(false);
- useEffect(()=>{setStage('AUTO');},[race.id]);
+ useEffect(()=>setStage('AUTO'),[race.id]);
  useEffect(()=>{const off=liveV7.subscribe(()=>refresh(n=>n+1)),stop=liveV7.watch(race.id);return()=>{off();stop();};},[race.id]);
- const state=liveV7.get(race.id),selected=finalOnly?'FINAL':stage==='AUTO'?(state.stages.FINAL?.status==='READY'?'FINAL':'PRE'):stage,result=state.stages[selected],p=result?.record?.payload,o=p?.output;
+ const state=liveV7.get(race.id),selected=finalOnly?'FINAL':stage==='AUTO'?(state.stages.FINAL?.status==='READY'?'FINAL':'PRE'):stage;
+ const result=state.stages[selected],p=result?.record?.payload,o=p?.output;
  const settlement=p&&!liveV7.conflicts.has(p.race_key)?liveV7.resultHistory.get(p.race_key):null;
  const settled=settlement?.deadline===p?.deadline?settlement:null;
  const payout=settled?(liveV7.resultEnrichment.get(p.race_key)??settled.payout):null;
  const plan=(mode==='hit'?o?.ticketPlans:o?.recoveryPlans)?.[count];
- const oddsFailed=state.quality?.rows.find(row=>row.key==='odds')?.failed;
+ const oddsFailed=state.quality?.rows?.find(row=>row.key==='odds')?.failed;
  const firstId=p?liveV7.first.get(JSON.stringify([p.race_key,selected])):null;
  const firstRecord=firstId?liveV7.records.get(firstId):null;
  const revisionCount=p?[...liveV7.records.values()].filter(r=>r.payload?.race_key===p.race_key&&r.payload?.stage===selected).length:0;
  const oddsCaptured=p?.snapshot?.provenance?.odds_captured_at??null;
- const remaining=Number.isFinite(Date.parse(race.deadline))?Math.max(0,Math.ceil((Date.parse(race.deadline)-Date.now())/60000)):null;
- const refreshNow=async()=>{if(refreshing)return;setRefreshing(true);try{await liveV7.refresh(race.id);}finally{setRefreshing(false);}};
- return <section data-testid="live-v7-panel" className="rounded-xl border-2 border-indigo-300 bg-white p-3 space-y-3 min-w-0">
-  <h3 className="font-bold text-indigo-900">統合V7・{finalOnly?'展示後の予想判定':`試験予想 ${selected}`}</h3><p className="text-xs text-amber-900">未学習・未校正の試算です。既存BUYは置き換えません。更新プレビューと比較用の初回記録は分けて保持します。</p>
-  {!finalOnly&&<div className="flex flex-wrap gap-2">{['AUTO','PRE','FINAL'].map(s=><button key={s} aria-pressed={stage===s} onClick={()=>setStage(s)} className={'rounded p-2 text-sm '+(stage===s?'bg-indigo-700 text-white':'bg-slate-100')}>{s==='AUTO'?'V7 自動切替':`V7 ${s}`}</button>)}</div>}
-  <div className="rounded-lg bg-sky-50 border border-sky-200 p-3 space-y-1 text-sm">
-   <p className="font-semibold text-sky-900">{state.closed?(p?'締切後：保存された締切前の予想を表示':'締切後：締切前のV7予想記録がありません'):`締切まで ${remaining==null?'不明':remaining+'分'} · 取得オッズで買い目判定を更新`}</p>
-   <p className="text-xs text-sky-900">{!exhibitionComplete?`展示一部反映（${exhibitionCount}艇分）：暫定予想。未取得の展示情報は補完していません。`:'展示反映済み。'} 三連単の着順予想は先に表示し、オッズ取得後に期待回収と買い目判定を更新。オッズの確定は待ちません。</p>
-   <p className="text-xs text-slate-600">読込 {state.lastRead||'未取得'} / 使用オッズ {oddsCaptured||'未取得・期待値保留'} / 初回記録 {firstRecord?.payload?.generated_at||'未記録'} / 更新記録 {revisionCount?revisionCount-1:0}件（端末内）</p>
-   <div className="flex items-center gap-2"><button type="button" onClick={refreshNow} disabled={refreshing||state.closed} className="rounded-md border border-sky-400 bg-white px-3 py-2 text-xs font-bold text-sky-900 disabled:opacity-50">{refreshing?'確認中…':'予想・オッズを再確認'}</button><span className="text-xs text-slate-600">開いている間、約30秒ごとに自動確認。締切後は予想を新規生成しません。</span></div>
-  </div>
-  {state.error&&<p role="alert" className="text-red-700">{state.error}。表示が残っている場合は前回取得分です。</p>}
-  {liveV7.storageError&&<p role="alert" className="text-red-700">{liveV7.storageError}</p>}
-  {settled&&<p className="rounded bg-slate-100 p-2 text-sm" data-testid="trial-v7-result">確定三連単 {settled.combination} · 払戻 {payout==null?'不明':`${payout.toLocaleString('ja-JP')}円`}</p>}
-  {!o?<p data-testid="live-v7-waiting">{result?.reason||(p?'保存済み予想に対象モデルはありません':'展示情報を確認し、統合V7の判定を準備中…')}</p>:<>
-   <p className="font-bold">{o.model==='WOMENS'?'女子戦モデル':'通常戦モデル'} · {state.error?'判定保留':(plan?.judgment==='BUY'?'研究用BUY':plan?.judgment??'SKIP')} · 三連単 {o.combinations.length}通り · 実績信頼度は未評価</p>
-   <p className="text-xs">{o.coverage<1?"入力不足のため参考度低下。性能信頼度は未評価。":"性能信頼度は未評価。"}評価項目充足率 {pct(o.coverage)}（オッズは別） / 進入：{o.course_basis}</p>
-   <p className="text-xs break-all">観測 {p.observed_at} / 生成 {p.generated_at} / 締切 {p.deadline} {result.closed?'· 締切後の固定表示':''}</p>
-   <div className="grid grid-cols-3 gap-1 text-xs">{o.marginals.map((m,i)=>{const first=Object.entries(m).sort((a,b)=>b[1]-a[1]||+a[0]-+b[0])[0];return <p key={i}>{i+1}着候補 {first[0]}号艇<br/>{pct(first[1])}</p>;})}</div>
-   <p className="text-xs">各着候補は個別の周辺確率です。三連単は同一艇の重複を除きます。</p>
-   {!!state.quality?.rows.some(r=>r.failed)&&<p className="text-xs text-red-700">取得失敗・未完了ログがあります。保存済み入力による参考表示で、最新取得済みではありません。</p>}
-   <p className="text-xs">{oddsFailed||state.error||state.closed?'オッズの更新または取引判定は保留しています':o.judgment_reason}</p>
-   <div className="flex flex-wrap gap-2 text-sm">
-    <label>方式 <select className="min-h-11" value={mode} onChange={e=>setMode(e.target.value)}><option value="hit">的中率優先</option><option value="value">回収率優先</option></select></label>
-    <label>点数 <select className="min-h-11" value={count} onChange={e=>setCount(Number(e.target.value))}>{[4,6,8,12].map(n=><option key={n} value={n}>{n}点</option>)}</select></label>
+ const deadline=Date.parse(race.deadline||'');
+ const closed=state.closed||['finished','cancelled'].includes(race.status)||(Number.isFinite(deadline)&&Date.now()>=deadline);
+ const remaining=Number.isFinite(deadline)?Math.max(0,Math.ceil((deadline-Date.now())/60000)):null;
+ const refreshNow=async()=>{if(refreshing||closed)return;setRefreshing(true);try{await liveV7.refresh(race.id);}finally{setRefreshing(false);}};
+ const ordered=(plan?.tickets||[]).map(key=>o?.combinations?.find(row=>row.combination===key)).filter(Boolean);
+ return <section data-testid="live-v7-panel" className="min-w-0 space-y-4 rounded-xl border-2 border-indigo-200 bg-white p-3 sm:p-5">
+  <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-black text-slate-900">統合V7 <span className="text-sm font-medium text-slate-500">{o?.model==='WOMENS'?'女子戦':'通常戦'}・{selected}</span></h3><p className="text-xs text-slate-600">試験予想・確率未校正。購入推奨ではありません。</p></div><span className={'rounded-full px-3 py-1.5 text-sm font-bold '+(closed?'bg-slate-100 text-slate-700':'bg-blue-50 text-blue-800')}>{closed?'締切済み':('締切まで '+(remaining==null?'—':remaining+'分'))}</span></div>
+  {!finalOnly&&<div className="flex gap-2">{['AUTO','PRE','FINAL'].map(s=><button type="button" key={s} onClick={()=>setStage(s)} aria-pressed={stage===s} className={'rounded-lg px-3 py-2 text-sm font-bold '+(stage===s?'bg-indigo-700 text-white':'bg-slate-100 text-slate-700')}>{s==='AUTO'?'自動切替':s}</button>)}</div>}
+  {(state.error||liveV7.storageError)&&<p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{state.error||liveV7.storageError}</p>}
+  {settled&&<p data-testid="trial-v7-result" className="rounded-lg bg-slate-100 p-3 text-sm font-bold">確定三連単 {settled.combination} / 払戻 {payout==null?'未取得':payout.toLocaleString('ja-JP')+'円'}</p>}
+  {!o?<p data-testid="live-v7-waiting" className="rounded-lg border border-amber-200 bg-amber-50 p-4 font-semibold">{result?.reason||(closed?'締切前に保存されたV7予想はありません':'V7予想を準備中です')}</p>:<>
+   <div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-3 sm:p-4">
+    <div className="flex flex-wrap items-center gap-2"><strong className="text-base">着順予想</strong><span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-blue-900">{o.model==='WOMENS'?'女子戦モデル':'通常戦モデル'}</span><span className="text-xs text-slate-600">{exhibitionComplete?'展示反映':('展示一部反映 '+exhibitionCount+'艇')}</span></div>
+    <div className="grid grid-cols-3 gap-2">{o.marginals.map((m,i)=>{const best=Object.entries(m||{}).sort((a,b)=>b[1]-a[1]||Number(a[0])-Number(b[0]))[0];return <div key={i} className="flex flex-col items-center gap-1 rounded-lg bg-white p-2"><span className="text-xs font-bold text-slate-600">{i+1}着候補</span>{best?<><Boat n={best[0]}/><strong className="text-lg text-indigo-900">{pct(best[1])}</strong></>:<span>—</span>}</div>;})}</div>
+    <p className="text-xs text-slate-600">各着候補は個別の周辺確率。以下の三連単の的中確率とは異なります。</p>
    </div>
-   {plan ? <><h4 className="font-bold text-sm">試験買い目 {plan.tickets.length}点 · 合計確率 {pct(plan.probability)}</h4>
-   <p className="text-xs">仮想投資 {plan.stake}円 · 有効オッズ充足 {pct(plan.oddsCoverage)} · 各着の候補艇数 {plan.spread.join(' / ')}</p><div className="grid grid-cols-2 gap-1 text-xs">{plan.tickets.map(key=>o.combinations.find(row=>row.combination===key)).map(t=><p key={t.combination}>{t.combination} {pct(t.probability)}{selected==='FINAL'&&<span className="block text-slate-500">オッズ {oddsFailed||state.error?'保留':p.snapshot.oddsMap?.[t.combination]??'—'}</span>}</p>)}</div>
-   <p className="text-xs">期待回収の試算：{selected==='PRE'?'PREではオッズを使いません':oddsFailed||state.error?'取得失敗のため表示保留':plan.expectedRecovery==null?'候補オッズ不足・未算出':pct(plan.expectedRecovery)}（オッズは変動します。未校正・購入推奨ではありません）</p></> : <p>有効オッズが不足しているため、この点数の回収率優先案は保留します。</p>}
-   <details><summary className="min-h-11 py-2 text-sm cursor-pointer">三連単の全確率（{o.combinations.length}通り）</summary><div className="max-h-72 overflow-auto"><table className="w-full text-xs"><thead><tr><th scope="col">組番</th><th scope="col">確率</th></tr></thead><tbody>{o.combinations.map(t=><tr key={t.combination}><td>{t.combination}</td><td>{(t.probability*100).toFixed(4)}%</td></tr>)}</tbody></table></div></details>
-   <details><summary className="text-xs cursor-pointer">不足・警告・データ証跡</summary><ul className="text-xs max-h-40 overflow-auto">{[...o.missing,...o.warnings,...p.snapshot.adapter_warnings].map((s,i)=><li key={i}>{s}</li>)}</ul><p className="text-xs break-all">入力hash {p.input_hash}<br/>記録ID {result.record.id}<br/>取得元：既存Race / RaceEntry / OddsSnapshot。ブラウザー観測時点であり独立時点証明はありません。正式集計対象外。</p></details>
+   <div className="space-y-3"><div className="flex items-center justify-between gap-2"><h4 className="text-lg font-black">三連単・買い目候補</h4><span className={'shrink-0 rounded-lg px-3 py-1.5 text-sm font-bold '+(plan?.judgment==='BUY'?'bg-emerald-100 text-emerald-900':'bg-amber-100 text-amber-900')}>{plan?.judgment==='BUY'?'研究用BUY':plan?.judgment||'判定保留'}</span></div>
+    <div className="flex flex-wrap gap-3 rounded-lg bg-slate-50 p-3"><div><p className="mb-1 text-xs font-bold text-slate-600">方式</p><div className="flex gap-1">{[{key:'hit',label:'的中率'},{key:'value',label:'回収率'}].map(x=><button type="button" key={x.key} aria-pressed={mode===x.key} onClick={()=>setMode(x.key)} className={'min-h-10 rounded-lg px-3 text-sm font-bold '+(mode===x.key?'bg-indigo-700 text-white':'border border-slate-300 bg-white')}>{x.label}</button>)}</div></div><div><p className="mb-1 text-xs font-bold text-slate-600">点数</p><div className="flex flex-wrap gap-1">{[4,6,8,12].map(n=><button type="button" key={n} aria-pressed={count===n} onClick={()=>setCount(n)} className={'min-h-10 rounded-lg px-3 text-sm font-bold '+(count===n?'bg-indigo-700 text-white':'border border-slate-300 bg-white')}>{n}点</button>)}</div></div></div>
+    {plan?<><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">合計予想確率</p><strong className="text-2xl text-indigo-900">{pct(plan.probability)}</strong></div>
+      <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">仮想投資</p><strong className="text-2xl">{plan.stake?.toLocaleString('ja-JP')}円</strong></div>
+      <div className="col-span-2 rounded-lg border p-3 sm:col-span-1"><p className="text-xs text-slate-600">期待回収率（未校正）</p><strong className="text-2xl">{selected==='PRE'||oddsFailed?'—':pct(plan.expectedRecovery)}</strong></div>
+     </div>
+     <div className="overflow-hidden rounded-lg border border-slate-200">
+      <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_4rem_4rem] items-center gap-1 bg-slate-100 px-2 py-2 text-xs font-bold text-slate-600 sm:grid-cols-[2rem_minmax(0,1fr)_6rem_6rem]"><span>順</span><span>組番</span><span className="text-right">確率</span><span className="text-right">オッズ</span></div>
+      {ordered.map((t,i)=><div key={t.combination} className={'grid grid-cols-[1.5rem_minmax(0,1fr)_4rem_4rem] items-center gap-1 border-t border-slate-200 px-2 py-2 sm:grid-cols-[2rem_minmax(0,1fr)_6rem_6rem] '+(i%2?'bg-slate-50':'bg-white')}><span className="text-sm font-semibold text-slate-500">{i+1}</span><Combination value={t.combination}/><strong className="text-right text-sm text-indigo-900">{pct(t.probability)}</strong><strong className="text-right text-sm">{oddsFailed?'—':p.snapshot.oddsMap?.[t.combination]??'—'}</strong></div>)}
+     </div>
+     <p className="text-xs text-slate-600">使用オッズ {fmt(oddsCaptured)} / オッズ充足 {pct(plan.oddsCoverage)}。オッズは締切まで変動します。</p></>:<p className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">この方式では有効な買い目が不足しています。的中率方式で候補を確認できます。</p>}
+   </div>
   </>}
+  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-slate-50 p-3"><span className="text-xs text-slate-600">読込 {fmt(state.lastRead)} / オッズ {fmt(oddsCaptured)} / 更新 {revisionCount?revisionCount-1:0}件（端末内）</span><button type="button" onClick={refreshNow} disabled={refreshing||closed} className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-bold text-blue-800 disabled:opacity-50">{refreshing?'更新中…':'予想・オッズを再確認'}</button></div>
+  <details className="rounded-lg border border-slate-200 p-3 text-sm"><summary className="cursor-pointer font-bold">詳細・警告・予想の保存記録</summary><div className="mt-3 space-y-2 text-xs text-slate-700"><p>未学習・未校正の試算です。既存BUYは置き換えず、正式検証対象外です。</p><p>初回記録 {fmt(firstRecord?.payload?.generated_at)} / 締切 {race.deadline||'不明'}</p><p>入力充足率 {pct(o?.coverage)} / 進入 {o?.course_basis||'未確認'}</p>{state.quality?.rows?.some(r=>r.failed)&&<p className="font-bold text-red-700">取得失敗・未完了ログがあります。最新取得済みではありません。</p>}{o&&<><p>{o.judgment_reason}</p><p>不足・警告：{[...(o.missing||[]),...(o.warnings||[]),...(p?.snapshot?.adapter_warnings||[])].join(' / ')||'なし'}</p><p className="break-all">入力hash {p.input_hash} / 記録ID {result?.record?.id}</p></>}<p>ブラウザー観測のため独立時点証明はありません。</p></div></details>
+  {o&&<details className="rounded-lg border border-slate-200 p-3 text-sm"><summary className="cursor-pointer font-bold">三連単120通りの全確率</summary><div className="mt-3 max-h-72 overflow-auto"><table className="w-full text-xs"><thead><tr><th scope="col">組番</th><th scope="col">確率</th></tr></thead><tbody>{o.combinations.map(t=><tr key={t.combination}><td>{t.combination}</td><td>{pct(t.probability)}</td></tr>)}</tbody></table></div></details>}
  </section>;
 }
