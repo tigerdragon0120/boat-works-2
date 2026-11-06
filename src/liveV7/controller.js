@@ -7,8 +7,9 @@ import {createDurableStorage} from './durableStorage.js';
 export const STORAGE_PREFIX='BOAT_LIVE_V7_READONLY_V1:';
 const copy=v=>structuredClone(v);
 // Minimum meaningful exhibition evidence for a provisional ranking (not final-quality evidence).
-function hasPartialExhibition(entries){
- const active=(entries||[]).filter(e=>!e.is_absent&&!e.is_scratched);
+function hasPartialExhibition(entries,race){
+ const scratched=new Set((race?.scratched_boats||[]).map(Number));
+ const active=(entries||[]).filter(e=>!e.is_absent&&!e.is_scratched&&!scratched.has(Number(e.boat_number)));
  if(active.length<3||active.length>6)return false;
  const usable=active.filter(e=>Number(e.exhibition_time)>0 && Number.isFinite(Number(e.exhibition_time)) &&
    e.exhibition_st!=null && Number.isFinite(Number(e.exhibition_st)) &&
