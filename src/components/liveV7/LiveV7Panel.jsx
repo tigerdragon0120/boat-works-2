@@ -1,5 +1,6 @@
 import React,{useEffect,useState} from 'react';
-import {liveV7} from '@/liveV7/runtime';\nimport {minimumBalancedStakes} from '@/liveV7/compositeStake';
+import {liveV7} from '@/liveV7/runtime';
+import {minimumBalancedStakes} from '@/liveV7/compositeStake';
 const pct=x=>x==null?'—':(x*100).toFixed(1)+'%';
 const fmt=v=>{const d=Date.parse(v||'');return Number.isFinite(d)?new Intl.DateTimeFormat('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Tokyo',hour12:false}).format(d):'未取得';};
 const COLORS=['','bg-white text-slate-900 border-slate-400','bg-slate-900 text-white border-slate-900','bg-red-600 text-white border-red-600','bg-blue-600 text-white border-blue-600','bg-yellow-400 text-slate-900 border-yellow-400','bg-emerald-600 text-white border-emerald-600'];
