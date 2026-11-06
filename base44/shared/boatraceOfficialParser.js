@@ -667,6 +667,29 @@ export function parseBeforeInfo(html) {
     });
   }
 
+  // 公式beforeinfoは欠場艇に「欠場」という文字を出さず、展示値を空欄に
+  // することがある。少なくとも5艇で展示タイム・ST・進入コースが
+  // 完全に一致する場合だけ、残る1艇の展示不参加を欠場として扱う。
+  // 部分取得や5艇全体が未公開の場合、欠場と推測してはいけない。
+  const completeExhibitors = exhibitionData.filter(e =>
+    e.exhibition_time != null && e.exhibition_st != null &&
+    Number.isInteger(e.exhibition_course) && e.exhibition_course >= 1 &&
+    e.exhibition_course <= 6
+  );
+  const explicitScratches = exhibitionData.filter(e => e.is_absent || e.is_scratched);
+  const blankBoats = exhibitionData.filter(e =>
+    !e.is_absent && !e.is_scratched && e.exhibition_time == null &&
+    e.exhibition_st == null && e.exhibition_course == null
+  );
+  const courseCount = new Set(completeExhibitors.map(e => e.exhibition_course)).size;
+  if (exhibitionData.length === 6 && completeExhibitors.length === 5 &&
+      explicitScratches.length === 0 && blankBoats.length === 1 &&
+      courseCount === 5 && Object.keys(stExMap).length === 5) {
+    blankBoats[0].is_absent = true;
+    blankBoats[0].is_scratched = true;
+    warnings.push(\`\${blankBoats[0].boat_number}号艇：公式直前情報の展示不参加を確認（5艇の展示完了）\`);
+  }
+
   // 天候情報抽出
   let weather = null, windSpeed = null, waterTemp = null, airTemp = null, waveHeight = null;
   const airTempMatch = html.match(/気温([\d.]+)℃/);
