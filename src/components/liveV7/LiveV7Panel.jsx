@@ -34,6 +34,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
    selectedOdds.every(value=>Number.isFinite(value) && value>0);
  const compositeOdds=selected==='FINAL' && !oddsFailed && allOddsAvailable
    ?1/selectedOdds.reduce((total,value)=>total+1/value,0):null;
+ const balanced=compositeOdds!=null?minimumBalancedStakes(selectedOdds):null;
 
  return <section data-testid="live-v7-panel" className="min-w-0 space-y-4 rounded-xl border-2 border-indigo-200 bg-white p-3 sm:p-5">
   <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-black text-slate-900">統合V7 <span className="text-sm font-medium text-slate-500">{o?.model==='WOMENS'?'女子戦':'通常戦'}・{selected}</span></h3><p className="text-xs text-slate-600">試験予想・確率未校正。購入推奨ではありません。</p></div><span className={'rounded-full px-3 py-1.5 text-sm font-bold '+(closed?'bg-slate-100 text-slate-700':'bg-blue-50 text-blue-800')}>{closed?'締切済み':('締切まで '+(remaining==null?'—':remaining+'分'))}</span></div>
