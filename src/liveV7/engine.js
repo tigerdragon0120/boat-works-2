@@ -15,7 +15,7 @@ function softmax(a){const m=Math.max(...a),v=a.map(x=>Math.exp(x-m)),s=v.reduce(
 export function v7Trial(snapshot,stage){
  if(!Number.isFinite(Date.parse(snapshot.as_of)))return {status:'UNAVAILABLE',reason:'入力時刻不明'};
  const missing=[],warnings=[],scores=new Map(),entries=snapshot.entries||[],active=entries.filter(e=>!e.is_absent&&!e.is_scratched&&!(snapshot.race.scratched_boats||[]).includes(e.boat_number));
- if(!['PRE','FINAL'].includes(stage)||entries.length!==6||new Set(entries.map(e=>e.boat_number)).size!==6||entries.some(e=>!Number.isInteger(e.boat_number)||e.boat_number<1||e.boat_number>6)||active.length<3)return {status:'UNAVAILABLE',reason:'出走6艇の識別または欠場情報が不足'};
+ if(!['PRE','FINAL'].includes(stage)||entries.length!==6||new Set(entries.map(e=>e.boat_number)).size!==6||entries.some(e=>!Number.isInteger(e.boat_number)||e.boat_number<1||e.boat_number>6)||active.length<3)return {status:'UNAVAILABLE',reason:'出走表または欠場情報の識別が不足'};
  const courses=new Map();for(const e of active){if(stage==='FINAL'){const at=snapshot.field_times?.[e.boat_number]?.exhibition_course??snapshot.captured_at;if(!Number.isFinite(Date.parse(at))||Date.parse(at)>Date.parse(snapshot.as_of))return {status:'UNAVAILABLE',reason:'展示進入の時点が不明または未来'};}const c=stage==='PRE'?e.boat_number:e.exhibition_course;if(!Number.isInteger(c)||c<1||c>6)return {status:'UNAVAILABLE',reason:'展示進入コース不足。FINALを枠番で補完しません'};courses.set(e.boat_number,c);}
  if(new Set(courses.values()).size!==active.length)return {status:'UNAVAILABLE',reason:'進入コースが重複'};
  let present=0,expected=0;

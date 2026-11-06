@@ -6,7 +6,7 @@ const fmt=v=>{const d=Date.parse(v||'');return Number.isFinite(d)?new Intl.DateT
 const COLORS=['','bg-white text-slate-900 border-slate-400','bg-slate-900 text-white border-slate-900','bg-red-600 text-white border-red-600','bg-blue-600 text-white border-blue-600','bg-yellow-400 text-slate-900 border-yellow-400','bg-emerald-600 text-white border-emerald-600'];
 const Boat=({n})=><span className={'inline-flex h-9 w-9 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-md border font-black text-lg sm:text-xl '+(COLORS[+n]||'bg-slate-100 text-slate-900')}>{n}</span>;
 function Combination({value}){return <span className="inline-flex items-center gap-1">{String(value).split('-').map((n,i)=><React.Fragment key={i}>{i>0&&<span className="font-bold text-slate-400">-</span>}<Boat n={n}/></React.Fragment>)}</span>;}
-export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=true,exhibitionCount=6}){
+export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=true,exhibitionCount=6,activeBoatCount=6}){
  const [,refresh]=useState(0),[stage,setStage]=useState('AUTO'),[mode,setMode]=useState('hit'),[count,setCount]=useState(8),[refreshing,setRefreshing]=useState(false);
  useEffect(()=>setStage('AUTO'),[race.id]);
  useEffect(()=>{const off=liveV7.subscribe(()=>refresh(n=>n+1)),stop=liveV7.watch(race.id);return()=>{off();stop();};},[race.id]);
@@ -53,7 +53,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
   {settled&&<p data-testid="trial-v7-result" className="rounded-lg bg-slate-100 p-3 text-sm font-bold">確定三連単 {settled.combination} / 払戻 {payout==null?'未取得':payout.toLocaleString('ja-JP')+'円'}</p>}
   {!o?<p data-testid="live-v7-waiting" className="rounded-lg border border-amber-200 bg-amber-50 p-4 font-semibold">{result?.reason||(closed?'締切前に保存されたV7予想はありません':'V7予想を準備中です')}</p>:<>
    <div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-3 sm:p-4">
-    <div className="flex flex-wrap items-center gap-2"><strong className="text-base">着順予想</strong><span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-blue-900">{o.model==='WOMENS'?'女子戦モデル':'通常戦モデル'}</span><span className="text-xs text-slate-600">{exhibitionComplete?'展示反映':('展示一部反映 '+exhibitionCount+'艇')}</span></div>
+    <div className="flex flex-wrap items-center gap-2"><strong className="text-base">着順予想</strong><span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-blue-900">{o.model==='WOMENS'?'女子戦モデル':'通常戦モデル'}</span><span className="text-xs text-slate-600">{exhibitionComplete?('展示反映 '+activeBoatCount+'艇'):('展示一部反映 '+exhibitionCount+'/'+activeBoatCount+'艇')}</span></div>
     <div className="grid grid-cols-3 gap-2">{[0,1,2].map(i=><div key={i} className="flex flex-col items-center gap-1 rounded-lg bg-white p-2"><span className="text-xs font-bold text-slate-600">{i+1}着予想</span>{topBoats[i]?<Boat n={topBoats[i]}/>:<span>—</span>}</div>)}</div>
     <p className="text-sm font-bold text-indigo-900">本命三連単 {topFinish?.combination||'未算出'} / その組み合わせの予測確率 {pct(topFinish?.probability)}</p>
     <p className="text-xs text-slate-600">三連単120通りの中で最も確率が高い組み合わせを表示。各着順を独立に選ぶのではなく、同じ号艇の重複を防いでいます。確率は未校正の参考値です。</p>

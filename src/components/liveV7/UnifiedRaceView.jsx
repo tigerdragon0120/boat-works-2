@@ -5,19 +5,19 @@ import {buildV5ScenarioForecast} from "@/lib/v5ScenarioEngine";
 // A partial exhibition is enough for an explicitly labelled, provisional V7 view.
 // Missing inputs remain missing in the engine; never imply full exhibition quality.
 export function exhibitionProgress(race, entries) {
-  const active=(entries||[]).filter(e=>!e.is_absent&&!e.is_scratched);
+  const scratched=new Set((race?.scratched_boats||[]).map(Number));\n  const active=(entries||[]).filter(e=>!e.is_absent&&!e.is_scratched&&!scratched.has(Number(e.boat_number)));
   const valid=active.filter(e=>Number.isFinite(Number(e.exhibition_time)) && Number(e.exhibition_time)>0 &&
     e.exhibition_st!=null && Number.isFinite(Number(e.exhibition_st)) &&
     Number.isInteger(Number(e.exhibition_course)) && +e.exhibition_course>=1 && +e.exhibition_course<=6);
   const unique=new Set(valid.map(e=>Number(e.exhibition_course))).size===valid.length;
   const complete=active.length>=3 && valid.length===active.length && unique;
-  return {ready:active.length===6 && unique && (race?.exhibition_ready===true || valid.length>=3) && valid.length>=3,
+  return {ready:active.length>=3 && active.length<=6 && unique && (race?.exhibition_ready===true || valid.length>=3) && valid.length>=3,
     complete, valid:valid.length, total:active.length};
 }
 
 export default function UnifiedRaceView({race, entries, nextOpenRace=null, onSelectNextRace=()=>{}}) {
   const exhibition=exhibitionProgress(race,entries);
-  const exhibitReady=exhibition.ready;
+  const exhibitReady=exhibition.ready;\n  const activeBoatCount=exhibition.total;
   const deadlineMs=Date.parse(race?.deadline||'');
   const raceClosed=['finished','cancelled'].includes(race?.status) || (Number.isFinite(deadlineMs)&&Date.now()>=deadlineMs);
 
@@ -56,6 +56,6 @@ export default function UnifiedRaceView({race, entries, nextOpenRace=null, onSel
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
         展示進入・ST・タイムの取得待ちです。取得できたデータが予想に足り次第、V7の予想候補を表示します。オッズの確定は待ちません。
       </div>
-    </div> : <LiveV7Panel key={race.id} race={race} finalOnly exhibitionComplete={exhibition.complete} exhibitionCount={exhibition.valid} />}
+    </div> : <LiveV7Panel key={race.id} race={race} finalOnly exhibitionComplete={exhibition.complete} exhibitionCount={exhibition.valid} activeBoatCount={activeBoatCount}/>}
   </section>;
 }

@@ -60,12 +60,8 @@ export function researchCandidate(snapshot, stage, baseline = v7Trial(snapshot, 
     marginals[rank][boat] = (marginals[rank][boat] ?? 0) + row.probability;
   });
   const tickets = combinations.slice(0, 8).map(row => row.combination);
-  const present = new Set(combinations.map(row => row.combination));
-  for (const a of [1, 2, 3, 4, 5, 6]) for (const b of [1, 2, 3, 4, 5, 6]) for (const c of [1, 2, 3, 4, 5, 6]) {
-    if (a === b || a === c || b === c) continue;
-    const combination = [a, b, c].join('-');
-    if (!present.has(combination)) combinations.push({ combination, probability: 0 });
-  }
+  // Never reintroduce scratched boats as zero-probability trifectas.
+  // Five active boats have exactly 5*4*3 = 60 valid combinations.
   const priced = tickets.every(key => Number.isFinite(snapshot.oddsMap?.[key]) && snapshot.oddsMap[key] > 0);
   return {
     ...baseline, revision, combinations, marginals, tickets,

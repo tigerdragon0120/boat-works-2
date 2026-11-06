@@ -9,7 +9,7 @@ const copy=v=>structuredClone(v);
 // Minimum meaningful exhibition evidence for a provisional ranking (not final-quality evidence).
 function hasPartialExhibition(entries){
  const active=(entries||[]).filter(e=>!e.is_absent&&!e.is_scratched);
- if(active.length!==6)return false;
+ if(active.length<3||active.length>6)return false;
  const usable=active.filter(e=>Number(e.exhibition_time)>0 && Number.isFinite(Number(e.exhibition_time)) &&
    e.exhibition_st!=null && Number.isFinite(Number(e.exhibition_st)) &&
    Number.isInteger(Number(e.exhibition_course)) && Number(e.exhibition_course)>=1 && Number(e.exhibition_course)<=6);
@@ -65,7 +65,7 @@ export class LiveV7Controller{
     state.stages[stage]=frozen?{status:'READY',record:frozen,closed:true}:{status:'UNAVAILABLE',reason:deadline==null?'締切時刻不明。生成しません':'締切後・終了済み。事後生成しません'};continue;
    }
    if(data.race.saved_input_status==='STALE'){state.stages[stage]={status:'UNAVAILABLE',reason:'保存済み出走表の有効期限切れ'};continue;}
-   if(stage==='FINAL'&&!hasPartialExhibition(data.entries)){state.stages[stage]={status:'UNAVAILABLE',reason:'展示データの取得待ち'};continue;}
+   if(stage==='FINAL'&&!hasPartialExhibition(data.entries,data.race)){state.stages[stage]={status:'UNAVAILABLE',reason:'展示データの取得待ち'};continue;}
    try{
     const snapshot=buildSnapshot({...data,observedAt:now},stage),inputHash=await digest(fingerprintInput(snapshot));
     if(prior?.record?.payload.input_hash===inputHash){state.stages[stage]=prior;continue;}
