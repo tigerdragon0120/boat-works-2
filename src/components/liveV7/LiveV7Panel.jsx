@@ -25,6 +25,15 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  const remaining=Number.isFinite(deadline)?Math.max(0,Math.ceil((deadline-Date.now())/60000)):null;
  const refreshNow=async()=>{if(refreshing||closed)return;setRefreshing(true);try{await liveV7.refresh(race.id);}finally{setRefreshing(false);}};
  const ordered=(plan?.tickets||[]).map(key=>o?.combinations?.find(row=>row.combination===key)).filter(Boolean);
+ // Synthetic/composite odds (dutching) = 1 / sum(1 / decimal_odds).
+ // Show only when every selected ticket has a valid odds quote.
+ // This assumes payouts are balanced across bets, unlike current 100-yen-per-ticket display.
+ const selectedOdds=(plan?.tickets||[]).map(key=>Number(p?.snapshot?.oddsMap?.[key]));
+ const allOddsAvailable=selectedOdds.length>0 && selectedOdds.length===plan?.tickets?.length &&
+   selectedOdds.every(value=>Number.isFinite(value) && value>0);
+ const compositeOdds=selected==='FINAL' && !oddsFailed && allOddsAvailable
+   ?1/selectedOdds.reduce((total,value)=>total+1/value,0):null;
+
  return <section data-testid="live-v7-panel" className="min-w-0 space-y-4 rounded-xl border-2 border-indigo-200 bg-white p-3 sm:p-5">
   <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-black text-slate-900">統合V7 <span className="text-sm font-medium text-slate-500">{o?.model==='WOMENS'?'女子戦':'通常戦'}・{selected}</span></h3><p className="text-xs text-slate-600">試験予想・確率未校正。購入推奨ではありません。</p></div><span className={'rounded-full px-3 py-1.5 text-sm font-bold '+(closed?'bg-slate-100 text-slate-700':'bg-blue-50 text-blue-800')}>{closed?'締切済み':('締切まで '+(remaining==null?'—':remaining+'分'))}</span></div>
   {!finalOnly&&<div className="flex gap-2">{['AUTO','PRE','FINAL'].map(s=><button type="button" key={s} onClick={()=>setStage(s)} aria-pressed={stage===s} className={'rounded-lg px-3 py-2 text-sm font-bold '+(stage===s?'bg-indigo-700 text-white':'bg-slate-100 text-slate-700')}>{s==='AUTO'?'自動切替':s}</button>)}</div>}
@@ -38,16 +47,18 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
    </div>
    <div className="space-y-3"><div className="flex items-center justify-between gap-2"><h4 className="text-lg font-black">三連単・買い目候補</h4><span className={'shrink-0 rounded-lg px-3 py-1.5 text-sm font-bold '+(plan?.judgment==='BUY'?'bg-emerald-100 text-emerald-900':'bg-amber-100 text-amber-900')}>{plan?.judgment==='BUY'?'研究用BUY':plan?.judgment||'判定保留'}</span></div>
     <div className="flex flex-wrap gap-3 rounded-lg bg-slate-50 p-3"><div><p className="mb-1 text-xs font-bold text-slate-600">方式</p><div className="flex gap-1">{[{key:'hit',label:'的中率'},{key:'value',label:'回収率'}].map(x=><button type="button" key={x.key} aria-pressed={mode===x.key} onClick={()=>setMode(x.key)} className={'min-h-10 rounded-lg px-3 text-sm font-bold '+(mode===x.key?'bg-indigo-700 text-white':'border border-slate-300 bg-white')}>{x.label}</button>)}</div></div><div><p className="mb-1 text-xs font-bold text-slate-600">点数</p><div className="flex flex-wrap gap-1">{[4,6,8,12].map(n=><button type="button" key={n} aria-pressed={count===n} onClick={()=>setCount(n)} className={'min-h-10 rounded-lg px-3 text-sm font-bold '+(count===n?'bg-indigo-700 text-white':'border border-slate-300 bg-white')}>{n}点</button>)}</div></div></div>
-    {plan?<><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+    {plan?<><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">合計予想確率</p><strong className="text-2xl text-indigo-900">{pct(plan.probability)}</strong></div>
       <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">仮想投資</p><strong className="text-2xl">{plan.stake?.toLocaleString('ja-JP')}円</strong></div>
-      <div className="col-span-2 rounded-lg border p-3 sm:col-span-1"><p className="text-xs text-slate-600">期待回収率（未校正）</p><strong className="text-2xl">{selected==='PRE'||oddsFailed?'—':pct(plan.expectedRecovery)}</strong></div>
+      <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">概算合成オッズ</p><strong className="text-2xl text-indigo-900">{compositeOdds==null?'—':compositeOdds.toFixed(2)+'倍'}</strong></div>
+      <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">期待回収率（未校正）</p><strong className="text-2xl">{selected==='PRE'||oddsFailed?'—':pct(plan.expectedRecovery)}</strong></div>
      </div>
      <div className="overflow-hidden rounded-lg border border-slate-200">
       <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_4rem_4rem] items-center gap-1 bg-slate-100 px-2 py-2 text-xs font-bold text-slate-600 sm:grid-cols-[2rem_minmax(0,1fr)_6rem_6rem]"><span>順</span><span>組番</span><span className="text-right">確率</span><span className="text-right">オッズ</span></div>
       {ordered.map((t,i)=><div key={t.combination} className={'grid grid-cols-[1.5rem_minmax(0,1fr)_4rem_4rem] items-center gap-1 border-t border-slate-200 px-2 py-2 sm:grid-cols-[2rem_minmax(0,1fr)_6rem_6rem] '+(i%2?'bg-slate-50':'bg-white')}><span className="text-sm font-semibold text-slate-500">{i+1}</span><Combination value={t.combination}/><strong className="text-right text-sm text-indigo-900">{pct(t.probability)}</strong><strong className="text-right text-sm">{oddsFailed?'—':p.snapshot.oddsMap?.[t.combination]??'—'}</strong></div>)}
      </div>
-     <p className="text-xs text-slate-600">使用オッズ {fmt(oddsCaptured)} / オッズ充足 {pct(plan.oddsCoverage)}。オッズは締切まで変動します。</p></>:<p className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">この方式では有効な買い目が不足しています。的中率方式で候補を確認できます。</p>}
+     <p className="text-xs text-slate-600">使用オッズ {fmt(oddsCaptured)} / オッズ充足 {pct(plan.oddsCoverage)}。オッズは締切まで変動します。</p>
+     <p className="text-xs text-slate-600">概算合成オッズは選択した全買い目のオッズから算出し、払戻がほぼ等しくなる資金配分を仮定した参考倍率です。表示中の「100円ずつ購入」とは異なります。オッズ不足・取得失敗時は表示しません。</p></>:<p className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">この方式では有効な買い目が不足しています。的中率方式で候補を確認できます。</p>}
    </div>
   </>}
   <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-slate-50 p-3"><span className="text-xs text-slate-600">読込 {fmt(state.lastRead)} / オッズ {fmt(oddsCaptured)} / 更新 {revisionCount?revisionCount-1:0}件（端末内）</span><button type="button" onClick={refreshNow} disabled={refreshing||closed} className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-bold text-blue-800 disabled:opacity-50">{refreshing?'更新中…':'予想・オッズを再確認'}</button></div>
