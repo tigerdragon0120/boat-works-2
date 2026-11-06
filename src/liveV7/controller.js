@@ -3,6 +3,7 @@ import {buildSnapshot,fingerprintInput} from './snapshot.js';
 import {v7Trial,V7_TRIAL_REVISION} from './engine.js';
 import {researchCandidate} from './researchCandidate.js';
 import {digest,raceKey,timeMs} from '../lib/uiReadGuard.js';
+import {createDurableStorage} from './durableStorage.js';
 export const STORAGE_PREFIX='BOAT_LIVE_V7_READONLY_V1:';
 const copy=v=>structuredClone(v);
 // Minimum meaningful exhibition evidence for a provisional ranking (not final-quality evidence).
@@ -18,19 +19,29 @@ function hasPartialExhibition(entries){
 export class LiveV7Controller{
  constructor({reader,model=V7_TRIAL_REVISION,predict=/** @type {(snapshot: any, stage: string) => any} */ (v7Trial),compare=researchCandidate,waitForResult=false,storage=null,namespace,clock=()=>new Date().toISOString(),hidden=()=>false,setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id),readTimeoutMs=15000,deadlineTimer=(fn,ms)=>setTimeout(fn,ms),clearDeadlineTimer=id=>clearTimeout(id)}){
   if(!namespace)throw Error('保存環境の識別が必要です');
-  this.reader=reader;this.model=model;this.predict=predict;this.compare=compare;this.waitForResult=waitForResult;this.pendingReads=new Map();this.readTimeoutMs=readTimeoutMs;this.deadlineTimer=deadlineTimer;this.clearDeadlineTimer=clearDeadlineTimer;this.storage=storage;this.storageKey=STORAGE_PREFIX+namespace;this.clock=clock;this.hidden=hidden;this.setTimer=setTimer;this.clearTimer=clearTimer;this.races=new Map();this.records=new Map();this.first=new Map();this.resultHistory=new Map();this.conflicts=new Set();this.listeners=new Set();this.inflight=new Map();this.watchers=new Map();this.storageError=null;this.restoreFailure=null;this.quarantined=[];this.restored=false;this.restorePromise=null;this.resultEnrichment=new Map();this.resultAttempts=new Map();this.resultErrors=new Map();this.sourceChecks=new Map();this.resultMonitorError=null;this.resultMonitorStopped=false;this.resultMonitorInflight=null;
+  this.reader=reader;this.model=model;this.predict=predict;this.compare=compare;this.waitForResult=waitForResult;this.pendingReads=new Map();this.readTimeoutMs=readTimeoutMs;this.deadlineTimer=deadlineTimer;this.clearDeadlineTimer=clearDeadlineTimer;this.storage=storage;this.storageKey=STORAGE_PREFIX+namespace;this.durable=createDurableStorage(storage,this.storageKey);this.saveChain=Promise.resolve();this.clock=clock;this.hidden=hidden;this.setTimer=setTimer;this.clearTimer=clearTimer;this.races=new Map();this.records=new Map();this.first=new Map();this.resultHistory=new Map();this.conflicts=new Set();this.listeners=new Set();this.inflight=new Map();this.watchers=new Map();this.storageError=null;this.restoreFailure=null;this.quarantined=[];this.restored=false;this.restorePromise=null;this.resultEnrichment=new Map();this.resultAttempts=new Map();this.resultErrors=new Map();this.sourceChecks=new Map();this.resultMonitorError=null;this.resultMonitorStopped=false;this.resultMonitorInflight=null;
  }
  subscribe(fn){this.listeners.add(fn);return()=>{this.listeners.delete(fn);};}
  emit(){for(const fn of this.listeners)fn();}
  async restore(){if(!this.restorePromise)this.restorePromise=this.restoreStored();return this.restorePromise;}
  async restoreStored(){this.restored=true;try{
-  const saved=JSON.parse(this.storage?.getItem(this.storageKey)||'{}');this.quarantined=saved.quarantined||[];
+  const saved=await this.durable.read();this.quarantined=saved.quarantined||[];
   for(const r of saved.records||[]){if(r.hash!==await digest(r.payload)||r.id!==r.hash||r.payload.model!==this.model){this.quarantined.push(r);continue;}this.records.set(r.id,r);}
   for(const [key,id] of saved.first||[]){const r=this.records.get(id);if(r&&key===JSON.stringify([r.payload.race_key,r.payload.stage]))this.first.set(key,id);}
   for(const row of saved.results||[])this.resultHistory.set(row.key,row.value);
   this.conflicts=new Set(saved.conflicts||[]);this.resultEnrichment=new Map(saved.resultEnrichment||[]);this.sourceChecks=new Map(saved.sourceChecks||[]);
  }catch(e){this.restoreFailure='ローカル履歴の読込失敗：'+e.message;this.storageError=this.restoreFailure;}this.emit();}
- persist(){if(this.restoreFailure){this.storageError=this.restoreFailure+"。元の保存内容を保持し、上書きを停止しています";return;}if(!this.storage){this.storageError="このブラウザーではV7履歴を永続保存できません";return;}try{this.storage?.setItem(this.storageKey,JSON.stringify({records:[...this.records.values()],first:[...this.first],results:[...this.resultHistory].map(([key,value])=>({key,value})),conflicts:[...this.conflicts],resultEnrichment:[...this.resultEnrichment],sourceChecks:[...this.sourceChecks],quarantined:this.quarantined}));this.storageError=null;}catch(e){this.storageError='ローカル保存失敗：'+e.message;}}
+ persist(){
+  if(this.restoreFailure){this.storageError=this.restoreFailure+"。元の保存内容を保持し、上書きを停止しています";return Promise.resolve();}
+  const snapshot={records:[...this.records.values()],first:[...this.first],results:[...this.resultHistory].map(([key,value])=>({key,value})),conflicts:[...this.conflicts],resultEnrichment:[...this.resultEnrichment],sourceChecks:[...this.sourceChecks],quarantined:this.quarantined};
+  // Serialize updates, so a slow compression/write cannot overwrite a newer revision.
+  const task=this.saveChain.catch(()=>{}).then(async()=>{
+   try{await this.durable.write(snapshot);this.storageError=null;}
+   catch(e){this.storageError='端末内へのV7履歴保存に失敗しました：'+e.message;}
+  });
+  this.saveChain=task;
+  return task;
+ }
  get(id){return this.races.get(id)||{status:'WAITING',stages:{},error:null};}
  async refresh(id){if(this.inflight.has(id))return this.inflight.get(id);const promise=this.readAndGenerate(id).finally(()=>this.inflight.delete(id));this.inflight.set(id,promise);return promise;}
  async readBounded(id,read=this.reader){
@@ -73,8 +84,8 @@ export class LiveV7Controller{
     state.stages[stage]={status:'READY',record};
    }catch(e){state.stages[stage]={status:'UNAVAILABLE',reason:e.message};}
   }
-  this.races.set(id,state);this.persist();this.emit();return state;
- }catch(e){const status=e.status||e.response?.status,previous=this.get(id);const state={...previous,status:'ERROR',error:status===401||status===403?'認証・権限エラー。自動再試行を停止しました':e.message,halted:status===401||status===403,retryAfter:status===429?60000:30000};this.races.set(id,state);this.sourceChecks.set(id,{...(this.sourceChecks.get(id)||{}),attempt_at:this.clock(),error:state.error});this.persist();this.emit();return state;}}
+  this.races.set(id,state);await this.persist();this.emit();return state;
+ }catch(e){const status=e.status||e.response?.status,previous=this.get(id);const state={...previous,status:'ERROR',error:status===401||status===403?'認証・権限エラー。自動再試行を停止しました':e.message,halted:status===401||status===403,retryAfter:status===429?60000:30000};this.races.set(id,state);this.sourceChecks.set(id,{...(this.sourceChecks.get(id)||{}),attempt_at:this.clock(),error:state.error});await this.persist();this.emit();return state;}}
  observeResult(key,result,race,now){
   if(!result)return;
   if(result.race_id!==race.id||(result.race_key&&raceKey(result.race_key)!==key))return;
@@ -101,7 +112,7 @@ export class LiveV7Controller{
     if(final)this.observeResult(key,final,race,this.clock());
 
    }catch(e){this.resultErrors.set(key,'V7結果取得失敗：'+e.message);if(String(e.message||e).includes('競合'))this.conflicts.add(key);const status=e.status||e.response?.status;if(status===401||status===403)this.resultMonitorStopped=true;if(status===401||status===403||status===429)break;}
-   }this.resultMonitorError=[...this.resultErrors.values()].join(" / ")||null;this.persist();this.emit();
+   }this.resultMonitorError=[...this.resultErrors.values()].join(" / ")||null;await this.persist();this.emit();
   })().finally(()=>{this.resultMonitorInflight=null;});this.resultMonitorInflight=task;return task;
  }
  export(){return {schema:'BOAT_LIVE_V7_ARCHIVE_V1',records:[...this.records.values()],first:[...this.first],results:[...this.resultHistory],conflicts:[...this.conflicts],resultEnrichment:[...this.resultEnrichment],sourceChecks:[...this.sourceChecks],quarantined:this.quarantined};}
