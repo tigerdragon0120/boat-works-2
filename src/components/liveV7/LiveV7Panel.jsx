@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {liveV7} from '@/liveV7/runtime';
+import {liveV7} from '@/liveV7/runtime';\nimport {minimumBalancedStakes} from '@/liveV7/compositeStake';
 const pct=x=>x==null?'—':(x*100).toFixed(1)+'%';
 const fmt=v=>{const d=Date.parse(v||'');return Number.isFinite(d)?new Intl.DateTimeFormat('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Tokyo',hour12:false}).format(d):'未取得';};
 const COLORS=['','bg-white text-slate-900 border-slate-400','bg-slate-900 text-white border-slate-900','bg-red-600 text-white border-red-600','bg-blue-600 text-white border-blue-600','bg-yellow-400 text-slate-900 border-yellow-400','bg-emerald-600 text-white border-emerald-600'];
@@ -50,12 +50,16 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
     {plan?<><div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">合計予想確率</p><strong className="text-2xl text-indigo-900">{pct(plan.probability)}</strong></div>
       <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">仮想投資</p><strong className="text-2xl">{plan.stake?.toLocaleString('ja-JP')}円</strong></div>
-      <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">概算合成オッズ</p><strong className="text-2xl text-indigo-900">{compositeOdds==null?'—':compositeOdds.toFixed(2)+'倍'}</strong></div>
+      <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">概算合成オッズ</p><strong className="text-2xl text-indigo-900">{compositeOdds==null?'—':compositeOdds.toFixed(2)+'倍'}</strong><p className="mt-1 text-xs font-bold text-indigo-900">均等払戻向け最小額：{balanced?balanced.total.toLocaleString('ja-JP')+'円':'—'}</p></div>
       <div className="rounded-lg border p-3"><p className="text-xs text-slate-600">期待回収率（未校正）</p><strong className="text-2xl">{selected==='PRE'||oddsFailed?'—':pct(plan.expectedRecovery)}</strong></div>
      </div>
+     <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-950">
+      <p className="font-bold">100円単位で合成オッズに近づける購入例</p>
+      {balanced?<><p className="mt-1">最低概算購入額 <strong className="text-xl">{balanced.total.toLocaleString('ja-JP')}円</strong> / 的中時の概算払戻 <strong>{Math.round(balanced.minPayout).toLocaleString('ja-JP')}〜{Math.round(balanced.maxPayout).toLocaleString('ja-JP')}円</strong></p><p className="mt-1 text-xs">どの買い目が的中しても払戻差が10%以内になる条件での、最小購入例です。下表の「均等払戻配分」列で各点の購入額を確認できます。</p></>:<p className="mt-1 text-xs">オッズ未取得、または10万円以内で払戻差10%以内の配分が作れないため、購入額は算出できません。</p>}
+     </div>
      <div className="overflow-hidden rounded-lg border border-slate-200">
-      <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_4rem_4rem] items-center gap-1 bg-slate-100 px-2 py-2 text-xs font-bold text-slate-600 sm:grid-cols-[2rem_minmax(0,1fr)_6rem_6rem]"><span>順</span><span>組番</span><span className="text-right">確率</span><span className="text-right">オッズ</span></div>
-      {ordered.map((t,i)=><div key={t.combination} className={'grid grid-cols-[1.5rem_minmax(0,1fr)_4rem_4rem] items-center gap-1 border-t border-slate-200 px-2 py-2 sm:grid-cols-[2rem_minmax(0,1fr)_6rem_6rem] '+(i%2?'bg-slate-50':'bg-white')}><span className="text-sm font-semibold text-slate-500">{i+1}</span><Combination value={t.combination}/><strong className="text-right text-sm text-indigo-900">{pct(t.probability)}</strong><strong className="text-right text-sm">{oddsFailed?'—':p.snapshot.oddsMap?.[t.combination]??'—'}</strong></div>)}
+      <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_3rem_3.5rem_4rem] items-center gap-1 bg-slate-100 px-2 py-2 text-xs font-bold text-slate-600 sm:grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_6rem]"><span>順</span><span>組番</span><span className="text-right">確率</span><span className="text-right">オッズ</span><span className="text-right">配分額</span></div>
+      {ordered.map((t,i)=><div key={t.combination} className={'grid grid-cols-[1.5rem_minmax(0,1fr)_3rem_3.5rem_4rem] items-center gap-1 border-t border-slate-200 px-2 py-2 sm:grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_6rem] '+(i%2?'bg-slate-50':'bg-white')}><span className="text-sm font-semibold text-slate-500">{i+1}</span><Combination value={t.combination}/><strong className="text-right text-sm text-indigo-900">{pct(t.probability)}</strong><strong className="text-right text-sm">{oddsFailed?'—':p.snapshot.oddsMap?.[t.combination]??'—'}</strong><strong className="text-right text-sm text-blue-900">{balanced?balanced.stakes[plan.tickets.indexOf(t.combination)].toLocaleString('ja-JP')+'円':'—'}</strong></div>)}
      </div>
      <p className="text-xs text-slate-600">使用オッズ {fmt(oddsCaptured)} / オッズ充足 {pct(plan.oddsCoverage)}。オッズは締切まで変動します。</p>
      <p className="text-xs text-slate-600">概算合成オッズは選択した全買い目のオッズから算出し、払戻がほぼ等しくなる資金配分を仮定した参考倍率です。表示中の「100円ずつ購入」とは異なります。オッズ不足・取得失敗時は表示しません。</p></>:<p className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">この方式では有効な買い目が不足しています。的中率方式で候補を確認できます。</p>}
