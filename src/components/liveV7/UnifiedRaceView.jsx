@@ -18,7 +18,8 @@ export function exhibitionProgress(race, entries) {
 
 export default function UnifiedRaceView({race, entries, nextOpenRace=null, onSelectNextRace=()=>{}}) {
   const exhibition=exhibitionProgress(race,entries);
-  const exhibitReady=exhibition.ready;\n  const activeBoatCount=exhibition.total;
+  const exhibitReady=exhibition.ready;
+  const activeBoatCount=exhibition.total;
   const deadlineMs=Date.parse(race?.deadline||'');
   const raceClosed=['finished','cancelled'].includes(race?.status) || (Number.isFinite(deadlineMs)&&Date.now()>=deadlineMs);
 
