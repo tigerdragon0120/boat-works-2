@@ -687,7 +687,7 @@ export function parseBeforeInfo(html) {
       courseCount === 5 && Object.keys(stExMap).length === 5) {
     blankBoats[0].is_absent = true;
     blankBoats[0].is_scratched = true;
-    warnings.push(\`\${blankBoats[0].boat_number}号艇：公式直前情報の展示不参加を確認（5艇の展示完了）\`);
+    warnings.push(`${blankBoats[0].boat_number}号艇：公式直前情報の展示不参加を確認（5艇の展示完了）`);
   }
 
   // 天候情報抽出
