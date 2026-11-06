@@ -35,6 +35,16 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  const compositeOdds=selected==='FINAL' && !oddsFailed && allOddsAvailable
    ?1/selectedOdds.reduce((total,value)=>total+1/value,0):null;
  const balanced=compositeOdds!=null?minimumBalancedStakes(selectedOdds):null;
+ // Display one physically possible ordered finish. Marginal leaders at
+ // each rank are independent and can repeat; they are not a trifecta.
+ const topFinish=o?.combinations?.filter(row=>
+   typeof row.combination==='string' &&
+   /^[1-6]-[1-6]-[1-6]$/.test(row.combination) &&
+   new Set(row.combination.split('-')).size===3 &&
+   Number.isFinite(row.probability) && row.probability>0
+ )?.sort((a,b)=>b.probability-a.probability || a.combination.localeCompare(b.combination))[0]||null;
+ const topBoats=topFinish?.combination.split('-')||[];
+
 
  return <section data-testid="live-v7-panel" className="min-w-0 space-y-4 rounded-xl border-2 border-indigo-200 bg-white p-3 sm:p-5">
   <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-black text-slate-900">統合V7 <span className="text-sm font-medium text-slate-500">{o?.model==='WOMENS'?'女子戦':'通常戦'}・{selected}</span></h3><p className="text-xs text-slate-600">試験予想・確率未校正。購入推奨ではありません。</p></div><span className={'rounded-full px-3 py-1.5 text-sm font-bold '+(closed?'bg-slate-100 text-slate-700':'bg-blue-50 text-blue-800')}>{closed?'締切済み':('締切まで '+(remaining==null?'—':remaining+'分'))}</span></div>
@@ -44,8 +54,9 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
   {!o?<p data-testid="live-v7-waiting" className="rounded-lg border border-amber-200 bg-amber-50 p-4 font-semibold">{result?.reason||(closed?'締切前に保存されたV7予想はありません':'V7予想を準備中です')}</p>:<>
    <div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-3 sm:p-4">
     <div className="flex flex-wrap items-center gap-2"><strong className="text-base">着順予想</strong><span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-blue-900">{o.model==='WOMENS'?'女子戦モデル':'通常戦モデル'}</span><span className="text-xs text-slate-600">{exhibitionComplete?'展示反映':('展示一部反映 '+exhibitionCount+'艇')}</span></div>
-    <div className="grid grid-cols-3 gap-2">{o.marginals.map((m,i)=>{const best=Object.entries(m||{}).sort((a,b)=>b[1]-a[1]||Number(a[0])-Number(b[0]))[0];return <div key={i} className="flex flex-col items-center gap-1 rounded-lg bg-white p-2"><span className="text-xs font-bold text-slate-600">{i+1}着候補</span>{best?<><Boat n={best[0]}/><strong className="text-lg text-indigo-900">{pct(best[1])}</strong></>:<span>—</span>}</div>;})}</div>
-    <p className="text-xs text-slate-600">各着候補は個別の周辺確率。以下の三連単の的中確率とは異なります。</p>
+    <div className="grid grid-cols-3 gap-2">{[0,1,2].map(i=><div key={i} className="flex flex-col items-center gap-1 rounded-lg bg-white p-2"><span className="text-xs font-bold text-slate-600">{i+1}着予想</span>{topBoats[i]?<Boat n={topBoats[i]}/>:<span>—</span>}</div>)}</div>
+    <p className="text-sm font-bold text-indigo-900">本命三連単 {topFinish?.combination||'未算出'} / その組み合わせの予測確率 {pct(topFinish?.probability)}</p>
+    <p className="text-xs text-slate-600">三連単120通りの中で最も確率が高い組み合わせを表示。各着順を独立に選ぶのではなく、同じ号艇の重複を防いでいます。確率は未校正の参考値です。</p>
    </div>
    <div className="space-y-3"><div className="flex items-center justify-between gap-2"><h4 className="text-lg font-black">三連単・買い目候補</h4><span className={'shrink-0 rounded-lg px-3 py-1.5 text-sm font-bold '+(plan?.judgment==='BUY'?'bg-emerald-100 text-emerald-900':'bg-amber-100 text-amber-900')}>{plan?.judgment==='BUY'?'研究用BUY':plan?.judgment||'判定保留'}</span></div>
     <div className="flex flex-wrap gap-3 rounded-lg bg-slate-50 p-3"><div><p className="mb-1 text-xs font-bold text-slate-600">方式</p><div className="flex gap-1">{[{key:'hit',label:'的中率'},{key:'value',label:'回収率'}].map(x=><button type="button" key={x.key} aria-pressed={mode===x.key} onClick={()=>setMode(x.key)} className={'min-h-10 rounded-lg px-3 text-sm font-bold '+(mode===x.key?'bg-indigo-700 text-white':'border border-slate-300 bg-white')}>{x.label}</button>)}</div></div><div><p className="mb-1 text-xs font-bold text-slate-600">点数</p><div className="flex flex-wrap gap-1">{[4,6,8,12].map(n=><button type="button" key={n} aria-pressed={count===n} onClick={()=>setCount(n)} className={'min-h-10 rounded-lg px-3 text-sm font-bold '+(count===n?'bg-indigo-700 text-white':'border border-slate-300 bg-white')}>{n}点</button>)}</div></div></div>
