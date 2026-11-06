@@ -5,7 +5,8 @@ import {buildV5ScenarioForecast} from "@/lib/v5ScenarioEngine";
 // A partial exhibition is enough for an explicitly labelled, provisional V7 view.
 // Missing inputs remain missing in the engine; never imply full exhibition quality.
 export function exhibitionProgress(race, entries) {
-  const scratched=new Set((race?.scratched_boats||[]).map(Number));\n  const active=(entries||[]).filter(e=>!e.is_absent&&!e.is_scratched&&!scratched.has(Number(e.boat_number)));
+  const scratched=new Set((race?.scratched_boats||[]).map(Number));
+  const active=(entries||[]).filter(e=>!e.is_absent&&!e.is_scratched&&!scratched.has(Number(e.boat_number)));
   const valid=active.filter(e=>Number.isFinite(Number(e.exhibition_time)) && Number(e.exhibition_time)>0 &&
     e.exhibition_st!=null && Number.isFinite(Number(e.exhibition_st)) &&
     Number.isInteger(Number(e.exhibition_course)) && +e.exhibition_course>=1 && +e.exhibition_course<=6);
