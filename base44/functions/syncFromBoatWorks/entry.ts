@@ -103,20 +103,22 @@ export default async function (req: Request) {
     if (venueCode) {
       const url = `${baseUrl}&venue_code=${encodeURIComponent(venueCode)}`;
       const payload = await fetchWithRetry(url, key);
+      const fetchedAt = new Date().toISOString();
       if (!payload || !Array.isArray(payload.races)) {
         return Response.json({ error: "データ形式不正 (venue mode)" }, { status: 400 });
       }
-      const summary = await syncAndPredict(base44, payload, { mode, venue_code: venueCode });
+      const summary = await syncAndPredict(base44, payload, { mode, venue_code: venueCode, fetched_at: fetchedAt });
       return Response.json({ ok: true, date, mode, venue_code: venueCode, summary });
     }
 
     // 全場一括取得: 1回のAPI呼び出しで全データ取得(Rate limit回避)
     const payload = await fetchWithRetry(baseUrl, key);
+    const fetchedAt = new Date().toISOString();
     if (!payload || !Array.isArray(payload.races)) {
       return Response.json({ error: "データ形式不正: { races, entries, series, results, odds } が必要です" }, { status: 400 });
     }
 
-    const summary = await syncAndPredict(base44, payload, { mode });
+    const summary = await syncAndPredict(base44, payload, { mode, fetched_at: fetchedAt });
     return Response.json({ ok: true, date, mode, summary });
   } catch (error: any) {
     return Response.json({ error: error.message }, { status: 500 });

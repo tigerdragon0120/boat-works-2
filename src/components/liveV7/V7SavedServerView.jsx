@@ -1,5 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {base44} from '@/api/base44Client';
+import {findBackfillEvidence,findResultEvidence} from '@/lib/resultEvidence';
 
 // DBのcreated_dateはオフセットの無いUTC壁時計時刻なので、UTCとして解釈する
 const dbMs=v=>{const raw=String(v??'').trim().replace(/(\.\d{3})\d+/,'$1');if(!raw)return NaN;return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(raw)?raw:`${raw}Z`);};
@@ -65,9 +66,9 @@ export default function V7SavedServerView({race}) {
  // 有効な払戻(100円あたり1円以上)を確認できたものだけを判定材料にする
  const payoutValue=Number(result?.payout??result?.payouts?.trifecta?.payout);
  const payout=Number.isFinite(payoutValue)&&payoutValue>0?payoutValue:null;
- // 実取得時の証跡(LIVE)が結果ID・三連単・取得元と一致することを確認できた結果だけを照合に使う
- const matched=result?evidenceRows.find(p=>String(p.result_trifecta||'')===String(result.result_trifecta||'')&&String(p.source||'')===String(result.source||''))||null:null;
- const evidence=matched&&matched.evidence_type==='LIVE'&&String(matched.result_id||'')===String(result.id||'')?matched:null;
+ // 日次照合と同じ条件（実取得の証跡・結果ID必須）で、候補すべてから有効な証跡を探す
+ const evidence=result?findResultEvidence(evidenceRows,{combination:result.result_trifecta,source:result.source,resultId:result.id}):null;
+ const matched=evidence||(result?findBackfillEvidence(evidenceRows,{combination:result.result_trifecta,source:result.source}):null);
  // 判定に使うのは「画面に表示している保存予想」(重複なく1件だけの組)のみ。
  // 予想が無い・重複保留の場合は判定せず保留とする
  const shown=['FINAL','PRE'].map(stage=>[stage,valid.filter(r=>r.stage===stage)]).filter(([,list])=>list.length===1);
@@ -90,7 +91,7 @@ export default function V7SavedServerView({race}) {
     :!evidence?(matched?'実取得の証跡が無いため判定は保留（事後補完のみ）':'公式取得経路の記録を確認できないため判定は保留')
     :!judged?'公式払戻を確認できていないため判定は保留'
     :'表示できる保存予想が無いため判定は保留'}</p>
-   {evidence&&<p className="text-xs text-rose-900">取得経路 {evidence.endpoint||evidence.source} ／ 結果ID {evidence.result_id||'不明'} ／ 記録 {evidence.recorded_at||'不明'}</p>}
+   {evidence&&<p className="text-xs text-rose-900">取得経路 {evidence.endpoint||evidence.source} ／ 実取得 {evidence.fetched_at||'不明'} ／ 結果ID {evidence.result_id||'不明'}</p>}
   </div>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{resultRows.length?'公式取得元・確定状態・三連単の形式を確認できないため照合は保留です。':'確定結果はまだ取得できていません。結果が入り次第、この画面に反映されます。'}</p>}
 
   {loading?<p className="text-sm text-slate-600">取得中…</p>

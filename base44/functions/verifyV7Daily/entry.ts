@@ -19,7 +19,7 @@
 //   dry_run    true で書き込みを行わない
 // =====================================================
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
-import { findAnyProvenance, findProvenanceEvidence, loadProvenanceByRace } from "../../shared/resultProvenance.js";
+import { findBackfillProvenance, findProvenanceEvidence, loadProvenanceByRace } from "../../shared/resultProvenance.js";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const TIME_BUDGET_MS = 60000;
@@ -307,7 +307,7 @@ export default async function(req: Request) {
           resultId: result.id,
         });
         if (!evidence) {
-          const backfilled = findAnyProvenance(evidenceRows, {
+          const backfilled = findBackfillProvenance(evidenceRows, {
             combination: result.result_trifecta,
             source: result.source,
           });

@@ -413,6 +413,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
           finish_order: result.finish_order || [],
           payout: result.payout || 0,
           payouts: result.payouts || null,
+          fetched_at: new Date().toISOString(),
         });
 
         // RacerRaceHistory蓄積(LOCAL)

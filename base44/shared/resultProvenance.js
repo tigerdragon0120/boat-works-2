@@ -44,10 +44,13 @@ export function canRecordProvenance(race, result) {
   return !!race?.id && !!result && isOfficialSource(result.source) && isValidTrifecta(result.result_trifecta);
 }
 
-export function buildProvenanceDoc(race, result, endpoint, evidenceType = 'LIVE') {
+export function buildProvenanceDoc(race, result, endpoint, evidenceType = 'LIVE', fetchedAt = null) {
   if (!canRecordProvenance(race, result)) return null;
   const combination = String(result.result_trifecta);
   const source = String(result.source);
+  // 実取得(LIVE)の記録は、実取得時刻と結果IDが揃っているときだけ作る
+  const acquired = evidenceType === 'LIVE' && fetchedAt ? String(fetchedAt) : null;
+  if (evidenceType === 'LIVE' && (!acquired || !result.id)) return null;
   return {
     race_id: race.id,
     race_key: race.race_key || null,
@@ -59,6 +62,7 @@ export function buildProvenanceDoc(race, result, endpoint, evidenceType = 'LIVE'
     source,
     endpoint: endpoint || RESULT_ENDPOINTS[source] || null,
     finished_at: result.finished_at || null,
+    fetched_at: acquired,
     recorded_at: new Date().toISOString(),
     evidence_type: evidenceType,
     evidence_hash: evidenceHash({
@@ -80,14 +84,27 @@ export function findAnyProvenance(rows, { combination, source }) {
   ) || null;
 }
 
-// 判定に使える裏付け: 実取得時の記録(LIVE)で、対象の結果IDと三連単・取得元が一致するもの。
+// 事後補完(BACKFILL)の記録。判定には使わない(保留理由の切り分けに使う)
+export function findBackfillProvenance(rows, { combination, source }) {
+  const found = findAnyProvenance(rows, { combination, source });
+  return found && String(found.evidence_type ?? '') === 'BACKFILL' ? found : null;
+}
+
+// 判定に使える証跡の条件: 実取得時の記録(LIVE)で、結果ID・三連単・取得元が一致し、
+// 実取得時刻が記録されているもの。候補すべてを走査して探す。
 // 事後補完(BACKFILL)だけの結果は証跡として扱わない
 export function findProvenanceEvidence(rows, { combination, source, resultId }) {
-  const found = findAnyProvenance(rows, { combination, source });
-  if (!found) return null;
-  if (String(found.evidence_type ?? '') !== 'LIVE') return null;
-  if (resultId && String(found.result_id ?? '') !== String(resultId)) return null;
-  return found;
+  if (!resultId || !isValidTrifecta(combination) || !isOfficialSource(source)) return null;
+  const combo = String(combination);
+  const src = String(source);
+  const id = String(resultId);
+  return (rows || []).find(
+    (row) => String(row?.evidence_type ?? '') === 'LIVE'
+      && String(row?.result_trifecta ?? '') === combo
+      && String(row?.source ?? '') === src
+      && String(row?.result_id ?? '') === id
+      && !!row?.fetched_at,
+  ) || null;
 }
 
 export async function loadProvenanceByRace(sr, raceIds) {
@@ -105,8 +122,8 @@ export async function loadProvenanceByRace(sr, raceIds) {
 }
 
 // 結果の保存時に呼ぶ。同じ結果の記録は増やさない
-export async function recordResultProvenance(sr, { race, result, endpoint, evidenceType = 'LIVE' }) {
-  const doc = buildProvenanceDoc(race, result, endpoint, evidenceType);
+export async function recordResultProvenance(sr, { race, result, endpoint, evidenceType = 'LIVE', fetchedAt = null }) {
+  const doc = buildProvenanceDoc(race, result, endpoint, evidenceType, fetchedAt);
   if (!doc) return null;
   const existing = await sr.ResultProvenance
     .filter({ race_id: race.id, evidence_hash: doc.evidence_hash }, '-recorded_at', 1)

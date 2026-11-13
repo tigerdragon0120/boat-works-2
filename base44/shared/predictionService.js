@@ -697,16 +697,21 @@ function pickCanonicalResult(rows) {
   })[0] || null;
 }
 
-async function saveSingleRaceResult(sr, race, doc) {
+async function saveSingleRaceResult(sr, race, doc, fetchedAt = null) {
   const before = await sr.RaceResult.filter({ race_id: race.id }, '-finished_at', 20).catch(() => []);
   const current = pickCanonicalResult(before);
   let saved;
+  // 既存結果をそのまま使った(今回の取得データが保存されていない)かどうか
+  let reused = false;
 
   // BOATCAST確定結果をLOCAL結果で劣化させない。
   if (current?.source === 'BOATCAST' && doc?.source !== 'BOATCAST') {
     saved = current;
+    reused = true;
   } else if (current) {
-    saved = await sr.RaceResult.update(current.id, mergeResultProtect(current, doc));
+    const merged = mergeResultProtect(current, doc);
+    reused = merged === current;
+    saved = await sr.RaceResult.update(current.id, merged);
   } else {
     saved = await sr.RaceResult.create(doc);
   }
@@ -717,12 +722,19 @@ async function saveSingleRaceResult(sr, race, doc) {
   for (const row of after) {
     if (row.id !== canonical.id) await sr.RaceResult.delete(row.id).catch(() => {});
   }
-  // どの公式取得経路から取得した結果かを、結果とセットで記録する(記録失敗は保存を妨げない)
-  await recordResultProvenance(sr, {
-    race,
-    result: canonical,
-    endpoint: RESULT_ENDPOINTS[String(canonical?.source ?? '')] || null,
-  }).catch(() => {});
+  // 実取得の証跡は、今回の取得データがそのまま保存されたときだけ記録する。
+  // 既存結果の再利用からは記録しない(実取得していない結果に証跡を付けない)
+  const storedFromFetch = !reused && !!fetchedAt
+    && String(canonical?.result_trifecta ?? '') === String(doc?.result_trifecta ?? '')
+    && String(canonical?.source ?? '') === String(doc?.source ?? '');
+  if (storedFromFetch) {
+    await recordResultProvenance(sr, {
+      race,
+      result: canonical,
+      endpoint: RESULT_ENDPOINTS[String(canonical?.source ?? '')] || null,
+      fetchedAt,
+    }).catch(() => {});
+  }
   return canonical;
 }
 
@@ -792,7 +804,7 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
     console.log(`[RESULT_CONFLICT] race=${race.id} key=${race.race_key} ${doc.conflict_log}`);
   }
 
-  const saved = await saveSingleRaceResult(sr, race, doc);
+  const saved = await saveSingleRaceResult(sr, race, doc, boatcastResult.fetched_at || null);
 
   // Race状態更新
   await sr.Race.update(race.id, { status: "finished" }).catch(() => {});
@@ -903,7 +915,7 @@ export async function upsertResultOnly(client, race, resultData) {
   if (!resultData.result_trifecta) return null;
   const sr = client.asServiceRole.entities;
   const doc = { race_id: race.id, race_key: race.race_key, result_trifecta: resultData.result_trifecta, finish_order: resultData.finish_order, payout: resultData.payout || 0, payouts: resultData.payouts || null, is_finished: true, finished_at: new Date().toISOString(), source: 'LOCAL', result_status: 'RESULT_FINAL' };
-  const saved = await saveSingleRaceResult(sr, race, doc);
+  const saved = await saveSingleRaceResult(sr, race, doc, resultData.fetched_at || null);
   await client.asServiceRole.entities.Race.update(race.id, { status: "finished" });
   return saved;
 }
@@ -919,7 +931,7 @@ export async function upsertResultAndVerify(client, race, resultData) {
     is_finished: true, finished_at: new Date().toISOString(),
     source: 'LOCAL', result_status: 'RESULT_FINAL',
   };
-  const saved = await saveSingleRaceResult(sr, race, doc);
+  const saved = await saveSingleRaceResult(sr, race, doc, resultData.fetched_at || null);
   await sr.Race.update(race.id, { status: "finished" });
 
   const verification = await verifyPrediction(client, race, resultData);
@@ -1102,7 +1114,7 @@ export async function syncAndPredict(client, payload, opts = {}) {
       const raceResultData = res || (bwRace.result_trifecta ? bwRace : null);
       if (raceResultData && raceResultData.result_trifecta) {
         try {
-          const mapped = mapResult(raceResultData);
+          const mapped = { ...mapResult(raceResultData), fetched_at: opts.fetched_at || null };
           if (opts.skip_verification) await upsertResultOnly(client, race, mapped);
           else await upsertResultAndVerify(client, race, mapped);
           summary.results_saved++; addVenue(raceData.venue_code, "result");

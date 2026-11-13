@@ -212,6 +212,7 @@ async function processResult(base44: any, race: any, parsed: any) {
     finish_order: finishOrder,
     payout,
     payouts: result.payouts || null,
+    fetched_at: new Date().toISOString(),
   });
 
   // RacerRaceHistory蓄積
