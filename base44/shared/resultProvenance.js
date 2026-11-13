@@ -121,16 +121,102 @@ export async function loadProvenanceByRace(sr, raceIds) {
   return map;
 }
 
-// 結果の保存時に呼ぶ。同じ結果の記録は増やさない
+const CLAIM_ENTITY = 'ResultProvenanceClaim';
+const CLAIM_LEASE_MS = 60000;
+const WRITTEN = 'written';
+
+const leaseExpired = (row) => {
+  const at = Date.parse(String(row?.claimed_at || ''));
+  return !Number.isFinite(at) || Date.now() - at > CLAIM_LEASE_MS;
+};
+
+// 登録権の行を「証跡キーごとに1行」へ揃える(DBに一意制約が無いため)
+async function ensureClaimRow(sr, key, doc) {
+  const load = () => sr[CLAIM_ENTITY].filter({ claim_key: key }, 'created_date', 50).catch(() => null);
+  let rows = await load();
+  if (rows === null) return null;
+  if (!rows.length) {
+    await sr[CLAIM_ENTITY].create({
+      claim_key: key,
+      race_id: doc.race_id,
+      evidence_hash: doc.evidence_hash,
+      evidence_type: doc.evidence_type,
+      state: 'free',
+      owner: null,
+      provenance_id: null,
+      claimed_at: null,
+    }).catch(() => null);
+    rows = await load();
+    if (!rows || !rows.length) return null;
+  }
+  const sorted = [...rows].sort((a, b) =>
+    String(a.created_date || '').localeCompare(String(b.created_date || '')) || String(a.id).localeCompare(String(b.id)));
+  const canonical = sorted.find((row) => row.state === WRITTEN) || sorted[0];
+  for (const row of sorted) {
+    if (row.id === canonical.id || row.state === WRITTEN || row.state === 'writing') continue;
+    await sr[CLAIM_ENTITY].delete(row.id).catch(() => null);
+  }
+  return canonical;
+}
+
+// 同じ証跡(evidence_hash×種類)の登録権を条件付き書込で取得する。
+// 遷移が成立した1つの呼び出しだけが保存できるため、同じ証跡は1件に保たれる
+async function acquireEvidenceClaim(sr, key, doc) {
+  const row = await ensureClaimRow(sr, key, doc);
+  if (!row) return null;
+  if (row.state === WRITTEN) return null;
+  if (row.state === 'writing' && !leaseExpired(row)) return null;
+  const owner = `${doc.evidence_hash}:${Math.random().toString(36).slice(2, 10)}`;
+  const condition = row.state === 'writing'
+    ? { id: row.id, state: 'writing', claimed_at: { $lt: new Date(Date.now() - CLAIM_LEASE_MS).toISOString() } }
+    : { id: row.id, state: 'free' };
+  const result = await sr[CLAIM_ENTITY]
+    .updateMany(condition, { $set: { state: 'writing', owner, provenance_id: null, claimed_at: new Date().toISOString() } })
+    .catch(() => null);
+  if (!result || Number(result.updated) !== 1) return null;
+  return { id: row.id, owner };
+}
+
+async function finalizeEvidenceClaim(sr, claim, provenanceId) {
+  await sr[CLAIM_ENTITY]
+    .updateMany({ id: claim.id, state: 'writing', owner: claim.owner },
+      { $set: { state: WRITTEN, provenance_id: provenanceId || null, claimed_at: new Date().toISOString() } })
+    .catch(() => null);
+}
+
+async function releaseEvidenceClaim(sr, claim) {
+  await sr[CLAIM_ENTITY]
+    .updateMany({ id: claim.id, state: 'writing', owner: claim.owner },
+      { $set: { state: 'free', owner: null, provenance_id: null, claimed_at: null } })
+    .catch(() => null);
+}
+
+// 結果の保存時に呼ぶ。同じ証跡の記録は1件だけ保存する
 export async function recordResultProvenance(sr, { race, result, endpoint, evidenceType = 'LIVE', fetchedAt = null }) {
   const doc = buildProvenanceDoc(race, result, endpoint, evidenceType, fetchedAt);
   if (!doc) return null;
-  const existing = await sr.ResultProvenance
-    .filter({ race_id: race.id, evidence_hash: doc.evidence_hash }, '-recorded_at', 20)
-    .catch(() => []);
-  // 同じ種類の記録が既にあれば増やさない。旧い事後補完(BACKFILL)は
-  // 新しい実取得(LIVE)の保存を妨げない(種類ごとに重複を判定する)
-  const sameType = (existing || []).find((row) => String(row?.evidence_type ?? '') === doc.evidence_type);
-  if (sameType) return sameType;
-  return await sr.ResultProvenance.create(doc);
+
+  const readSameType = async () => {
+    const rows = await sr.ResultProvenance
+      .filter({ race_id: race.id, evidence_hash: doc.evidence_hash }, '-recorded_at', 20)
+      .catch(() => []);
+    // 旧い事後補完(BACKFILL)は新しい実取得(LIVE)の保存を妨げない(種類ごとに重複を判定する)
+    return (rows || []).find((row) => String(row?.evidence_type ?? '') === doc.evidence_type) || null;
+  };
+
+  const same = await readSameType();
+  if (same) return same;
+
+  // 同時に同じ証跡を保存しようとしても、登録権を取れた1つだけが書き込む
+  const claim = await acquireEvidenceClaim(sr, `${doc.evidence_hash}:${doc.evidence_type}`, doc);
+  if (!claim) return await readSameType();
+
+  try {
+    const created = await sr.ResultProvenance.create(doc);
+    await finalizeEvidenceClaim(sr, claim, created?.id);
+    return created;
+  } catch (error) {
+    await releaseEvidenceClaim(sr, claim);
+    throw error;
+  }
 }

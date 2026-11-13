@@ -1,6 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {base44} from '@/api/base44Client';
-import {findBackfillEvidence,findResultEvidence} from '@/lib/resultEvidence';
+import {findBackfillEvidence,findResultEvidence,evidenceTimeLabel} from '@/lib/resultEvidence';
 
 // DBのcreated_dateはオフセットの無いUTC壁時計時刻なので、UTCとして解釈する
 const dbMs=v=>{const raw=String(v??'').trim().replace(/(\.\d{3})\d+/,'$1');if(!raw)return NaN;return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(raw)?raw:`${raw}Z`);};
@@ -91,7 +91,7 @@ export default function V7SavedServerView({race}) {
     :!evidence?(matched?'実取得の証跡が無いため判定は保留（事後補完のみ）':'公式取得経路の記録を確認できないため判定は保留')
     :!judged?'公式払戻を確認できていないため判定は保留'
     :'表示できる保存予想が無いため判定は保留'}</p>
-   {evidence&&<p className="text-xs text-rose-900">取得経路 {evidence.endpoint||evidence.source} ／ 実取得 {evidence.fetched_at||'不明'} ／ 結果ID {evidence.result_id||'不明'}</p>}
+   {evidence&&<p className="text-xs text-rose-900">取得経路 {evidence.endpoint||evidence.source} ／ {evidenceTimeLabel(evidence.source)} {evidence.fetched_at||'不明'} ／ 結果ID {evidence.result_id||'不明'}</p>}
   </div>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{resultRows.length?'公式取得元・確定状態・三連単の形式を確認できないため照合は保留です。':'確定結果はまだ取得できていません。結果が入り次第、この画面に反映されます。'}</p>}
 
   {loading?<p className="text-sm text-slate-600">取得中…</p>

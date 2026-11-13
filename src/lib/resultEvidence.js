@@ -6,11 +6,21 @@
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const OFFICIAL_SOURCES = ['BOATCAST', 'LOCAL', 'TXT'];
 
-const validCombo = (value) => COMBO_RE.test(String(value ?? '')) && new Set(String(value).split('-')).size === 3;
-const officialSource = (value) => OFFICIAL_SOURCES.includes(String(value ?? ''));
+export const validTrifecta = (value) => COMBO_RE.test(String(value ?? '')) && new Set(String(value).split('-')).size === 3;
+export const officialSource = (value) => OFFICIAL_SOURCES.includes(String(value ?? ''));
+
+// 三連単・取得元が一致する記録(事後補完を含む)
+function findAnyEvidence(rows, { combination, source }) {
+  if (!validTrifecta(combination) || !officialSource(source)) return null;
+  const combo = String(combination);
+  const src = String(source);
+  return (rows || []).find(
+    (row) => String(row?.result_trifecta ?? '') === combo && String(row?.source ?? '') === src,
+  ) || null;
+}
 
 export function findResultEvidence(rows, { combination, source, resultId }) {
-  if (!resultId || !validCombo(combination) || !officialSource(source)) return null;
+  if (!resultId || !validTrifecta(combination) || !officialSource(source)) return null;
   const combo = String(combination);
   const src = String(source);
   const id = String(resultId);
@@ -22,10 +32,9 @@ export function findResultEvidence(rows, { combination, source, resultId }) {
 }
 
 export function findBackfillEvidence(rows, { combination, source }) {
-  if (!validCombo(combination) || !officialSource(source)) return null;
-  const combo = String(combination);
-  const src = String(source);
-  return (rows || []).find((row) => String(row?.evidence_type ?? '') === 'BACKFILL'
-    && String(row?.result_trifecta ?? '') === combo
-    && String(row?.source ?? '') === src) || null;
+  const found = findAnyEvidence(rows, { combination, source });
+  return found && String(found.evidence_type ?? '') === 'BACKFILL' ? found : null;
 }
+
+// TXT取込はファイルを取り込んだ時刻を残すため「取込時刻」と表示する
+export const evidenceTimeLabel = (source) => (String(source ?? '') === 'TXT' ? '取込時刻' : '実取得');
