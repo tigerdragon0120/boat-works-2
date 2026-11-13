@@ -1,3 +1,5 @@
+import { base44 } from '@/api/base44Client';
+
 // 結果の証跡(ResultProvenance)の取得条件・保留条件。
 // 日次照合(base44/shared/resultEvidenceRules.js)と同じ規則を持つ画面用の写し。
 // 判定に使える証跡: evidence_type=LIVE ・実取得時刻あり・結果ID一致・三連単と取得元一致・レース一致
@@ -58,34 +60,17 @@ export function evidenceHoldReason(status) {
   return 'PROVENANCE_MISSING';
 }
 
-const PAGE_SIZE = 200;
-const MAX_PAGES = 50;
-
-// SDKのページ形式({items, next_cursor, has_more})に沿って、対象レースの証跡を全件読み切る。
-// 取得が途中で止まった場合(例外・カーソル欠落・ページ上限)は complete=false を返す
-export async function loadRaceEvidence(entity, raceId) {
-  if (!entity || !raceId) return { rows: [], complete: false };
-  const rows = [];
-  let cursor = null;
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    let result = null;
-    try {
-      result = await entity.filter(
-        { race_id: raceId, evidence_type: { $in: ['LIVE', 'BACKFILL'] } },
-        { sort: '-recorded_at', limit: PAGE_SIZE, ...(cursor ? { cursor } : {}) },
-      );
-    } catch {
-      return { rows, complete: false };
-    }
-    const items = result?.items || [];
-    rows.push(...items);
-    const more = result?.has_more === true;
-    const next = result?.next_cursor;
-    if (!more) return { rows, complete: true };
-    // 続きがあるのにカーソルが無い・空ページの場合は読み切れていない
-    if (!next || !items.length) return { rows, complete: false };
-    cursor = next;
+// 対象レースの証跡を全件読み切る。ページ取得は日次照合とまったく同じ共通処理(サーバー側)に
+// 任せ、画面はその結果だけを使う。例外・想定外の応答・未完了は complete=false として保留する
+export async function loadRaceEvidence(raceId) {
+  if (!raceId) return { rows: [], complete: false };
+  try {
+    const response = await base44.functions.invoke('getRaceEvidence', { race_id: raceId });
+    const data = response?.data;
+    // 想定外の応答(失敗・形式違い)は読み切れたか判断できないため未完了として扱う
+    if (!data || data.ok !== true || !Array.isArray(data.rows)) return { rows: [], complete: false };
+    return { rows: data.rows, complete: data.complete === true };
+  } catch {
+    return { rows: [], complete: false };
   }
-  // ページ上限に達した場合も読み切れていない
-  return { rows, complete: false };
 }

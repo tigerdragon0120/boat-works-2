@@ -49,8 +49,8 @@ export default function V7SavedServerView({race}) {
   Promise.all([
    base44.entities.PredictionV7.filter({race_id:race.id},'-created_date',30),
    base44.entities.RaceResult.filter({race_id:race.id},'-created_date',5).catch(()=>[]),
-   // 取得上限の20件で見落とさないよう、対象レースの証跡は全件読み切る
-   loadRaceEvidence(base44.entities.ResultProvenance,race.id).catch(()=>({rows:[],complete:false})),
+   // 対象レースの証跡は、日次照合と同じ共通処理で全件読み切る(未完了はそのまま保留)
+   loadRaceEvidence(race.id),
   ]).then(([saved,results,evidence])=>{if(!active)return;
    setRows(Array.isArray(saved)?saved:[]);
    setResultRows(Array.isArray(results)?results:[]);
