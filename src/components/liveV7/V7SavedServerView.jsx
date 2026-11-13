@@ -9,7 +9,7 @@ const PLAN_KEYS=['hit_4','hit_6','hit_8','hit_12'];
 const PLAN_LABEL={hit_4:'4点',hit_6:'6点',hit_8:'8点',hit_12:'12点'};
 const JUDGMENT_STYLE={BUY:'bg-emerald-100 text-emerald-900',WATCH:'bg-amber-100 text-amber-900',SKIP:'bg-slate-200 text-slate-700'};
 
-function StageBlock({row,combination,payout}){
+function StageBlock({row,combination,payout,judged}){
  const plan=key=>row.plans?.[key];
  const primary=['hit_8','hit_6','hit_4','hit_12'].map(plan).find(p=>p?.judgment)?.judgment||null;
  return <div className="rounded-lg border p-3 space-y-2">
@@ -20,7 +20,7 @@ function StageBlock({row,combination,payout}){
   <p className="font-bold">本命三連単 {row.top_combination||'—'} ／ 確率 {pct(row.top_probability)}</p>
   <div className="grid gap-2 sm:grid-cols-2">
    {PLAN_KEYS.map(key=>{const p=plan(key);if(!p?.tickets?.length)return null;
-    const hit=combination?p.tickets.includes(combination):null;
+    const hit=judged?p.tickets.includes(combination):null;
     return <div key={key} className="rounded-md border border-slate-200 p-2 text-sm">
      <div className="flex items-center justify-between gap-2">
       <span className="font-bold">{PLAN_LABEL[key]}（{p.judgment||'判定なし'}）</span>
@@ -50,12 +50,16 @@ export default function V7SavedServerView({race}) {
  const deadline=dbMs(race.deadline);
  const valid=rows.filter(r=>{const t=dbMs(r.created_date);return Number.isFinite(deadline)&&Number.isFinite(t)&&t<deadline});
  const combination=result?.result_trifecta||null;
- const payout=Number(result?.payout??result?.payouts?.trifecta?.payout??0)||null;
+ // 有効な払戻(100円あたり1円以上)を確認できたものだけを判定材料にする
+ const payoutValue=Number(result?.payout??result?.payouts?.trifecta?.payout);
+ const payout=Number.isFinite(payoutValue)&&payoutValue>0?payoutValue:null;
  // 判定に使うのは「画面に表示している保存予想」(重複なく1件だけの組)のみ。
  // 予想が無い・重複保留の場合は判定せず保留とする
  const shown=['FINAL','PRE'].map(stage=>[stage,valid.filter(r=>r.stage===stage)]).filter(([,list])=>list.length===1);
  const hitStages=shown.filter(([,list])=>PLAN_KEYS.some(key=>Array.isArray(list[0].plans?.[key]?.tickets)&&list[0].plans[key].tickets.includes(combination))).map(([stage])=>stage);
- const verdict=!combination?null:shown.length?(hitStages.length?'hit':'miss'):'held';
+ // 公式ソース(確定結果)と有効な払戻の両方を確認できた場合に限り的中・不的中を判定する
+ const judged=!!combination&&payout!=null;
+ const verdict=!combination?null:!judged||!shown.length?'held':(hitStages.length?'hit':'miss');
 
  return <div className="rounded-xl border-2 border-indigo-200 bg-white p-4 space-y-3">
   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -68,6 +72,7 @@ export default function V7SavedServerView({race}) {
    <p className="font-bold text-rose-900">公式確定結果 三連単 {combination} ／ 払戻 {payout?yen(payout):'未取得'}</p>
    <p className="text-sm text-rose-900">{verdict==='hit'?`表示中の保存予想で的中：${hitStages.join('・')}`
     :verdict==='miss'?'表示中の保存予想は不的中（公式確定結果と照合）'
+    :!judged?'公式払戻を確認できていないため判定は保留'
     :'表示できる保存予想が無いため判定は保留'}</p>
   </div>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">確定結果はまだ取得できていません。結果が入り次第、この画面に反映されます。</p>}
 
@@ -76,7 +81,7 @@ export default function V7SavedServerView({race}) {
    :['FINAL','PRE'].map(stage=>{
     const matches=valid.filter(r=>r.stage===stage);
     if(matches.length!==1)return <p key={stage} className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{stage}：{matches.length?'重複のため表示保留':'締切前の保存済み記録なし'}</p>;
-    return <StageBlock key={stage} row={matches[0]} combination={combination} payout={payout}/>;
+    return <StageBlock key={stage} row={matches[0]} combination={combination} payout={payout} judged={judged}/>;
    })}
  </div>;
 }
