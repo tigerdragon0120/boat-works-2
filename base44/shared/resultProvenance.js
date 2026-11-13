@@ -110,12 +110,17 @@ export async function loadProvenanceByRace(sr, raceIds) {
 export async function recordResultProvenance(sr, { race, result, endpoint, evidenceType = 'LIVE', fetchedAt = null }) {
   const doc = buildProvenanceDoc(race, result, endpoint, evidenceType, fetchedAt);
   if (!doc) return null;
+  // 同じ結果(結果ID・三連単・取得元・種類)の記録が既にあれば増やさない。
+  // 再取得のたびに確定時刻が変わり記録が増えると、正当な記録が
+  // 「証跡の重複」として保留されてしまうため、結果そのものの同一性で判定する。
+  // 事後補完(BACKFILL)は実取得(LIVE)の記録を妨げない(種類ごとに判定する)
   const existing = await sr.ResultProvenance
-    .filter({ race_id: race.id, evidence_hash: doc.evidence_hash }, '-recorded_at', 20)
+    .filter({ race_id: race.id, evidence_type: doc.evidence_type }, '-recorded_at', 50)
     .catch(() => []);
-  // 同じ種類の記録が既にあれば増やさない。旧い事後補完(BACKFILL)は
-  // 新しい実取得(LIVE)の保存を妨げない(種類ごとに重複を判定する)
-  const sameType = (existing || []).find((row) => String(row?.evidence_type ?? '') === doc.evidence_type);
-  if (sameType) return sameType;
+  const sameResult = (existing || []).find((row) =>
+    String(row?.result_id ?? '') === String(doc.result_id ?? '')
+    && String(row?.result_trifecta ?? '') === String(doc.result_trifecta ?? '')
+    && String(row?.source ?? '') === String(doc.source ?? ''));
+  if (sameResult) return sameResult;
   return await sr.ResultProvenance.create(doc);
 }

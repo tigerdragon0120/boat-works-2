@@ -19,26 +19,16 @@ import { buildSnapshot, fingerprintInput } from "./liveV7Snapshot.js";
 import { unifiedV7 } from "./liveV7Unified.js";
 import { digest, raceKey, platformUtc, timeMs } from "./liveV7Time.js";
 import { saveV7Predictions } from "./v7PredictionStore.js";
+import { createGenerationTrace, hasPartialExhibition } from "./v7GenerationTrace.js";
 
 const DEFAULT_HORIZON_MINUTES = 25;
 const MAX_RACES = 200;
 const TIME_BUDGET_MS = 90000;
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
+const TRACE_LIMIT = 1000;
 
 function jstToday() {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
-}
-
-// 暫定順位づけに足りる展示の有無(最終品質の証拠ではない)
-function hasPartialExhibition(entries, race) {
-  const scratched = new Set((race && race.scratched_boats ? race.scratched_boats : []).map(Number));
-  const active = (entries || []).filter((e) => !e.is_absent && !e.is_scratched && !scratched.has(Number(e.boat_number)));
-  if (active.length < 3 || active.length > 6) return false;
-  const usable = active.filter((e) =>
-    Number(e.exhibition_time) > 0 && Number.isFinite(Number(e.exhibition_time)) &&
-    e.exhibition_st != null && Number.isFinite(Number(e.exhibition_st)) &&
-    Number.isInteger(Number(e.exhibition_course)) && Number(e.exhibition_course) >= 1 && Number(e.exhibition_course) <= 6);
-  return usable.length >= 3 && new Set(usable.map((e) => Number(e.exhibition_course))).size === usable.length;
 }
 
 function rankOrder(output) {
@@ -92,21 +82,30 @@ export async function runV7AutoGeneration(client, options = {}) {
   }).slice(0, MAX_RACES);
 
   if (!targets.length) {
+    // 生成対象が無い日でも、締切後の組を「生成対象外」として記録に残す
+    const idle = createGenerationTrace({ races, raceDate, nowMs });
+    idle.fillUntouched(new Set());
+    await idle.flush(sr);
     return { race_date: raceDate, targets: 0, saved: 0, saved_pre: 0, saved_final: 0, reasons: {} };
   }
 
   const ids = targets.map((race) => race.id);
   const keys = [...new Set(targets.map((race) => race.race_key).filter(Boolean))];
 
-  const [entriesById, entriesByKey, oddsById, oddsByKey, logs, existing, results] = await Promise.all([
+  const [entriesById, entriesByKey, oddsById, oddsByKey, logs, existing, results, traceRows] = await Promise.all([
     sr.RaceEntry.filter({ race_id: { $in: ids } }, "boat_number", 2000).catch(() => []),
     sr.RaceEntry.filter({ race_key: { $in: keys } }, "boat_number", 2000).catch(() => []),
     sr.OddsSnapshot.filter({ race_id: { $in: ids } }, "-captured_at", 1000).catch(() => []),
     sr.OddsSnapshot.filter({ race_key: { $in: keys } }, "-captured_at", 1000).catch(() => []),
     sr.OnlineFetchLog.filter({ race_date: raceDate }, "-fetched_at", 1000).catch(() => []),
-    // 同一レース・段階の記録は(生成元が違っても)二重登録しない
-    sr.PredictionV7.filter({ race_key: { $in: keys } }, "-created_date", 2000).catch(() => []),
+    // 同一レース・段階の記録は(生成元が違っても)二重登録しない。
+    // 追跡記録にも保存結果を正しく反映するため、同日の予想を全件読む
+    sr.PredictionV7.filter({ race_date: raceDate }, "-created_date", 2000).catch(() => []),
     sr.RaceResult.filter({ race_id: { $in: ids } }, "-created_date", 1000).catch(() => []),
+    // 追跡記録(診断専用)。無い場合や取得に失敗しても生成は続ける
+    (sr.V7GenerationTrace
+      ? sr.V7GenerationTrace.filter({ race_date: raceDate }, "-created_date", TRACE_LIMIT)
+      : Promise.resolve([])).catch(() => []),
   ]);
 
   const dedupe = (rows) => {
@@ -143,6 +142,15 @@ export async function runV7AutoGeneration(client, options = {}) {
     if (finished && COMBO_RE.test(combination)) confirmedRaceIds.add(result.race_id);
   }
 
+  // 追跡記録(診断専用): 展示取得時刻・生成開始・失敗理由・保存結果を残す。
+  // 予想の生成・保存の判定には使わない
+  const trace = createGenerationTrace({
+    races, entriesByKey: entriesByRaceKey, logs, traces: traceRows, raceDate, nowMs,
+  });
+  trace.applySavedPredictions(existing);
+  trace.fillUntouched(new Set(targets.map((race) => race.id)));
+  const raceByKey = new Map((races || []).map((race) => [race.race_key, race]));
+
   const takenPairs = new Set((existing || []).map((row) => pairKey(row.race_key, row.stage)));
   const docs = [];
   const reasons = {};
@@ -153,7 +161,12 @@ export async function runV7AutoGeneration(client, options = {}) {
     if (Date.now() - startedAt > TIME_BUDGET_MS) { bump("time_budget"); break; }
     let key;
     try { key = raceKey(race.race_key); } catch { bump("invalid_race_key"); continue; }
-    if (confirmedRaceIds.has(race.id)) { bump("result_confirmed"); continue; }
+    if (confirmedRaceIds.has(race.id)) {
+      bump("result_confirmed");
+      trace.observe(race, "PRE", "BLOCKED", "result_confirmed");
+      trace.observe(race, "FINAL", "BLOCKED", "result_confirmed");
+      continue;
+    }
 
     const raceEntries = (entriesByRaceKey.get(race.race_key) || []).map((row) => ({
       ...row, updated_date: platformUtc(row.updated_date),
@@ -173,19 +186,33 @@ export async function runV7AutoGeneration(client, options = {}) {
 
     for (const stage of ["PRE", "FINAL"]) {
       if (takenPairs.has(pairKey(key, stage))) { bump("already"); continue; }
-      if (stage === "FINAL" && !hasPartialExhibition(raceEntries, race)) { bump("waiting_exhibition"); continue; }
+      if (stage === "FINAL" && !hasPartialExhibition(raceEntries, race)) {
+        bump("waiting_exhibition");
+        trace.observe(race, stage, "PENDING", "exhibition_waiting");
+        continue;
+      }
 
+      const attemptStartedAt = new Date().toISOString();
       let snapshot;
       try {
         snapshot = buildSnapshot({ race: normalizedRace, entries: raceEntries, odds: raceOdds, observedAt: nowIso, quality }, stage);
       } catch {
         bump("input_incomplete");
+        trace.observe(race, stage, "FAILED", "input_incomplete", { generation_started_at: attemptStartedAt });
         continue;
       }
       const output = unifiedV7(snapshot, stage);
-      if (!output || output.status !== "READY" || !output.model) { bump("engine_unavailable"); continue; }
+      if (!output || output.status !== "READY" || !output.model) {
+        bump("engine_unavailable");
+        trace.observe(race, stage, "FAILED", "engine_unavailable", { generation_started_at: attemptStartedAt });
+        continue;
+      }
       const plans = toPlans(output);
-      if (!Object.keys(plans).length) { bump("no_plans"); continue; }
+      if (!Object.keys(plans).length) {
+        bump("no_plans");
+        trace.observe(race, stage, "FAILED", "no_plans", { generation_started_at: attemptStartedAt });
+        continue;
+      }
 
       const top = (output.combinations || [])
         .filter((row) => row && typeof row.combination === "string" && Number.isFinite(Number(row.probability)))
@@ -219,6 +246,7 @@ export async function runV7AutoGeneration(client, options = {}) {
   }
 
   if (!docs.length) {
+    await trace.flush(sr);
     return { race_date: raceDate, targets: targets.length, saved: 0, saved_pre: 0, saved_final: 0, reasons };
   }
 
@@ -230,6 +258,32 @@ export async function runV7AutoGeneration(client, options = {}) {
     reasons[key] = (reasons[key] || 0) + Number(count || 0);
   }
 
+  // 保存結果を追跡記録へ反映する。DBに残った組だけを保存済みとし、
+  // 残らなかった組は保存失敗として理由の内訳とともに残す
+  const attemptedKeys = [...new Set(docs.map((doc) => doc.race_key))];
+  const storedRows = attemptedKeys.length
+    ? await sr.PredictionV7.filter({ race_key: { $in: attemptedKeys } }, "-created_date", 2000).catch(() => [])
+    : [];
+  const storedByPair = new Map((storedRows || []).map((row) => [pairKey(row.race_key, row.stage), row]));
+  for (const doc of docs) {
+    const race = raceByKey.get(doc.race_key);
+    if (!race) continue;
+    const row = storedByPair.get(pairKey(doc.race_key, doc.stage)) || null;
+    if (row) {
+      trace.observe(race, doc.stage, "SAVED", "saved", {
+        record_hash: row.record_hash || doc.record_hash || null,
+        prediction_created_at: row.created_date || null,
+        generation_started_at: doc.generated_at || null,
+      });
+    } else {
+      trace.observe(race, doc.stage, "FAILED", "save_rejected", {
+        generation_started_at: doc.generated_at || null,
+        reason_detail: JSON.stringify(writeResult.reasons || {}).slice(0, 300),
+      });
+    }
+  }
+  const traced = await trace.flush(sr);
+
   return {
     race_date: raceDate,
     horizon_minutes: horizonMinutes,
@@ -237,6 +291,7 @@ export async function runV7AutoGeneration(client, options = {}) {
     saved: writeResult.saved,
     saved_pre: writeResult.saved_pre,
     saved_final: writeResult.saved_final,
+    traced: traced.tracked,
     reasons,
   };
 }

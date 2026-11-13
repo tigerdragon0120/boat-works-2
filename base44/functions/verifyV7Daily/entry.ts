@@ -158,11 +158,28 @@ export default async function(req: Request) {
     const sr = base44.asServiceRole.entities;
     const nowIso = new Date().toISOString();
 
+    // 証跡が不足して保留した記録は、あとから公式結果を実取得したときに再判定できるよう、
+    // 通常の対象日より前の日も照合し直す。保留は保留のまま維持し、
+    // 実取得の証跡が揃って判定が変わったときだけ新しい行を追記する
+    const PROVENANCE_HOLDS = ["HELD_PROVENANCE_MISSING", "HELD_PROVENANCE_BACKFILL", "HELD_PROVENANCE_INCOMPLETE", "HELD_PROVENANCE_DUPLICATE"];
+    const recheckDays = Number.isFinite(Number(body?.recheck_days)) ? Math.min(30, Math.max(1, Number(body.recheck_days))) : 7;
+    let recheckDates: string[] = [];
+    if (!requestedDate) {
+      const cutoff = jstDateOffset(-recheckDays);
+      const heldRows: any[] = await sr.PredictionV7Verification
+        .filter({ verification_status: { $in: PROVENANCE_HOLDS }, race_date: { $gte: cutoff } }, "-verified_at", 1000)
+        .catch(() => []);
+      recheckDates = [...new Set((heldRows || [])
+        .map((row: any) => row?.race_date)
+        .filter((value: any) => typeof value === "string" && value >= cutoff && !dates.includes(value)))];
+    }
+    const targetDates = [...dates, ...recheckDates];
+
     // 対象日の予想は全件読み切る。読み切れなかった場合は、重複した組を見落として
     // 的中率・回収率に混ぜてしまうため、判定そのものを行わず保留する
     const predictionPages = await fetchAllPaged(
       (query: any, options: any) => sr.PredictionV7.filter(query, options),
-      { race_date: { $in: dates } },
+      { race_date: { $in: targetDates } },
       { sort: "-generated_at" },
     );
     if (!predictionPages.complete) {
@@ -221,7 +238,7 @@ export default async function(req: Request) {
     // 判定が変わったときだけ新しい行を追記する(再判定)
     const existingPages = await fetchAllPaged(
       (query: any, options: any) => sr.PredictionV7Verification.filter(query, options),
-      { race_date: { $in: dates } },
+      { race_date: { $in: targetDates } },
       { sort: "-verified_at" },
     );
     if (!existingPages.complete) {
@@ -491,6 +508,7 @@ export default async function(req: Request) {
     return Response.json({
       ok: true,
       dates,
+      recheck_dates: recheckDates,
       dry_run: dryRun,
       version: NEW_VERSION,
       records: limited.length,
