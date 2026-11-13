@@ -27,6 +27,8 @@ const MAX_RECORDS = 600;
 const IMMUTABLE_TOLERANCE_MS = 5000;
 const MAX_SAMPLE = 60;
 const NEW_VERSION = "v2";
+// 補完後に判定し直せる保留理由(払戻が入る・締切が入る)。それ以外の保留は動かさない
+const REJUDGEABLE_HOLDS = new Set(["PAYOUT_MISSING", "DEADLINE_UNKNOWN"]);
 
 function jstDateOffset(days: number): string {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
@@ -87,6 +89,30 @@ function validTickets(record: any): string[] {
     }
   }
   return tickets;
+}
+
+// 予想レコードの並び順: 保存時刻 → 照合時刻 → id(画面の集計と同じ規則)
+const rowOrder = (a: any, b: any) =>
+  String(a?.created_date || "").localeCompare(String(b?.created_date || ""))
+  || String(a?.verified_at || "").localeCompare(String(b?.verified_at || ""))
+  || String(a?.id || "").localeCompare(String(b?.id || ""));
+
+// 予想1件の現在の判定。判定状態が無い行は旧方式として扱う
+function judgmentOf(row: any): string | null {
+  if (!row) return null;
+  if (row.verification_status) return String(row.verification_status);
+  if (row.pre_deadline_verified === true && row.record_fixed === true && row.result_finished === true) return "VERIFIED";
+  return "LEGACY";
+}
+
+// 既存の記録がある場合に再判定してよいのは「回復可能な保留」だけ。
+// 確定済み・旧方式・回復不能な保留は動かさない(追記のみの原則を守る)
+function canJudgeAgain(previous: any): boolean {
+  if (!previous) return true;
+  if (previous.verification_version !== NEW_VERSION) return false;
+  const status = judgmentOf(previous);
+  if (!status || !status.startsWith("HELD_")) return false;
+  return REJUDGEABLE_HOLDS.has(String(previous.hold_reason || status.replace(/^HELD_/, "")));
 }
 
 function heldDoc(record: any, race: any, reason: string, reasons: string[], extra: any, nowIso: string) {
@@ -169,11 +195,18 @@ export default async function(req: Request) {
       if (!previous || (previous.conflict_log && !result.conflict_log)) resultByRace.set(result.race_id, result);
     }
 
-    // 既存の照合記録は書き換えない。同じ予想に記録があれば再照合しない
+    // 既存の照合記録は書き換えない。予想1件につき最新の記録だけを「現在の判定」として読む。
+    // 判定が変わったときだけ新しい行を追記する(再判定)
     const existing: any[] = await sr.PredictionV7Verification
       .filter({ race_date: { $in: dates } }, "-verified_at", 2000)
       .catch(() => []);
-    const done = new Set((existing || []).map((row: any) => row.record_hash).filter(Boolean));
+    const latestByHash = new Map<string, any>();
+    for (const row of existing || []) {
+      const hash = String(row?.record_hash || "");
+      if (!hash) continue;
+      const previous = latestByHash.get(hash);
+      if (!previous || rowOrder(row, previous) > 0) latestByHash.set(hash, row);
+    }
 
     // 同一レース×段階でまとめる(モデルは含めない)
     const groups = new Map<string, any[]>();
@@ -188,6 +221,9 @@ export default async function(req: Request) {
     const samples: any[] = [];
     const heldByReason: Record<string, number> = {};
     let verified = 0;
+    let heldCount = 0;
+    let laterDuplicates = 0;
+    let rejudgedCount = 0;
     let skippedAlready = 0;
     let skippedNotReady = 0;
     let timedOut = false;
@@ -196,31 +232,40 @@ export default async function(req: Request) {
 
     for (const list of groups.values()) {
       if (Date.now() - startedAt > TIME_BUDGET_MS) { timedOut = true; break; }
-      const hashes = list.map((record: any) => String(record.record_hash));
-      if (hashes.some((hash) => done.has(hash))) { skippedAlready += 1; continue; }
-
-      const ordered = [...list].sort((a: any, b: any) =>
-        String(a.created_date || "").localeCompare(String(b.created_date || "")) || String(a.id).localeCompare(String(b.id)));
+      // 集計単位: レース×段階ごとの代表=最初に保存された1件。後発の重複は代表にしない
+      const ordered = [...list].sort(rowOrder);
       const record = ordered[0];
+      const duplicates = ordered.slice(1);
       const raceRows = raceRowsByKey.get(record.race_key) || [];
       const resolved = resolveRace(raceRows, record);
       const race = resolved.race || null;
+      const hashes = ordered.map((row: any) => String(row.record_hash));
 
-      // 1) 同一レース×段階の重複は全件保留
-      if (list.length > 1) {
-        const extra = {
-          duplicate_count: list.length,
+      // 1) 後発の重複は DUPLICATE として記録し、的中率・回収率の分子分母から除外する
+      for (const extra of duplicates) {
+        const hash = String(extra.record_hash);
+        const known = latestByHash.get(hash) || null;
+        // 既に記録がある行(確定済み・旧方式・既存の保留)は動かさない
+        if (known && !canJudgeAgain(known)) continue;
+        const doc = heldDoc(extra, race, "DUPLICATE", ["DUPLICATE"], {
+          duplicate_of: record.record_hash,
+          duplicate_count: ordered.length,
           duplicate_hashes: hashes.slice(0, 10),
-          result_finished: !!resultByRace.get(race ? race.id : record.race_id),
-        };
-        docs.push(heldDoc(record, race, "DUPLICATE", ["DUPLICATE"], extra, nowIso));
-        done.add(String(record.record_hash));
+          result_finished: !!(race ? resultByRace.get(race.id) : null),
+        }, nowIso);
+        docs.push(doc);
+        latestByHash.set(hash, doc);
+        laterDuplicates += 1;
         bump("DUPLICATE");
-        samples.push({ race_key: record.race_key, stage: record.stage, status: "HELD_DUPLICATE", reasons: ["DUPLICATE"], duplicate_count: list.length });
-        continue;
+        samples.push({ race_key: record.race_key, stage: record.stage, status: "HELD_DUPLICATE", reasons: ["DUPLICATE"], duplicate_of: record.record_hash });
       }
 
-      // 2) 理由別の保留判定
+      // 2) 代表の判定。確定済み・回復不能な保留は再判定しない
+      //    (払戻不足・締切不明は補完後に判定し直す)
+      const previous = latestByHash.get(String(record.record_hash)) || null;
+      if (!canJudgeAgain(previous)) { skippedAlready += 1; continue; }
+
+      // 理由別の保留判定
       const reasons: string[] = [];
       if (resolved.reason) reasons.push("RACE_MISMATCH");
 
@@ -257,13 +302,20 @@ export default async function(req: Request) {
         const unique = [...new Set(reasons)];
         const priority = ["RACE_MISMATCH", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PAYOUT_MISSING", "TICKETS_MISSING"];
         const primary = priority.find((reason) => unique.includes(reason)) || unique[0];
-        docs.push(heldDoc(record, race, primary, unique, {
+        const nextStatus = `HELD_${primary}`;
+        // 同じ保留のままなら記録を増やさない(補完後に判定が変わったときだけ追記する)
+        if (previous && judgmentOf(previous) === nextStatus) { skippedAlready += 1; continue; }
+        const doc = heldDoc(record, race, primary, unique, {
+          ...(duplicates.length ? { duplicate_count: ordered.length, duplicate_hashes: hashes.slice(0, 10) } : {}),
           result_status: result ? result.result_status || null : null,
           result_finished: !!result,
-        }, nowIso));
-        done.add(String(record.record_hash));
+        }, nowIso);
+        docs.push(doc);
+        latestByHash.set(String(record.record_hash), doc);
+        if (previous) rejudgedCount += 1;
+        heldCount += 1;
         bump(primary);
-        samples.push({ race_key: record.race_key, stage: record.stage, status: `HELD_${primary}`, reasons: unique });
+        samples.push({ race_key: record.race_key, stage: record.stage, status: nextStatus, reasons: unique });
         continue;
       }
 
@@ -322,12 +374,49 @@ export default async function(req: Request) {
         payout,
         verified_at: nowIso,
       });
-      done.add(String(record.record_hash));
+      const verifiedDoc = docs[docs.length - 1];
+      if (duplicates.length) {
+        verifiedDoc.duplicate_count = ordered.length;
+        verifiedDoc.duplicate_hashes = hashes.slice(0, 10);
+      }
+      latestByHash.set(String(record.record_hash), verifiedDoc);
+      if (previous) rejudgedCount += 1;
       verified += 1;
       samples.push({ race_key: record.race_key, stage: record.stage, status: "VERIFIED", reasons: [] });
     }
 
-    const held = docs.length - verified;
+    const held = heldCount;
+
+    // 画面と同じ定義(代表=最初に保存された1件・最新の記録だけを採用)で4件数を数え、
+    // 照合結果と並べて確認できるよう snapshot として返す。
+    // 未保存(締切済みで予想が無いレース)はレース単位のため画面側が同じ条件で数える。
+    const representativeHashes = [...groups.values()].map((rows: any[]) =>
+      String([...rows].sort(rowOrder)[0].record_hash));
+    const snapshotHolds: Record<string, number> = {};
+    let snapshotVerified = 0, snapshotHeld = 0, snapshotUnverified = 0, snapshotLegacy = 0;
+    for (const hash of representativeHashes) {
+      const row = latestByHash.get(hash) || null;
+      const status = judgmentOf(row);
+      if (!status) { snapshotUnverified += 1; continue; }
+      if (status === "VERIFIED") { snapshotVerified += 1; continue; }
+      if (status === "LEGACY") { snapshotLegacy += 1; continue; }
+      snapshotHeld += 1;
+      const key = String((row && row.hold_reason) || status.replace(/^HELD_/, ""));
+      snapshotHolds[key] = (snapshotHolds[key] || 0) + 1;
+    }
+    const snapshot = {
+      records: limited.length,
+      groups: groups.size,
+      representatives: representativeHashes.length,
+      later_duplicates: laterDuplicates,
+      verified: snapshotVerified,
+      held: snapshotHeld,
+      unverified: snapshotUnverified,
+      legacy: snapshotLegacy,
+      held_by_reason: snapshotHolds,
+      dry_run: dryRun,
+    };
+
     if (!dryRun) {
       for (let i = 0; i < docs.length; i += 100) {
         await sr.PredictionV7Verification.bulkCreate(docs.slice(i, i + 100));
@@ -341,6 +430,9 @@ export default async function(req: Request) {
       version: NEW_VERSION,
       records: limited.length,
       groups: groups.size,
+      later_duplicates: laterDuplicates,
+      rejudged: rejudgedCount,
+      snapshot,
       verified,
       held,
       held_by_reason: heldByReason,

@@ -82,3 +82,96 @@ export function jstDate(offsetDays = 0) {
   const base = new Date(Date.now() + offsetDays * 86400000);
   return base.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
 }
+
+// ---- 集計単位: レース×段階ごとの代表予想 × 予想1件につき最新の記録 ----
+// 照合処理(verifyV7Daily)と同じ規則で並べる: 保存時刻 → 照合時刻 → id
+export const rowOrder = (a, b) => String(a?.created_date || '').localeCompare(String(b?.created_date || ''))
+  || String(a?.verified_at || '').localeCompare(String(b?.verified_at || ''))
+  || String(a?.id || '').localeCompare(String(b?.id || ''));
+
+export const judgmentOf = (row) => {
+  if (!row) return null;
+  if (row.verification_status) return String(row.verification_status);
+  const legacyValid = row.pre_deadline_verified === true && row.record_fixed === true && row.result_finished === true;
+  return legacyValid ? 'VERIFIED' : 'LEGACY';
+};
+
+const raceTime = (value) => {
+  const raw = String(value ?? '').trim().replace(/(\.\d{3})\d+/, '$1');
+  if (!raw) return NaN;
+  return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(raw) ? raw : `${raw}Z`);
+};
+
+// 同一レース×段階は、最初に保存された1件だけを代表とする。
+// 後から保存された重複(後発の重複)は集計から除外する
+export function splitRepresentatives(predictions) {
+  const groups = new Map();
+  for (const row of predictions || []) {
+    if (!row?.record_hash || !row?.race_key || !row?.stage) continue;
+    const key = `${row.race_key}::${row.stage}`;
+    const list = groups.get(key) || [];
+    list.push(row);
+    groups.set(key, list);
+  }
+  const representatives = [];
+  const duplicates = [];
+  for (const list of groups.values()) {
+    const ordered = [...list].sort(rowOrder);
+    representatives.push(ordered[0]);
+    duplicates.push(...ordered.slice(1));
+  }
+  return { groups: groups.size, representatives, duplicates };
+}
+
+// 予想1件につき最新の照合記録だけを現在の判定として採用する(再判定は追記されるため)
+export function latestPerRecord(rows) {
+  const map = new Map();
+  for (const row of rows || []) {
+    const hash = row?.record_hash;
+    if (!hash) continue;
+    const previous = map.get(hash);
+    if (!previous || rowOrder(row, previous) > 0) map.set(hash, row);
+  }
+  return map;
+}
+
+// 画面の4件数(未保存・未検証・保留・有効検証)を照合処理と同じ条件で数える
+export function reconcileV7({ predictions = [], verifications = [], races = [] }) {
+  const { groups, representatives, duplicates } = splitRepresentatives(predictions);
+  const latest = latestPerRecord(verifications);
+  const now = Date.now();
+  const closed = (races || []).filter((race) => race?.status !== 'cancelled'
+    && Number.isFinite(raceTime(race?.deadline)) && raceTime(race.deadline) <= now);
+  const predicted = new Set(predictions.map((row) => row?.race_key).filter(Boolean));
+  const unsaved = closed.filter((race) => !predicted.has(race.race_key)).length;
+
+  const holds = {};
+  const rows = [];
+  let verified = 0, held = 0, unverified = 0, legacy = 0;
+  for (const representative of representatives) {
+    const row = latest.get(representative.record_hash) || null;
+    const status = judgmentOf(row);
+    if (!row) { unverified++; continue; }
+    if (status === 'VERIFIED') { verified++; rows.push(row); continue; }
+    if (status === 'LEGACY') { legacy++; rows.push(row); continue; }
+    held++;
+    rows.push(row);
+    const key = row.hold_reason || String(status || '').replace(/^HELD_/, '');
+    holds[key] = (holds[key] || 0) + 1;
+  }
+
+  return {
+    closedRaces: closed.length,
+    records: predictions.length,
+    groups,
+    representatives: representatives.length,
+    laterDuplicates: duplicates.length,
+    verified,
+    held,
+    unverified,
+    legacy,
+    unsaved,
+    holds: Object.entries(holds).sort((a, b) => b[1] - a[1]),
+    rows,
+  };
+}
