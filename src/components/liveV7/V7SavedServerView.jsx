@@ -51,8 +51,11 @@ export default function V7SavedServerView({race}) {
  const valid=rows.filter(r=>{const t=dbMs(r.created_date);return Number.isFinite(deadline)&&Number.isFinite(t)&&t<deadline});
  const combination=result?.result_trifecta||null;
  const payout=Number(result?.payout??result?.payouts?.trifecta?.payout??0)||null;
- const hitStages=combination?['FINAL','PRE'].filter(stage=>valid.some(r=>r.stage===stage
-  &&PLAN_KEYS.some(key=>Array.isArray(r.plans?.[key]?.tickets)&&r.plans[key].tickets.includes(combination)))):[];
+ // 判定に使うのは「画面に表示している保存予想」(重複なく1件だけの組)のみ。
+ // 予想が無い・重複保留の場合は判定せず保留とする
+ const shown=['FINAL','PRE'].map(stage=>[stage,valid.filter(r=>r.stage===stage)]).filter(([,list])=>list.length===1);
+ const hitStages=shown.filter(([,list])=>PLAN_KEYS.some(key=>Array.isArray(list[0].plans?.[key]?.tickets)&&list[0].plans[key].tickets.includes(combination))).map(([stage])=>stage);
+ const verdict=!combination?null:shown.length?(hitStages.length?'hit':'miss'):'held';
 
  return <div className="rounded-xl border-2 border-indigo-200 bg-white p-4 space-y-3">
   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -62,8 +65,10 @@ export default function V7SavedServerView({race}) {
   <p className="text-xs text-slate-600">締切前にDBへ保存されたV7予想（FINAL優先）のBUY判定と買い目を表示します。締切後に新たな予想は作成しません。</p>
 
   {combination?<div className="rounded-lg border-2 border-rose-400 bg-rose-50 p-3 space-y-1">
-   <p className="font-bold text-rose-900">確定結果 三連単 {combination} ／ 払戻 {payout?yen(payout):'未取得'}</p>
-   <p className="text-sm text-rose-900">{hitStages.length?`保存済み買い目で的中：${hitStages.join('・')}`:'保存済み買い目は不的中'}</p>
+   <p className="font-bold text-rose-900">公式確定結果 三連単 {combination} ／ 払戻 {payout?yen(payout):'未取得'}</p>
+   <p className="text-sm text-rose-900">{verdict==='hit'?`表示中の保存予想で的中：${hitStages.join('・')}`
+    :verdict==='miss'?'表示中の保存予想は不的中（公式確定結果と照合）'
+    :'表示できる保存予想が無いため判定は保留'}</p>
   </div>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">確定結果はまだ取得できていません。結果が入り次第、この画面に反映されます。</p>}
 
   {loading?<p className="text-sm text-slate-600">取得中…</p>
