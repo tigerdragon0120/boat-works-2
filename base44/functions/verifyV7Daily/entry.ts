@@ -21,12 +21,13 @@
 // ページ形式({items, next_cursor, has_more})の取得を使うため 0.8.60 を使用する
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.60";
 import { loadProvenanceByRace } from "../../shared/resultProvenance.js";
+// 予想・検証記録も全件読み切る(途中で切れると重複した組を見落とすため)
+import { fetchAllPaged } from "../../shared/pagedFetch.js";
 // 証跡は全件取得できない場合に判定を保留する(共有のページ取得処理を使用)
 import { resolveEvidence, evidenceHoldReason } from "../../shared/resultEvidenceRules.js";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const TIME_BUDGET_MS = 60000;
-const MAX_RECORDS = 600;
 // 生成直後のメタデータ更新を「書き換え」と誤判定しないための許容幅
 const IMMUTABLE_TOLERANCE_MS = 5000;
 const MAX_SAMPLE = 60;
@@ -157,15 +158,32 @@ export default async function(req: Request) {
     const sr = base44.asServiceRole.entities;
     const nowIso = new Date().toISOString();
 
-    const records: any[] = (await Promise.all(
-      dates.map((raceDate) => sr.PredictionV7.filter({ race_date: raceDate }, "-generated_at", 500))
-    )).flat();
+    // 対象日の予想は全件読み切る。読み切れなかった場合は、重複した組を見落として
+    // 的中率・回収率に混ぜてしまうため、判定そのものを行わず保留する
+    const predictionPages = await fetchAllPaged(
+      (query: any, options: any) => sr.PredictionV7.filter(query, options),
+      { race_date: { $in: dates } },
+      { sort: "-generated_at" },
+    );
+    if (!predictionPages.complete) {
+      return Response.json({
+        ok: true,
+        dates,
+        dry_run: dryRun,
+        skipped_incomplete: "PREDICTIONS_INCOMPLETE",
+        written: 0,
+        completed_at: nowIso,
+      });
+    }
+    const records: any[] = predictionPages.rows;
 
     if (!records.length) {
       return Response.json({ ok: true, dates, dry_run: dryRun, records: 0, groups: 0, verified: 0, held: 0, held_by_reason: {} });
     }
 
-    const limited = records.slice(0, MAX_RECORDS).filter((record: any) => record?.race_key && record?.stage && record?.record_hash);
+    // 途中で切り捨てると重複した組が1件だけに見えてしまうため、切り捨ては行わない
+    // (実行時間は下の TIME_BUDGET_MS で打ち切る)
+    const limited = records.filter((record: any) => record?.race_key && record?.stage && record?.record_hash);
     const raceKeys = [...new Set(limited.map((record: any) => record.race_key))];
 
     const races: any[] = raceKeys.length
@@ -201,9 +219,22 @@ export default async function(req: Request) {
 
     // 既存の照合記録は書き換えない。予想1件につき最新の記録だけを「現在の判定」として読む。
     // 判定が変わったときだけ新しい行を追記する(再判定)
-    const existing: any[] = await sr.PredictionV7Verification
-      .filter({ race_date: { $in: dates } }, "-verified_at", 2000)
-      .catch(() => []);
+    const existingPages = await fetchAllPaged(
+      (query: any, options: any) => sr.PredictionV7Verification.filter(query, options),
+      { race_date: { $in: dates } },
+      { sort: "-verified_at" },
+    );
+    if (!existingPages.complete) {
+      return Response.json({
+        ok: true,
+        dates,
+        dry_run: dryRun,
+        skipped_incomplete: "VERIFICATION_RECORDS_INCOMPLETE",
+        written: 0,
+        completed_at: nowIso,
+      });
+    }
+    const existing: any[] = existingPages.rows;
     const latestByHash = new Map<string, any>();
     for (const row of existing || []) {
       const hash = String(row?.record_hash || "");

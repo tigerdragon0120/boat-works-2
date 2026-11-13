@@ -139,13 +139,17 @@ const leaseExpired = (row) => {
 };
 
 // 同一レース×段階の予想を読む。読めなかった場合は unknown を返す
+// (読めない状態を「無い」と扱うと、二重保存の原因になるため必ず区別する)
 async function findPrediction(sr, doc) {
   const rows = await sr.PredictionV7
     .filter({ race_key: doc.race_key, stage: doc.stage }, "-created_date", 10)
     .catch(() => null);
-  if (rows === null) return { status: "unknown" };
-  const row = (rows || []).find((item) => item && item.id) || null;
-  return row ? { status: "found", row } : { status: "absent" };
+  if (rows === null) return { status: "unknown", count: 0 };
+  const found = (rows || []).filter((item) => item && item.id);
+  const row = found[0] || null;
+  return row
+    ? { status: "found", row, count: found.length }
+    : { status: "absent", count: 0 };
 }
 
 // 登録権の獲得と再送判定(状態遷移の条件付き書込で原子的に行う)
@@ -308,6 +312,13 @@ export async function saveV7Predictions(client, docs) {
       continue;
     }
 
+    // 既存の有無を確認できない間は書き込まない(確認できないまま書くと二重登録になる)
+    if (existing.status === "unknown") {
+      bump("read_unavailable");
+      await releaseClaim(sr, claim);
+      continue;
+    }
+
     const gate = await readRaceGate(sr, doc.race_key).catch(() => ({ reason: "gate_unavailable" }));
     if (gate.reason) { bump(gate.reason); await releaseClaim(sr, claim); continue; }
 
@@ -324,6 +335,9 @@ export async function saveV7Predictions(client, docs) {
 
     const after = await findPrediction(sr, doc);
     if (after.status === "found") {
+      // 保存直後に同じレース×段階が2件以上あれば重複。削除や統合はせず記録だけ返し、
+      // 予想は検証側で全件保留(的中率・回収率から除外)とする
+      if (Number(after.count) > 1) bump("duplicate_detected");
       await finalizeClaim(sr, claim, (created && created.id) || after.row.id, doc.record_hash);
       saved.push(payload);
       donePairs.add(pair);
