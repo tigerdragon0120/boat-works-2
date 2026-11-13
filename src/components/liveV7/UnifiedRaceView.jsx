@@ -1,5 +1,6 @@
 import React, {useMemo} from "react";
 import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
+import V7SavedServerView from "@/components/liveV7/V7SavedServerView";
 import {buildV5ScenarioForecast} from "@/lib/v5ScenarioEngine";
 
 // A partial exhibition is enough for an explicitly labelled, provisional V7 view.
@@ -38,10 +39,10 @@ export default function UnifiedRaceView({race, entries, nextOpenRace=null, onSel
       </span>
     </div>
     {raceClosed && <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 space-y-2">
-      <p className="font-bold">このレースは締切済みです。締切前のV7予想が端末に保存されていなければ、後から買い目は作りません。</p>
+      <p className="font-bold">このレースは締切済みです。サーバーに締切前保存されたV7予想を表示します。締切後に新たな予想は作成しません。</p>
       {nextOpenRace && <button type="button" onClick={onSelectNextRace} className="rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-900">締切前の {nextOpenRace.race_number}R を見る（締切 {String(nextOpenRace.deadline).slice(11,16)}）</button>}
     </div>}
-    {!exhibitReady ? <div className="space-y-3">
+    {raceClosed ? <V7SavedServerView race={race}/> : !exhibitReady ? <div className="space-y-3">
       {scenarios ? <>
         <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
           <p className="font-bold text-slate-900">{scenarios.verdict}</p>
