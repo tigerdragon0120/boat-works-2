@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 
-// 確認モード(書き込みなし)で照合を試し、追記候補と保存済みの有効件数を区別して表示する
+// 確認モード(書き込みなし)で照合を試し、追記候補と直近30日の保存済み有効件数を区別して表示する
 export default function V7DryRunPanel({ saved }) {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -24,7 +24,7 @@ export default function V7DryRunPanel({ saved }) {
 
   return <div className="rounded-lg border border-slate-200 p-3 space-y-2">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 className="text-sm font-semibold text-slate-800">確認モード（書き込みなし）</h3>
+      <h3 className="text-sm font-semibold text-slate-800">確認モード（直近3日・書き込みなし）</h3>
       <button
         type="button"
         onClick={run}
