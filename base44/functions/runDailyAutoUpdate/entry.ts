@@ -19,6 +19,8 @@ import { isWomensRace } from '../../shared/womensRace.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
+// V7: 定期更新で展示を保存したレースも、FINAL予想の生成につなぐ
+import { runV7AutoGeneration } from '../../shared/v7AutoGeneration.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -846,6 +848,8 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
 
   const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
   let fetched = 0;
+  // 展示が揃ったレースは、この回の最後にV7のFINAL判定へ回す
+  const v7ReadyKeys = new Set<string>();
 
   for (const race of races) {
     if (Date.now() - startTime > timeBudgetMs) break;
@@ -943,6 +947,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       await withRateLimitRetry(() => sr.Race.update(race.id, raceUpdate), 4)
         .catch((e: any) => errors.push(`${venueName} R${raceNumber}: 展示保存 ${e.message}`));
       fetched++;
+      if (raceUpdate.exhibition_ready) v7ReadyKeys.add(race.race_key);
       if (raceUpdate.final_refresh_required) {
         logs.push(`${venueName} R${raceNumber}: 展示変更のため全FINAL予想の再計算を予約`);
       }
@@ -952,7 +957,20 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     await sleep(300);
   }
 
-  return { total: races.length, fetched, errors };
+  // 展示保存を起点に、V7のFINAL予想を生成する。
+  // 締切・開催状態の再確認と同一レース×段階の登録制御は共通保存処理(v7PredictionStore)が保存の瞬間に行う。
+  let v7Saved = 0;
+  if (v7ReadyKeys.size) {
+    try {
+      const v7 = await runV7AutoGeneration(base44, { race_date: raceDate, race_keys: [...v7ReadyKeys] });
+      v7Saved = Number(v7?.saved_final || 0);
+      logs.push(`V7: 展示保存を起点にFINAL ${v7Saved}R生成 / PRE ${Number(v7?.saved_pre || 0)}R`);
+    } catch (e: any) {
+      errors.push(`V7 FINAL生成: ${e?.message || e}`);
+    }
+  }
+
+  return { total: races.length, fetched, v7_saved: v7Saved, errors };
 }
 
 // =====================================================
@@ -1491,7 +1509,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     logs.push(`AUTO: 展示データ取得開始（最優先）`);
     const before = Date.now();
     const r = await fetchAndSaveExhibition(base44, today, remaining, logs, errors);
-    steps.push(`exhibition: ${r.fetched}R`);
+    steps.push(`exhibition: ${r.fetched}R / V7 ${r.v7_saved}FINAL`);
     remaining -= (Date.now() - before);
   }
 

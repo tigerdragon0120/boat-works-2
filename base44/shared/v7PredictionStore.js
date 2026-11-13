@@ -3,10 +3,11 @@
 // サーバー自動生成(SERVER)と端末同期(BROWSER)は、どちらもこの1本を通る。
 //
 //  1. 締切・開催状態・確定結果は「保存する瞬間」のDB値(Race / RaceResult)で確認する
+//     (書込の直前に、ロック内でもう一度読み直して再確認する)
 //  2. 同一レース×段階の登録は、レース単位のリースロックで直列化し、
-//     ロック内で既存確認 → 登録 の順に行う(原子的な登録制御)
-//  3. 同時実行で重複が生じた場合は、同一レース×段階を1件(最も古い記録)に揃える
-//  4. 既存レコードは決して更新しない(更新APIを一切呼ばない)
+//     ロック内で 締切・開催状態の再確認 → 既存確認 → 登録 の順に行う(原子的な登録制御)
+//  3. 既存レコードは決して更新しない(更新APIを一切呼ばない)
+//  4. 保存後の削除による重複解消は行わない。重複はロック内の既存確認だけで防ぐ
 // =====================================================
 import { acquireLock, releaseLock } from "./concurrencyLock.js";
 import { timeMs } from "./liveV7Time.js";
@@ -73,6 +74,29 @@ function sanitize(input) {
     judgment_reason: input.judgment_reason ? String(input.judgment_reason).slice(0, 500) : null,
     source: input.source === "SERVER" ? "SERVER" : "BROWSER",
   };
+}
+
+// 書込直前の再確認: 保存する瞬間のDB値で締切・開催状態・確定結果を判定する
+async function readRaceGate(sr, raceKey) {
+  const races = await sr.Race.filter({ race_key: raceKey }, "-created_date", 10).catch(() => []);
+  let race = null;
+  for (const row of races || []) {
+    if (!race || (!race.deadline && row && row.deadline)) race = row;
+  }
+  if (!race || !race.id) return { reason: "race_missing" };
+  if (["finished", "cancelled"].includes(race.status)) return { reason: "race_closed" };
+  const deadline = timeMs(race.deadline);
+  if (deadline == null || deadline <= Date.now()) return { reason: "deadline_passed" };
+
+  const results = await sr.RaceResult.filter({ race_id: race.id }, "-created_date", 10).catch(() => []);
+  const confirmed = (results || []).some((result) => {
+    const combination = String((result && result.result_trifecta) || "");
+    if (!COMBO_RE.test(combination)) return false;
+    return result.is_finished === true || result.result_status === "RESULT_FINAL";
+  });
+  if (confirmed) return { reason: "result_confirmed" };
+
+  return { race, reason: null };
 }
 
 export async function saveV7Predictions(client, docs) {
@@ -143,12 +167,13 @@ export async function saveV7Predictions(client, docs) {
   }
 
   const saved = [];
-  const writtenPairs = [];
+  const donePairs = new Set();
   for (const doc of queue) {
     const pair = pairOf(doc.race_key, doc.stage);
-    if (writtenPairs.some((row) => row.pair === pair)) { bump("duplicate_rejected"); continue; }
+    if (donePairs.has(pair)) { bump("duplicate_rejected"); continue; }
 
-    // 同一レース×段階はロックで直列化し、ロック内で既存確認→登録する
+    // 同一レース×段階はロックで直列化し、
+    // ロック内で「締切・開催状態の再確認 → 既存確認 → 登録」を一続きに行う(原子的な登録制御)
     const lockId = await acquireLock(client, `v7save:${pair}`, "v7Save", LOCK_TTL_MS);
     if (!lockId) {
       bump("save_locked");
@@ -156,30 +181,24 @@ export async function saveV7Predictions(client, docs) {
       continue;
     }
     try {
+      const gate = await readRaceGate(sr, doc.race_key);
+      if (gate.reason) { bump(gate.reason); continue; }
+
       const rows = await sr.PredictionV7
         .filter({ race_key: doc.race_key, stage: doc.stage }, "-created_date", 10)
         .catch(() => []);
       if (rows && rows.length) { bump("duplicate_rejected"); continue; }
-      await sr.PredictionV7.create(doc);
-      saved.push(doc);
-      writtenPairs.push({ pair, race_key: doc.race_key, stage: doc.stage });
+
+      const payload = { ...doc, race_id: gate.race.id, deadline: gate.race.deadline || null };
+      await sr.PredictionV7.create(payload);
+      saved.push(payload);
+      donePairs.add(pair);
     } catch {
       bump("save_failed");
       transient.add(doc.record_hash);
     } finally {
       await releaseLock(client, lockId);
     }
-  }
-
-  // 万一同時に登録された場合は、同一レース×段階を1件(最も古い記録)に揃える。
-  // 保存済みの記録は書き換えない。
-  for (const row of writtenPairs) {
-    const rows = await sr.PredictionV7
-      .filter({ race_key: row.race_key, stage: row.stage }, "created_date", 20)
-      .catch(() => []);
-    if (!rows || rows.length < 2) continue;
-    const extra = rows.slice(1).map((item) => item.id).filter(Boolean);
-    if (extra.length) await sr.PredictionV7.deleteMany({ id: { $in: extra } }).catch(() => {});
   }
 
   return {
