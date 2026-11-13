@@ -14,7 +14,7 @@ export default function V7CoverageSummary({ summary }) {
   const checked = summary.verified + summary.held + summary.unverified + summary.legacy;
 
   return <div className="rounded-lg border border-slate-200 p-3 space-y-2">
-    <h3 className="text-sm font-semibold text-slate-800">直近3日の保存・検証状況（同一時点）</h3>
+    <h3 className="text-sm font-semibold text-slate-800">直近30日の保存・検証状況</h3>
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
       <Tile value={summary.unsaved} unit="R" label="未保存（締切済みで予想なし）" tone="bg-slate-50" valueTone="text-slate-900" />
       <Tile value={summary.unverified} unit="組" label="未検証（照合待ち）" tone="bg-slate-50" valueTone="text-slate-900" />
