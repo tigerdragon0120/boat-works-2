@@ -19,7 +19,7 @@
 //   dry_run    true で書き込みを行わない
 // =====================================================
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
-import { buildProvenanceDoc, findProvenanceEvidence, loadProvenanceByRace, RESULT_ENDPOINTS } from "../../shared/resultProvenance.js";
+import { findAnyProvenance, findProvenanceEvidence, loadProvenanceByRace } from "../../shared/resultProvenance.js";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const TIME_BUDGET_MS = 60000;
@@ -190,34 +190,8 @@ export default async function(req: Request) {
       if (!previous || (previous.conflict_log && !result.conflict_log)) resultByRace.set(result.race_id, result);
     }
 
-    const raceById = new Map<string, any>();
-    for (const race of races || []) if (race?.id) raceById.set(race.id, race);
-
-    // 公式取得経路の記録: 結果の取得時に記録された裏付けを読み、無い過去分だけ事後補完で1件作る
+    // 公式取得経路の記録: 結果の取得時に保存された実取得の証跡だけを読む(事後補完は判定に使わない)
     const provenanceByRace = await loadProvenanceByRace(sr, raceIds);
-    const backfillDocs: any[] = [];
-    for (const result of resultByRace.values()) {
-      const race = raceById.get(result.race_id);
-      if (!race) continue;
-      const evidence = findProvenanceEvidence(provenanceByRace.get(race.id) || [], {
-        combination: result.result_trifecta,
-        source: result.source,
-      });
-      if (evidence) continue;
-      const doc = buildProvenanceDoc(race, result, RESULT_ENDPOINTS.BACKFILL, "BACKFILL");
-      if (doc) backfillDocs.push(doc);
-    }
-    if (backfillDocs.length) {
-      // dry_run では書き込まず、補完予定の記録を使って分類だけを行う
-      const created: any[] = dryRun
-        ? []
-        : await sr.ResultProvenance.bulkCreate(backfillDocs).catch(() => []) || [];
-      for (const doc of (Array.isArray(created) && created.length ? created : backfillDocs)) {
-        const list = provenanceByRace.get(doc.race_id) || [];
-        list.push(doc);
-        provenanceByRace.set(doc.race_id, list);
-      }
-    }
 
     // 既存の照合記録は書き換えない。予想1件につき最新の記録だけを「現在の判定」として読む。
     // 判定が変わったときだけ新しい行を追記する(再判定)
@@ -324,12 +298,21 @@ export default async function(req: Request) {
       if (result) {
         const finishedAt = dbMs(result.finished_at);
         if (finishedAt != null && savedAt != null && finishedAt < savedAt - IMMUTABLE_TOLERANCE_MS) reasons.push("TIME_CONFLICT");
-        // 公式取得経路の記録と三連単・取得元が一致することを確認できた結果だけを照合に使う
-        evidence = findProvenanceEvidence(provenanceByRace.get(race.id) || [], {
+        // 実取得の証跡が結果ID・三連単・取得元と一致することを確認できた結果だけを照合に使う。
+        // 事後補完だけの結果は判定保留とする
+        const evidenceRows = provenanceByRace.get(race.id) || [];
+        evidence = findProvenanceEvidence(evidenceRows, {
           combination: result.result_trifecta,
           source: result.source,
+          resultId: result.id,
         });
-        if (!evidence) reasons.push("PROVENANCE_MISSING");
+        if (!evidence) {
+          const backfilled = findAnyProvenance(evidenceRows, {
+            combination: result.result_trifecta,
+            source: result.source,
+          });
+          reasons.push(backfilled ? "PROVENANCE_BACKFILL" : "PROVENANCE_MISSING");
+        }
         if (payout == null) reasons.push("PAYOUT_MISSING");
         if (!tickets.length) reasons.push("TICKETS_MISSING");
       }
@@ -339,7 +322,7 @@ export default async function(req: Request) {
 
       if (reasons.length) {
         const unique = [...new Set(reasons)];
-        const priority = ["RACE_MISMATCH", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PROVENANCE_MISSING", "PAYOUT_MISSING", "TICKETS_MISSING"];
+        const priority = ["RACE_MISMATCH", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PROVENANCE_MISSING", "PROVENANCE_BACKFILL", "PAYOUT_MISSING", "TICKETS_MISSING"];
         const primary = priority.find((reason) => unique.includes(reason)) || unique[0];
         const nextStatus = `HELD_${primary}`;
         // 同じ保留のままなら記録を増やさない(補完後に判定が変わったときだけ追記する)

@@ -70,14 +70,24 @@ export function buildProvenanceDoc(race, result, endpoint, evidenceType = 'LIVE'
   };
 }
 
-// 記録の中から、対象の結果(三連単・取得元)と一致する裏付けを探す
-export function findProvenanceEvidence(rows, { combination, source }) {
+// 三連単・取得元が一致する記録(事後補完を含む)
+export function findAnyProvenance(rows, { combination, source }) {
   if (!isValidTrifecta(combination) || !isOfficialSource(source)) return null;
   const combo = String(combination);
   const src = String(source);
   return (rows || []).find(
     (row) => String(row?.result_trifecta ?? '') === combo && String(row?.source ?? '') === src,
   ) || null;
+}
+
+// 判定に使える裏付け: 実取得時の記録(LIVE)で、対象の結果IDと三連単・取得元が一致するもの。
+// 事後補完(BACKFILL)だけの結果は証跡として扱わない
+export function findProvenanceEvidence(rows, { combination, source, resultId }) {
+  const found = findAnyProvenance(rows, { combination, source });
+  if (!found) return null;
+  if (String(found.evidence_type ?? '') !== 'LIVE') return null;
+  if (resultId && String(found.result_id ?? '') !== String(resultId)) return null;
+  return found;
 }
 
 export async function loadProvenanceByRace(sr, raceIds) {
