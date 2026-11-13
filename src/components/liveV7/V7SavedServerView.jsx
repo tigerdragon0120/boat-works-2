@@ -8,6 +8,14 @@ const yen=v=>Number.isFinite(Number(v))?Number(v).toLocaleString('ja-JP')+'円':
 const PLAN_KEYS=['hit_4','hit_6','hit_8','hit_12'];
 const PLAN_LABEL={hit_4:'4点',hit_6:'6点',hit_8:'8点',hit_12:'12点'};
 const JUDGMENT_STYLE={BUY:'bg-emerald-100 text-emerald-900',WATCH:'bg-amber-100 text-amber-900',SKIP:'bg-slate-200 text-slate-700'};
+const COMBO_RE=/^[1-6]-[1-6]-[1-6]$/;
+const OFFICIAL_SOURCES=['BOATCAST','LOCAL','TXT'];
+// 照合に使える結果か: 公式取得元 / 確定状態 / 三連単として正しい形式(1〜6の異なる3艇)
+const isOfficialResult=r=>!!r
+ &&OFFICIAL_SOURCES.includes(String(r.source||''))
+ &&(r.is_finished===true||r.result_status==='RESULT_FINAL')
+ &&COMBO_RE.test(String(r.result_trifecta||''))
+ &&new Set(String(r.result_trifecta).split('-')).size===3;
 
 function StageBlock({row,combination,payout,judged}){
  const plan=key=>row.plans?.[key];
@@ -35,21 +43,23 @@ function StageBlock({row,combination,payout,judged}){
 }
 
 export default function V7SavedServerView({race}) {
- const [rows,setRows]=useState([]),[result,setResult]=useState(null),[loading,setLoading]=useState(true),[error,setError]=useState(false);
- useEffect(()=>{let active=true;setRows([]);setResult(null);setLoading(true);setError(false);
+ const [rows,setRows]=useState([]),[resultRows,setResultRows]=useState([]),[loading,setLoading]=useState(true),[error,setError]=useState(false);
+ useEffect(()=>{let active=true;setRows([]);setResultRows([]);setLoading(true);setError(false);
   Promise.all([
    base44.entities.PredictionV7.filter({race_id:race.id},'-created_date',30),
    base44.entities.RaceResult.filter({race_id:race.id},'-created_date',5).catch(()=>[]),
   ]).then(([saved,results])=>{if(!active)return;
    setRows(Array.isArray(saved)?saved:[]);
-   setResult((results||[]).find(r=>r.result_trifecta&&(r.is_finished===true||r.result_status==='RESULT_FINAL'))||null);
+   setResultRows(Array.isArray(results)?results:[]);
   }).catch(()=>{if(active)setError(true)}).finally(()=>{if(active)setLoading(false)});
   return()=>{active=false};
  },[race.id]);
 
  const deadline=dbMs(race.deadline);
  const valid=rows.filter(r=>{const t=dbMs(r.created_date);return Number.isFinite(deadline)&&Number.isFinite(t)&&t<deadline});
- const combination=result?.result_trifecta||null;
+ // 公式取得元・確定状態・三連単の形式をすべて確認できた結果だけを照合に使う
+ const result=resultRows.find(isOfficialResult)||null;
+ const combination=result?String(result.result_trifecta):null;
  // 有効な払戻(100円あたり1円以上)を確認できたものだけを判定材料にする
  const payoutValue=Number(result?.payout??result?.payouts?.trifecta?.payout);
  const payout=Number.isFinite(payoutValue)&&payoutValue>0?payoutValue:null;
@@ -74,7 +84,7 @@ export default function V7SavedServerView({race}) {
     :verdict==='miss'?'表示中の保存予想は不的中（公式確定結果と照合）'
     :!judged?'公式払戻を確認できていないため判定は保留'
     :'表示できる保存予想が無いため判定は保留'}</p>
-  </div>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">確定結果はまだ取得できていません。結果が入り次第、この画面に反映されます。</p>}
+  </div>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{resultRows.length?'公式取得元・確定状態・三連単の形式を確認できないため照合は保留です。':'確定結果はまだ取得できていません。結果が入り次第、この画面に反映されます。'}</p>}
 
   {loading?<p className="text-sm text-slate-600">取得中…</p>
    :error?<p role="alert" className="text-sm text-red-700">DB保存履歴を取得できませんでした</p>
