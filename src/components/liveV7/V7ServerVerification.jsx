@@ -36,7 +36,10 @@ export default function V7ServerVerification() {
 
   const summaries = useMemo(() => {
     if (!rows) return [];
-    const base = firstPerRace(rows).filter((row) => row.stage === stage);
+    // 締切前のDB保存・記録固定・確定結果の3条件をサーバーで確認済みの行だけを集計する
+    const base = firstPerRace(rows)
+      .filter((row) => row.stage === stage)
+      .filter((row) => row.pre_deadline_verified === true && row.record_fixed === true && row.result_finished === true);
     return ['OPEN', 'WOMENS'].map((model) => {
       const list = base.filter((row) => row.model === model);
       const rank = [0, 0, 0];
@@ -64,7 +67,7 @@ export default function V7ServerVerification() {
   return <section data-testid="v7-server-verification" className="rounded-xl border bg-white p-3 space-y-3 mt-3">
     <div>
       <h2 className="font-bold">V7 サーバー検証（全端末・日次照合）</h2>
-      <p className="text-sm text-slate-600">別の端末やタブで生成したV7予想も含めて、確定結果と照合した成績です。同一レースは締切前の初回予想だけを数えます。</p>
+      <p className="text-sm text-slate-600">別の端末やタブで生成したV7予想も含めて、確定結果と照合した成績です。同一レースは締切前の初回予想だけを数えます。DBへの保存時刻が締切前であること、保存後に書き換えられていないこと、結果が確定していることをサーバー側で確認した行のみ集計します。</p>
     </div>
     <div className="flex flex-wrap gap-3 items-center text-sm">
       <label>段階 <select className="min-h-11 border rounded px-2" value={stage} onChange={(e) => setStage(e.target.value)}><option>PRE</option><option>FINAL</option></select></label>

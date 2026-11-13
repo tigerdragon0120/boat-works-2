@@ -3,15 +3,25 @@
 // 統合V7の予想(PredictionV7)と確定結果を照合し、
 // 検証結果(PredictionV7Verification)を保存する。
 //
-// - 対象は直近数日(既定3日)のサーバー保存済み予想
-// - 締切後に生成された予想は対象外(データリーク防止)
-// - 照合済みレコードはスキップ(差分のみ処理)
+// サーバー側で検証する2条件:
+//  1. 締切前のDB保存
+//     ブラウザが申告する generated_at ではなく、DBが記録した created_date を使い、
+//     Race に保存されている締切(deadline)より前であることを必須にする。
+//  2. 記録の固定(書き換え不可)
+//     created_date 以降に更新されていないことを確認する。
+//     予想レコードは追記のみで、更新は管理者に限られる。
+//
+// 集計対象は確定結果だけ:
+//  is_finished=true または result_status='RESULT_FINAL' の結果のみを使い、
+//  競合ログ付きの結果より競合の無い結果を優先する。
 // =====================================================
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const TIME_BUDGET_MS = 60000;
 const MAX_RECORDS = 600;
+// 生成直後のメタデータ更新を「書き換え」と誤判定しないための許容幅
+const IMMUTABLE_TOLERANCE_MS = 5000;
 
 function jstDateOffset(days: number): string {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
@@ -57,21 +67,37 @@ export default async function(req: Request) {
 
     const limited = records.slice(0, MAX_RECORDS);
     const raceIds = [...new Set(limited.map((record: any) => record.race_id).filter(Boolean))];
+    const raceKeys = [...new Set(limited.map((record: any) => record.race_key).filter(Boolean))];
     const hashes = limited.map((record: any) => record.record_hash);
 
-    const [results, verifications] = await Promise.all([
+    const [results, verifications, races] = await Promise.all([
       raceIds.length
         ? sr.RaceResult.filter({ race_id: { $in: raceIds } }, "-created_date", 2000).catch(() => [])
         : Promise.resolve([]),
       sr.PredictionV7Verification.filter({ record_hash: { $in: hashes } }, "-verified_at", 1000).catch(() => []),
+      raceKeys.length
+        ? sr.Race.filter({ race_key: { $in: raceKeys } }, "-created_date", 2000).catch(() => [])
+        : Promise.resolve([]),
     ]);
 
+    // 締切は Race のサーバー保存値だけを信頼する
+    const raceByKey = new Map<string, any>();
+    for (const race of races || []) {
+      if (!race?.race_key) continue;
+      const previous = raceByKey.get(race.race_key);
+      if (!previous || (!previous.deadline && race.deadline)) raceByKey.set(race.race_key, race);
+    }
+
+    // 確定結果だけを集計対象にする
     const resultByRace = new Map<string, any>();
     for (const result of results || []) {
       const combination = String(result?.result_trifecta || "");
       if (!COMBO_RE.test(combination) || new Set(combination.split("-")).size !== 3) continue;
+      const finished = result?.is_finished === true || result?.result_status === "RESULT_FINAL";
+      if (!finished) continue;
       const previous = resultByRace.get(result.race_id);
-      if (!previous || (result.is_finished && !previous.is_finished)) {
+      // 競合ログの無い確定結果を優先する
+      if (!previous || (previous.conflict_log && !result.conflict_log)) {
         resultByRace.set(result.race_id, result);
       }
     }
@@ -79,6 +105,10 @@ export default async function(req: Request) {
     const done = new Set((verifications || []).map((row: any) => row.record_hash));
 
     let skippedAlready = 0;
+    let skippedNoRace = 0;
+    let skippedUnverifiable = 0;
+    let skippedLate = 0;
+    let skippedModified = 0;
     let skippedNoResult = 0;
     const docs: any[] = [];
     const startedAt = Date.now();
@@ -87,12 +117,25 @@ export default async function(req: Request) {
       if (Date.now() - startedAt > TIME_BUDGET_MS) break;
       if (!record.record_hash || done.has(record.record_hash)) { skippedAlready += 1; continue; }
 
-      const result = resultByRace.get(record.race_id);
-      if (!result) { skippedNoResult += 1; continue; }
+      const race = raceByKey.get(record.race_key);
+      if (!race) { skippedNoRace += 1; continue; }
 
-      const deadline = Date.parse(record.deadline || "");
-      const generated = Date.parse(record.generated_at || "");
-      if (!Number.isFinite(deadline) || !Number.isFinite(generated) || generated >= deadline) continue;
+      // 1) 締切前のDB保存: DB記録の保存時刻(created_date) < レース締切
+      const savedAt = Date.parse(record.created_date || "");
+      const deadlineMs = Date.parse(race.deadline || "");
+      if (!Number.isFinite(savedAt) || !Number.isFinite(deadlineMs)) { skippedUnverifiable += 1; continue; }
+      if (savedAt >= deadlineMs) { skippedLate += 1; continue; }
+
+      // 2) 記録の固定: 保存後に書き換えられていないこと
+      const updatedAt = Date.parse(record.updated_date || record.created_date || "");
+      if (!Number.isFinite(updatedAt) || updatedAt - savedAt > IMMUTABLE_TOLERANCE_MS) {
+        skippedModified += 1;
+        continue;
+      }
+
+      const raceId = record.race_id || race.id;
+      const result = resultByRace.get(raceId);
+      if (!result) { skippedNoResult += 1; continue; }
 
       const combination = String(result.result_trifecta);
       const actual = combination.split("-").map(Number);
@@ -125,7 +168,7 @@ export default async function(req: Request) {
 
       docs.push({
         record_hash: record.record_hash,
-        race_id: record.race_id,
+        race_id: raceId,
         race_key: record.race_key,
         race_date: record.race_date,
         venue_code: record.venue_code || null,
@@ -138,6 +181,15 @@ export default async function(req: Request) {
         top_hit: record.top_combination === combination,
         rank_hits: [0, 1, 2].map((i) => order[i] === actual[i]),
         plans,
+        // サーバー側で確認した根拠
+        record_created_at: record.created_date || null,
+        record_updated_at: record.updated_date || null,
+        race_deadline: race.deadline || null,
+        pre_deadline_verified: true,
+        record_fixed: true,
+        result_status: result.result_status || null,
+        result_finished: true,
+        payout,
         verified_at: new Date().toISOString(),
       });
     }
@@ -150,9 +202,13 @@ export default async function(req: Request) {
       ok: true,
       dates,
       records: limited.length,
-      results_found: resultByRace.size,
+      finalized_results: resultByRace.size,
       verified: docs.length,
       skipped_already: skippedAlready,
+      skipped_no_race: skippedNoRace,
+      skipped_unverifiable: skippedUnverifiable,
+      skipped_late: skippedLate,
+      skipped_modified: skippedModified,
       skipped_no_result: skippedNoResult,
       completed_at: new Date().toISOString(),
     });
