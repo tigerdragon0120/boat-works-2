@@ -3,13 +3,14 @@
 // サーバー自動生成(SERVER)と端末同期(BROWSER)は、どちらもこの1本を通る。
 //
 //  1. 締切・開催状態・確定結果は「保存する瞬間」のDB値(Race / RaceResult)で確認する
-//     (書込の直前に、ロック内でもう一度読み直して再確認する)
-//  2. 同一レース×段階の登録は原子的な条件付き書込(CAS)で保護する
-//     DBに一意制約が無いため、レース×段階ごとの登録権(V7StageClaim)に対し
-//     「free の行だけを claimed にする」条件付き更新をちょうど1回だけ成立させ、
-//     それを獲得した呼び出しだけが登録に進む(後着は duplicate_rejected で弾かれる)
-//  3. 既存レコードは決して更新しない(更新APIを一切呼ばない)
-//  4. 保存後の削除による重複解消は行わない
+//  2. 同一レース×段階の登録権(V7StageClaim)を1行に保ち、
+//     その行への条件付き書込(CAS)が成立した1つの呼び出しだけが登録に進む
+//     (DBに一意制約が無いため、重複した登録権の行は保存処理側で1行に揃える)
+//  3. 予想を書き込む直前に、登録権の所有権(自分のトークンか)をDBで再確認する
+//  4. 保存結果が不明なときは、いったんDBを再読取してから
+//     登録権を解放するか再試行するかを決める(勝手に解放しない)
+//  5. 既存レコードは決して更新しない(更新APIを一切呼ばない)
+//  6. 保存後の削除による重複解消は行わない
 // =====================================================
 import { timeMs } from "./liveV7Time.js";
 
@@ -101,37 +102,69 @@ async function readRaceGate(sr, raceKey) {
   return { race, reason: null };
 }
 
+// 登録権の行を「レース×段階ごとに1行」へ揃える
+// DBに一意制約が無いため、同じ claim_key の行が複数できた場合は
+//  - claimed の行があればそれを正とし、
+//  - 残りの free 行は誰も保持していないので削除する。
+// 以後の条件付き書込は、この1行(id指定)だけを対象にする。
+async function ensureClaimRow(sr, pair, raceKey, stage) {
+  const load = () => sr[CLAIM_ENTITY].filter({ claim_key: pair }, "created_date", 50).catch(() => null);
+  let rows = await load();
+  if (rows === null) return null;
+  if (!rows.length) {
+    await sr[CLAIM_ENTITY]
+      .create({ claim_key: pair, race_key: raceKey, stage, state: "free", owner: null, record_hash: null, claimed_at: null })
+      .catch(() => null);
+    rows = await load();
+    if (!rows || !rows.length) return null;
+  }
+
+  const sorted = [...rows].sort((a, b) =>
+    String(a.created_date || "").localeCompare(String(b.created_date || "")) || String(a.id).localeCompare(String(b.id)));
+  const canonical = sorted.find((row) => row.state === "claimed") || sorted[0];
+  for (const row of sorted) {
+    if (row.id === canonical.id || row.state === "claimed") continue;
+    await sr[CLAIM_ENTITY].delete(row.id).catch(() => null);
+  }
+  return canonical;
+}
+
 // 登録権の獲得(原子的な条件付き書込)
-// 「そのレース×段階の claim 行のうち free のもの」だけを claimed に更新する。
-// 条件付き更新は1回しか成立しないため、複数プロセスが同時に来ても
-// updated を獲得した1つだけが先へ進む(後着は updated:0 を受け取る)。
+// 対象は「1レース×段階の行のうち free のもの」1行だけなので、
+// 条件付き更新が成立するのは1つの呼び出しに限られる(後着は updated:0)。
 async function claimStage(sr, doc) {
   const pair = pairOf(doc.race_key, doc.stage);
   const owner = `${doc.record_hash}:${Math.random().toString(36).slice(2, 10)}`;
   const staleBefore = new Date(Date.now() - CLAIM_STALE_MS).toISOString();
 
-  const rows = await sr[CLAIM_ENTITY].filter({ claim_key: pair }, "-created_date", 10).catch(() => []);
-  if (!rows || !rows.length) {
-    await sr[CLAIM_ENTITY]
-      .create({ claim_key: pair, race_key: doc.race_key, stage: doc.stage, state: "free", owner: null, record_hash: null, claimed_at: null })
-      .catch(() => null);
-  }
+  const row = await ensureClaimRow(sr, pair, doc.race_key, doc.stage);
+  if (!row) return null;
 
   const result = await sr[CLAIM_ENTITY]
     .updateMany(
-      { claim_key: pair, $or: [{ state: "free" }, { state: "claimed", claimed_at: { $lt: staleBefore } }] },
+      { id: row.id, $or: [{ state: "free" }, { state: "claimed", claimed_at: { $lt: staleBefore } }] },
       { $set: { state: "claimed", owner, record_hash: doc.record_hash, claimed_at: new Date().toISOString() } },
     )
     .catch(() => null);
 
-  return result && Number(result.updated) > 0 ? { pair, owner } : null;
+  return result && Number(result.updated) === 1 ? { id: row.id, pair, owner } : null;
+}
+
+// 書込直前の所有権確認: 取得した本人だけが予想を書き込めることをDBで確かめる
+// ok=自分の登録権 / lost=他者に渡った・失効 / unknown=確認できず(書き込まない)
+async function verifyClaim(sr, claim) {
+  const rows = await sr[CLAIM_ENTITY].filter({ claim_key: claim.pair }, "created_date", 50).catch(() => null);
+  if (rows === null) return "unknown";
+  const row = (rows || []).find((item) => item.id === claim.id);
+  if (!row) return "lost";
+  return row.state === "claimed" && row.owner === claim.owner ? "ok" : "lost";
 }
 
 // 登録に進めなかった場合だけ登録権を解放する(獲得した本人のみ)
 async function releaseClaim(sr, claim) {
   await sr[CLAIM_ENTITY]
     .updateMany(
-      { claim_key: claim.pair, state: "claimed", owner: claim.owner },
+      { id: claim.id, state: "claimed", owner: claim.owner },
       { $set: { state: "free", owner: null, record_hash: null, claimed_at: null } },
     )
     .catch(() => null);
@@ -214,24 +247,50 @@ export async function saveV7Predictions(client, docs) {
     const claim = await claimStage(sr, doc);
     if (!claim) { bump("duplicate_rejected"); continue; }
 
+    const gate = await readRaceGate(sr, doc.race_key).catch(() => ({ reason: "gate_unavailable" }));
+    if (gate.reason) { bump(gate.reason); await releaseClaim(sr, claim); continue; }
+
+    // 書き込む前に、登録権が自分のものかどうかをDBで確認する
+    const ownership = await verifyClaim(sr, claim);
+    if (ownership === "lost") { bump("claim_lost"); continue; }
+    if (ownership !== "ok") { bump("claim_unverified"); transient.add(doc.record_hash); continue; }
+
+    const rows = await sr.PredictionV7
+      .filter({ race_key: doc.race_key, stage: doc.stage }, "-created_date", 10)
+      .catch(() => []);
+    if (rows && rows.length) { bump("duplicate_rejected"); continue; }
+
+    const payload = { ...doc, race_id: gate.race.id, deadline: gate.race.deadline || null };
     try {
-      const gate = await readRaceGate(sr, doc.race_key);
-      if (gate.reason) { bump(gate.reason); await releaseClaim(sr, claim); continue; }
-
-      const rows = await sr.PredictionV7
-        .filter({ race_key: doc.race_key, stage: doc.stage }, "-created_date", 10)
-        .catch(() => []);
-      if (rows && rows.length) { bump("duplicate_rejected"); continue; }
-
-      const payload = { ...doc, race_id: gate.race.id, deadline: gate.race.deadline || null };
       await sr.PredictionV7.create(payload);
       saved.push(payload);
       donePairs.add(pair);
+      continue;
     } catch {
-      bump("save_failed");
-      transient.add(doc.record_hash);
-      await releaseClaim(sr, claim);
+      // 保存結果が不明(通信断・タイムアウト等)。ここでは判断せず、DBを再読取する
     }
+
+    const after = await sr.PredictionV7
+      .filter({ race_key: doc.race_key, stage: doc.stage }, "-created_date", 10)
+      .catch(() => null);
+    const landed = (after || []).some((row) => row.race_key === doc.race_key && row.stage === doc.stage);
+
+    if (landed) {
+      // 実際には保存されていた → 登録権は保持したまま取り消さない
+      saved.push(payload);
+      donePairs.add(pair);
+      continue;
+    }
+    if (after === null) {
+      // 再読取もできず判断できない → 解放せず、次回の実行で確認する
+      bump("save_unconfirmed");
+      transient.add(doc.record_hash);
+      continue;
+    }
+    // 保存されていないことを確認できたので、解放して再試行できる状態に戻す
+    bump("save_failed");
+    transient.add(doc.record_hash);
+    await releaseClaim(sr, claim);
   }
 
   return {
