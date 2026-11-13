@@ -1,0 +1,74 @@
+{
+  "name": "V7StageClaim",
+  "type": "object",
+  "description": "V7\u4e88\u60f3\u306e\u767b\u9332\u6a29\u3002\u30ec\u30fc\u30b9\u00d7\u6bb5\u968e(race_key::stage)\u3054\u3068\u306b1\u4ef6\u3092\u7528\u610f\u3057\u3001\u6761\u4ef6\u4ed8\u304d\u66f4\u65b0(CAS)\u3067\u540c\u6642\u767b\u9332\u30921\u4ef6\u306b\u7d5e\u308b\u3002DB\u306e\u4e00\u610f\u5236\u7d04\u304c\u4f7f\u3048\u306a\u3044\u305f\u3081\u3001\u300cfree \u306e\u884c\u3060\u3051\u3092 claimed \u306b\u3059\u308b\u300d\u66f4\u65b0\u304c\u6210\u7acb\u3057\u305f\u547c\u3073\u51fa\u3057\u3060\u3051\u304cPredictionV7\u3078\u66f8\u304d\u8fbc\u3080\u3002\u66f8\u8fbc\u306f\u30b5\u30fc\u30d0\u30fc(\u5171\u901a\u4fdd\u5b58\u51e6\u7406 v7PredictionStore)\u306e\u307f\u3002",
+  "properties": {
+    "claim_key": {
+      "type": "string",
+      "description": "\u767b\u9332\u6a29\u30ad\u30fc race_key::stage"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ],
+      "enumColors": [
+        "gray",
+        "green"
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "free",
+        "claimed"
+      ],
+      "enumColors": [
+        "gray",
+        "blue"
+      ],
+      "default": "free",
+      "description": "free=\u672a\u53d6\u5f97 / claimed=\u53d6\u5f97\u6e08\u307f(\u767b\u9332\u6a29\u306f\u4fdd\u6301\u8005\u306e\u307f)"
+    },
+    "record_hash": {
+      "type": "string",
+      "description": "\u767b\u9332\u6a29\u3092\u7372\u5f97\u3057\u305f\u4e88\u60f3\u30ec\u30b3\u30fc\u30c9\u306erecord_hash"
+    },
+    "owner": {
+      "type": "string",
+      "description": "\u53d6\u5f97\u5143\u30c8\u30fc\u30af\u30f3(record_hash+\u4e71\u6570)\u3002\u89e3\u653e\u6642\u306e\u6761\u4ef6\u306b\u4f7f\u3046"
+    },
+    "claimed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u53d6\u5f97\u6642\u523b\u3002\u53e4\u3059\u304e\u308b\u53d6\u5f97\u306f\u5931\u52b9\u6271\u3044\u3068\u3057\u3001\u518d\u53d6\u5f97\u3067\u304d\u308b"
+    }
+  },
+  "required": [
+    "claim_key",
+    "race_key",
+    "stage"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "none"
+      }
+    }
+  }
+}

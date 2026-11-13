@@ -4,18 +4,20 @@
 //
 //  1. 締切・開催状態・確定結果は「保存する瞬間」のDB値(Race / RaceResult)で確認する
 //     (書込の直前に、ロック内でもう一度読み直して再確認する)
-//  2. 同一レース×段階の登録は、レース単位のリースロックで直列化し、
-//     ロック内で 締切・開催状態の再確認 → 既存確認 → 登録 の順に行う(原子的な登録制御)
+//  2. 同一レース×段階の登録は原子的な条件付き書込(CAS)で保護する
+//     DBに一意制約が無いため、レース×段階ごとの登録権(V7StageClaim)に対し
+//     「free の行だけを claimed にする」条件付き更新をちょうど1回だけ成立させ、
+//     それを獲得した呼び出しだけが登録に進む(後着は duplicate_rejected で弾かれる)
 //  3. 既存レコードは決して更新しない(更新APIを一切呼ばない)
-//  4. 保存後の削除による重複解消は行わない。重複はロック内の既存確認だけで防ぐ
+//  4. 保存後の削除による重複解消は行わない
 // =====================================================
-import { acquireLock, releaseLock } from "./concurrencyLock.js";
 import { timeMs } from "./liveV7Time.js";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const RACE_KEY_RE = /^\d{4}-\d{2}-\d{2}_\d{1,2}_\d{1,2}$/;
 const PLAN_KEY_RE = /^(hit|value)_(4|6|8|12)$/;
-const LOCK_TTL_MS = 120000;
+const CLAIM_ENTITY = "V7StageClaim";
+const CLAIM_STALE_MS = 5 * 60 * 1000;
 const MAX_DOCS = 200;
 
 const pairOf = (key, stage) => `${key}::${stage}`;
@@ -99,6 +101,42 @@ async function readRaceGate(sr, raceKey) {
   return { race, reason: null };
 }
 
+// 登録権の獲得(原子的な条件付き書込)
+// 「そのレース×段階の claim 行のうち free のもの」だけを claimed に更新する。
+// 条件付き更新は1回しか成立しないため、複数プロセスが同時に来ても
+// updated を獲得した1つだけが先へ進む(後着は updated:0 を受け取る)。
+async function claimStage(sr, doc) {
+  const pair = pairOf(doc.race_key, doc.stage);
+  const owner = `${doc.record_hash}:${Math.random().toString(36).slice(2, 10)}`;
+  const staleBefore = new Date(Date.now() - CLAIM_STALE_MS).toISOString();
+
+  const rows = await sr[CLAIM_ENTITY].filter({ claim_key: pair }, "-created_date", 10).catch(() => []);
+  if (!rows || !rows.length) {
+    await sr[CLAIM_ENTITY]
+      .create({ claim_key: pair, race_key: doc.race_key, stage: doc.stage, state: "free", owner: null, record_hash: null, claimed_at: null })
+      .catch(() => null);
+  }
+
+  const result = await sr[CLAIM_ENTITY]
+    .updateMany(
+      { claim_key: pair, $or: [{ state: "free" }, { state: "claimed", claimed_at: { $lt: staleBefore } }] },
+      { $set: { state: "claimed", owner, record_hash: doc.record_hash, claimed_at: new Date().toISOString() } },
+    )
+    .catch(() => null);
+
+  return result && Number(result.updated) > 0 ? { pair, owner } : null;
+}
+
+// 登録に進めなかった場合だけ登録権を解放する(獲得した本人のみ)
+async function releaseClaim(sr, claim) {
+  await sr[CLAIM_ENTITY]
+    .updateMany(
+      { claim_key: claim.pair, state: "claimed", owner: claim.owner },
+      { $set: { state: "free", owner: null, record_hash: null, claimed_at: null } },
+    )
+    .catch(() => null);
+}
+
 export async function saveV7Predictions(client, docs) {
   const sr = client.asServiceRole.entities;
   const reasons = {};
@@ -172,17 +210,13 @@ export async function saveV7Predictions(client, docs) {
     const pair = pairOf(doc.race_key, doc.stage);
     if (donePairs.has(pair)) { bump("duplicate_rejected"); continue; }
 
-    // 同一レース×段階はロックで直列化し、
-    // ロック内で「締切・開催状態の再確認 → 既存確認 → 登録」を一続きに行う(原子的な登録制御)
-    const lockId = await acquireLock(client, `v7save:${pair}`, "v7Save", LOCK_TTL_MS);
-    if (!lockId) {
-      bump("save_locked");
-      transient.add(doc.record_hash);
-      continue;
-    }
+    // 登録権を原子的に獲得する(同時に来た場合、獲得できるのは1つだけ)
+    const claim = await claimStage(sr, doc);
+    if (!claim) { bump("duplicate_rejected"); continue; }
+
     try {
       const gate = await readRaceGate(sr, doc.race_key);
-      if (gate.reason) { bump(gate.reason); continue; }
+      if (gate.reason) { bump(gate.reason); await releaseClaim(sr, claim); continue; }
 
       const rows = await sr.PredictionV7
         .filter({ race_key: doc.race_key, stage: doc.stage }, "-created_date", 10)
@@ -196,8 +230,7 @@ export async function saveV7Predictions(client, docs) {
     } catch {
       bump("save_failed");
       transient.add(doc.record_hash);
-    } finally {
-      await releaseLock(client, lockId);
+      await releaseClaim(sr, claim);
     }
   }
 
