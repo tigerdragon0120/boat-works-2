@@ -44,17 +44,18 @@ function StageBlock({row,combination,payout,judged}){
 }
 
 export default function V7SavedServerView({race}) {
- const [rows,setRows]=useState([]),[resultRows,setResultRows]=useState([]),[evidenceRows,setEvidenceRows]=useState([]),[loading,setLoading]=useState(true),[error,setError]=useState(false);
- useEffect(()=>{let active=true;setRows([]);setResultRows([]);setEvidenceRows([]);setLoading(true);setError(false);
+ const [rows,setRows]=useState([]),[resultRows,setResultRows]=useState([]),[evidenceRows,setEvidenceRows]=useState([]),[evidenceComplete,setEvidenceComplete]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(false);
+ useEffect(()=>{let active=true;setRows([]);setResultRows([]);setEvidenceRows([]);setEvidenceComplete(false);setLoading(true);setError(false);
   Promise.all([
    base44.entities.PredictionV7.filter({race_id:race.id},'-created_date',30),
    base44.entities.RaceResult.filter({race_id:race.id},'-created_date',5).catch(()=>[]),
    // 取得上限の20件で見落とさないよう、対象レースの証跡は全件読み切る
-   loadRaceEvidence(base44.entities.ResultProvenance,race.id).catch(()=>[]),
+   loadRaceEvidence(base44.entities.ResultProvenance,race.id).catch(()=>({rows:[],complete:false})),
   ]).then(([saved,results,evidence])=>{if(!active)return;
    setRows(Array.isArray(saved)?saved:[]);
    setResultRows(Array.isArray(results)?results:[]);
-   setEvidenceRows(Array.isArray(evidence)?evidence:[]);
+   setEvidenceRows(Array.isArray(evidence?.rows)?evidence.rows:[]);
+   setEvidenceComplete(evidence?.complete===true);
   }).catch(()=>{if(active)setError(true)}).finally(()=>{if(active)setLoading(false)});
   return()=>{active=false};
  },[race.id]);
@@ -76,10 +77,11 @@ export default function V7SavedServerView({race}) {
  const shown=['FINAL','PRE'].map(stage=>[stage,valid.filter(r=>r.stage===stage)]).filter(([,list])=>list.length===1);
  const hitStages=shown.filter(([,list])=>PLAN_KEYS.some(key=>Array.isArray(list[0].plans?.[key]?.tickets)&&list[0].plans[key].tickets.includes(combination))).map(([stage])=>stage);
  // 公式ソース(確定結果)と有効な払戻の両方を確認できた場合に限り的中・不的中を判定する
- const judged=!!combination&&payout!=null&&!!evidence;
+ const judged=!!combination&&payout!=null&&!!evidence&&evidenceComplete;
  const verdict=!combination?null:!judged||!shown.length?'held':(hitStages.length?'hit':'miss');
  // 保留の理由(証跡の重複は削除も採用もせず保留する)
- const holdText=!shown.length?'表示できる保存予想が無いため判定は保留'
+ const holdText=!evidenceComplete?'公式取得経路の記録を全件取得できなかったため判定は保留'
+  :!shown.length?'表示できる保存予想が無いため判定は保留'
   :resolution.status==='duplicate'?`実取得の証跡が重複しているため判定は保留（${resolution.count}件）`
   :resolution.status==='backfill'?'実取得の証跡が無いため判定は保留（事後補完のみ）'
   :resolution.status==='missing'?'公式取得経路の記録を確認できないため判定は保留'

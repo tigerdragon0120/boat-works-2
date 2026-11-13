@@ -23,6 +23,7 @@ import {
   resolveEvidence,
   evidenceHoldReason,
 } from './resultEvidenceRules.js';
+import { fetchAllPaged } from './pagedFetch.js';
 
 export { OFFICIAL_RESULT_SOURCES, RESULT_ENDPOINTS, isValidTrifecta, isOfficialSource, resolveEvidence, evidenceHoldReason };
 
@@ -82,44 +83,27 @@ export function findBackfillProvenance(rows, criteria) {
   return findBackfillEvidence(rows, criteria);
 }
 
-const PAGE_SIZE = 200;
-const MAX_PAGES = 50;
-
-// 取得上限で見落とさないよう、カーソルで全候補を読み切る
-async function fetchAll(sr, query) {
-  const rows = [];
-  let cursor = null;
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const options = { sort: '-recorded_at', limit: PAGE_SIZE, ...(cursor ? { cursor } : {}) };
-    let result = await sr.ResultProvenance.filter(query, options).catch(() => null);
-    // オプション形式に対応していない場合は従来の位置引数で1回だけ取得する
-    if (result === null) {
-      result = await sr.ResultProvenance.filter(query, '-recorded_at', PAGE_SIZE).catch(() => []);
-    }
-    const items = Array.isArray(result) ? result : (result.items || []);
-    rows.push(...items);
-    const next = Array.isArray(result) ? null : result.next_cursor;
-    if (!next || !result.has_more || !items.length) break;
-    cursor = next;
-  }
-  return rows;
-}
-
+// 対象レースの証跡を全件読み切る。取得が途中で止まった場合は complete=false を返し、
+// 呼び出し側は証跡を使った判定を行わず保留する。
 export async function loadProvenanceByRace(sr, raceIds) {
-  const map = new Map();
+  const byRace = new Map();
   const ids = [...new Set((raceIds || []).filter(Boolean))];
-  if (!ids.length) return map;
-  const rows = await fetchAll(sr, {
-    race_id: { $in: ids },
-    evidence_type: { $in: ['LIVE', 'BACKFILL'] },
-  });
+  if (!ids.length) return { byRace, complete: true };
+  const { rows, complete } = await fetchAllPaged(
+    (query, options) => sr.ResultProvenance.filter(query, options),
+    {
+      race_id: { $in: ids },
+      evidence_type: { $in: ['LIVE', 'BACKFILL'] },
+    },
+    { sort: '-recorded_at' },
+  );
   for (const row of rows) {
     if (!row?.race_id) continue;
-    const list = map.get(row.race_id) || [];
+    const list = byRace.get(row.race_id) || [];
     list.push(row);
-    map.set(row.race_id, list);
+    byRace.set(row.race_id, list);
   }
-  return map;
+  return { byRace, complete };
 }
 
 // 結果の保存時に呼ぶ。同じ記録は増やさない(同時保存で重複した場合は判定側で保留する)

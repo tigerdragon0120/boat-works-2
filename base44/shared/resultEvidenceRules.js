@@ -65,8 +65,10 @@ export function resolveEvidence(rows, { combination, source, resultId, raceId })
 }
 
 // 証跡の状態から保留理由を返す(有効ならnull)
+// incomplete: 証跡を全件読み切れなかった状態(取得が途中で止まった)で、判定できないため保留する
 export function evidenceHoldReason(status) {
   if (status === 'ok') return null;
+  if (status === 'incomplete') return 'PROVENANCE_INCOMPLETE';
   if (status === 'duplicate') return 'PROVENANCE_DUPLICATE';
   if (status === 'backfill') return 'PROVENANCE_BACKFILL';
   return 'PROVENANCE_MISSING';

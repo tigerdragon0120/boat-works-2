@@ -18,8 +18,10 @@
 //   days       race_date未指定時に遡る日数(既定3・最大30)
 //   dry_run    true で書き込みを行わない
 // =====================================================
-import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
+// ページ形式({items, next_cursor, has_more})の取得を使うため 0.8.60 を使用する
+import { createClientFromRequest } from "npm:@base44/sdk@0.8.60";
 import { loadProvenanceByRace } from "../../shared/resultProvenance.js";
+// 証跡は全件取得できない場合に判定を保留する(共有のページ取得処理を使用)
 import { resolveEvidence, evidenceHoldReason } from "../../shared/resultEvidenceRules.js";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
@@ -191,8 +193,11 @@ export default async function(req: Request) {
       if (!previous || (previous.conflict_log && !result.conflict_log)) resultByRace.set(result.race_id, result);
     }
 
-    // 公式取得経路の記録: 結果の取得時に保存された実取得の証跡だけを読む(事後補完は判定に使わない)
-    const provenanceByRace = await loadProvenanceByRace(sr, raceIds);
+    // 公式取得経路の記録: 結果の取得時に保存された実取得の証跡だけを読む(事後補完は判定に使わない)。
+    // 証跡を全件読み切れなかった場合は、証跡に依存する判定を行わず保留する
+    const provenance = await loadProvenanceByRace(sr, raceIds);
+    const provenanceByRace = provenance.byRace;
+    const provenanceComplete = provenance.complete;
 
     // 既存の照合記録は書き換えない。予想1件につき最新の記録だけを「現在の判定」として読む。
     // 判定が変わったときだけ新しい行を追記する(再判定)
@@ -312,6 +317,7 @@ export default async function(req: Request) {
         // 重複した実取得の証跡は削除も採用もしない
         const evidenceHold = evidenceHoldReason(resolvedEvidence.status);
         if (evidenceHold) reasons.push(evidenceHold);
+        if (!provenanceComplete) reasons.push("PROVENANCE_INCOMPLETE");
         if (payout == null) reasons.push("PAYOUT_MISSING");
         if (!tickets.length) reasons.push("TICKETS_MISSING");
       }
@@ -321,7 +327,7 @@ export default async function(req: Request) {
 
       if (reasons.length) {
         const unique = [...new Set(reasons)];
-        const priority = ["RACE_MISMATCH", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PROVENANCE_MISSING", "PROVENANCE_DUPLICATE", "PROVENANCE_BACKFILL", "PAYOUT_MISSING", "TICKETS_MISSING"];
+        const priority = ["RACE_MISMATCH", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PROVENANCE_INCOMPLETE", "PROVENANCE_MISSING", "PROVENANCE_DUPLICATE", "PROVENANCE_BACKFILL", "PAYOUT_MISSING", "TICKETS_MISSING"];
         const primary = priority.find((reason) => unique.includes(reason)) || unique[0];
         const nextStatus = `HELD_${primary}`;
         // 同じ保留のままなら記録を増やさない(補完後に判定が変わったときだけ追記する)
@@ -463,6 +469,7 @@ export default async function(req: Request) {
       rejudged: rejudgedCount,
       new_records: newCount,
       would_write: docs.length,
+      provenance_complete: provenanceComplete,
       snapshot,
       verified,
       held,

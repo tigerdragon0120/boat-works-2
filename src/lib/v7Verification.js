@@ -11,6 +11,7 @@ export const HOLD_LABELS = {
   TIME_CONFLICT: '時刻の矛盾',
   PROVENANCE_MISSING: '公式取得経路の記録なし',
   PROVENANCE_DUPLICATE: '実取得の証跡が重複',
+  PROVENANCE_INCOMPLETE: '証跡の全件取得が未完了',
   PROVENANCE_BACKFILL: '実取得の証跡なし（事後補完のみ）',
   PAYOUT_MISSING: '払戻不足',
   TICKETS_MISSING: '買い目不足',
