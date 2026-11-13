@@ -41,6 +41,17 @@ function dividend(result: any): number | null {
   return Number.isFinite(nested) && nested > 0 ? nested : null;
 }
 
+// DBのcreated_date/updated_dateはオフセットの無いUTC壁時計時刻、
+// Race.deadlineはタイムゾーン付き(例 2026-11-13T20:45:00+09:00)。
+// 実行環境のタイムゾーンに左右されないよう、オフセット無しはUTCとして解釈する。
+function toMs(value: any): number {
+  const raw = String(value ?? "").trim();
+  if (!raw) return NaN;
+  const trimmed = raw.replace(/(\.\d{3})\d+/, "$1");
+  const zoned = /(Z|[+-]\d{2}:?\d{2})$/.test(trimmed) ? trimmed : `${trimmed}Z`;
+  return Date.parse(zoned);
+}
+
 export default async function(req: Request) {
   try {
     const base44 = createClientFromRequest(req);
@@ -70,15 +81,9 @@ export default async function(req: Request) {
     const raceKeys = [...new Set(limited.map((record: any) => record.race_key).filter(Boolean))];
     const hashes = limited.map((record: any) => record.record_hash);
 
-    const [results, verifications, races] = await Promise.all([
-      raceIds.length
-        ? sr.RaceResult.filter({ race_id: { $in: raceIds } }, "-created_date", 2000).catch(() => [])
-        : Promise.resolve([]),
-      sr.PredictionV7Verification.filter({ record_hash: { $in: hashes } }, "-verified_at", 1000).catch(() => []),
-      raceKeys.length
-        ? sr.Race.filter({ race_key: { $in: raceKeys } }, "-created_date", 2000).catch(() => [])
-        : Promise.resolve([]),
-    ]);
+    const races: any[] = raceKeys.length
+      ? await sr.Race.filter({ race_key: { $in: raceKeys } }, "-created_date", 2000).catch(() => [])
+      : [];
 
     // 締切は Race のサーバー保存値だけを信頼する
     const raceByKey = new Map<string, any>();
@@ -87,6 +92,19 @@ export default async function(req: Request) {
       const previous = raceByKey.get(race.race_key);
       if (!previous || (!previous.deadline && race.deadline)) raceByKey.set(race.race_key, race);
     }
+
+    // 予想のrace_idとRaceのidが食い違う(重複Race)場合も結果を拾えるようにする
+    const resultRaceIds = [...new Set([
+      ...raceIds,
+      ...(races || []).map((race: any) => race.id).filter(Boolean),
+    ])];
+
+    const [results, verifications] = await Promise.all([
+      resultRaceIds.length
+        ? sr.RaceResult.filter({ race_id: { $in: resultRaceIds } }, "-created_date", 2000).catch(() => [])
+        : Promise.resolve([]),
+      sr.PredictionV7Verification.filter({ record_hash: { $in: hashes } }, "-verified_at", 1000).catch(() => []),
+    ]);
 
     // 確定結果だけを集計対象にする
     const resultByRace = new Map<string, any>();
@@ -110,6 +128,7 @@ export default async function(req: Request) {
     let skippedLate = 0;
     let skippedModified = 0;
     let skippedNoResult = 0;
+    let skippedNoPayout = 0;
     const docs: any[] = [];
     const startedAt = Date.now();
 
@@ -121,25 +140,30 @@ export default async function(req: Request) {
       if (!race) { skippedNoRace += 1; continue; }
 
       // 1) 締切前のDB保存: DB記録の保存時刻(created_date) < レース締切
-      const savedAt = Date.parse(record.created_date || "");
-      const deadlineMs = Date.parse(race.deadline || "");
+      const savedAt = toMs(record.created_date);
+      const deadlineMs = toMs(race.deadline);
       if (!Number.isFinite(savedAt) || !Number.isFinite(deadlineMs)) { skippedUnverifiable += 1; continue; }
       if (savedAt >= deadlineMs) { skippedLate += 1; continue; }
 
       // 2) 記録の固定: 保存後に書き換えられていないこと
-      const updatedAt = Date.parse(record.updated_date || record.created_date || "");
+      const updatedAt = toMs(record.updated_date || record.created_date);
       if (!Number.isFinite(updatedAt) || updatedAt - savedAt > IMMUTABLE_TOLERANCE_MS) {
         skippedModified += 1;
         continue;
       }
 
       const raceId = record.race_id || race.id;
-      const result = resultByRace.get(raceId);
+      const result = resultByRace.get(record.race_id) || resultByRace.get(race.id);
       if (!result) { skippedNoResult += 1; continue; }
 
+      // 3) 公式の確定着順と払戻が揃っていること(暫定結果では照合を完了させない)
       const combination = String(result.result_trifecta);
-      const actual = combination.split("-").map(Number);
       const payout = dividend(result);
+      if (!COMBO_RE.test(combination) || new Set(combination.split("-")).size !== 3 || payout == null) {
+        skippedNoPayout += 1;
+        continue;
+      }
+      const actual = combination.split("-").map(Number);
 
       const plans: any[] = [];
       for (const [key, plan] of Object.entries(record.plans || {})) {
@@ -210,6 +234,7 @@ export default async function(req: Request) {
       skipped_late: skippedLate,
       skipped_modified: skippedModified,
       skipped_no_result: skippedNoResult,
+      skipped_no_payout: skippedNoPayout,
       completed_at: new Date().toISOString(),
     });
   } catch (error: any) {
