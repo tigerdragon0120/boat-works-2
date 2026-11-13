@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
+import V7SavedServerView from "@/components/liveV7/V7SavedServerView";
 import { liveV7 } from "@/liveV7/runtime";
 import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
@@ -279,6 +280,11 @@ export default function RaceDetail() {
   if (loading) return <div className="py-20 text-center text-slate-500 text-sm">読み込み中…</div>;
   if (!race) return <div className="py-20 text-center text-slate-500">レースが見つかりません</div>;
 
+  // レース終了後は、締切前に保存されたV7予想（BUY判定・買い目）と確定結果を読取専用で表示する
+  const raceDeadlineMs = Date.parse(race.deadline || "");
+  const raceClosed = ["finished", "cancelled"].includes(race.status)
+    || (Number.isFinite(raceDeadlineMs) && Date.now() >= raceDeadlineMs);
+
   // 合成(V6.1)をメイン予想にし、事前予想(PRE)/直前予想(FINAL)をタブで切り替える。
   // 既定は事前予想。直前予想はタブを押した時だけ表示する。
   const effectiveStageTab = stageTab === "FINAL" ? "FINAL" : "PRE";
@@ -345,8 +351,9 @@ export default function RaceDetail() {
         </div>
       )}
 
-      {/* 統合V7試験予想：既存データ読取のみ、購入判定・旧エンジン・履歴を変更しない */}
-      <LiveV7Panel race={race} />
+      {/* 統合V7試験予想：既存データ読取のみ、購入判定・旧エンジン・履歴を変更しない
+          終了後は締切前に保存された予想（判定・買い目）と結果を表示する */}
+      {raceClosed ? <V7SavedServerView race={race} /> : <LiveV7Panel race={race} />}
 
       {/* スプリットレイアウト: 左=予想サマリー / 右=出走表 */}
       <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
