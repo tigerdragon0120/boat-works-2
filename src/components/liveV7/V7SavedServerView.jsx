@@ -1,6 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {base44} from '@/api/base44Client';
-import {findBackfillEvidence,findResultEvidence,evidenceTimeLabel} from '@/lib/resultEvidence';
+import {resolveEvidence,loadRaceEvidence,evidenceTimeLabel} from '@/lib/resultEvidence';
 
 // DBのcreated_dateはオフセットの無いUTC壁時計時刻なので、UTCとして解釈する
 const dbMs=v=>{const raw=String(v??'').trim().replace(/(\.\d{3})\d+/,'$1');if(!raw)return NaN;return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(raw)?raw:`${raw}Z`);};
@@ -49,7 +49,8 @@ export default function V7SavedServerView({race}) {
   Promise.all([
    base44.entities.PredictionV7.filter({race_id:race.id},'-created_date',30),
    base44.entities.RaceResult.filter({race_id:race.id},'-created_date',5).catch(()=>[]),
-   base44.entities.ResultProvenance.filter({race_id:race.id},'-recorded_at',20).catch(()=>[]),
+   // 取得上限の20件で見落とさないよう、対象レースの証跡は全件読み切る
+   loadRaceEvidence(base44.entities.ResultProvenance,race.id).catch(()=>[]),
   ]).then(([saved,results,evidence])=>{if(!active)return;
    setRows(Array.isArray(saved)?saved:[]);
    setResultRows(Array.isArray(results)?results:[]);
@@ -66,9 +67,10 @@ export default function V7SavedServerView({race}) {
  // 有効な払戻(100円あたり1円以上)を確認できたものだけを判定材料にする
  const payoutValue=Number(result?.payout??result?.payouts?.trifecta?.payout);
  const payout=Number.isFinite(payoutValue)&&payoutValue>0?payoutValue:null;
- // 日次照合と同じ条件（実取得の証跡・結果ID必須）で、候補すべてから有効な証跡を探す
- const evidence=result?findResultEvidence(evidenceRows,{combination:result.result_trifecta,source:result.source,resultId:result.id}):null;
- const matched=evidence||(result?findBackfillEvidence(evidenceRows,{combination:result.result_trifecta,source:result.source}):null);
+ // 日次照合と同じ共通条件（実取得の証跡・結果ID・レースID）で、候補すべてから有効な証跡を探す。
+ // 一致が2件以上ある場合は削除も採用もせず保留する
+ const resolution=result?resolveEvidence(evidenceRows,{combination:result.result_trifecta,source:result.source,resultId:result.id,raceId:String(race.id)}):{status:'missing',row:null,count:0};
+ const evidence=resolution.status==='ok'?resolution.row:null;
  // 判定に使うのは「画面に表示している保存予想」(重複なく1件だけの組)のみ。
  // 予想が無い・重複保留の場合は判定せず保留とする
  const shown=['FINAL','PRE'].map(stage=>[stage,valid.filter(r=>r.stage===stage)]).filter(([,list])=>list.length===1);
@@ -76,6 +78,12 @@ export default function V7SavedServerView({race}) {
  // 公式ソース(確定結果)と有効な払戻の両方を確認できた場合に限り的中・不的中を判定する
  const judged=!!combination&&payout!=null&&!!evidence;
  const verdict=!combination?null:!judged||!shown.length?'held':(hitStages.length?'hit':'miss');
+ // 保留の理由(証跡の重複は削除も採用もせず保留する)
+ const holdText=!shown.length?'表示できる保存予想が無いため判定は保留'
+  :resolution.status==='duplicate'?`実取得の証跡が重複しているため判定は保留（${resolution.count}件）`
+  :resolution.status==='backfill'?'実取得の証跡が無いため判定は保留（事後補完のみ）'
+  :resolution.status==='missing'?'公式取得経路の記録を確認できないため判定は保留'
+  :'公式払戻を確認できていないため判定は保留';
 
  return <div className="rounded-xl border-2 border-indigo-200 bg-white p-4 space-y-3">
   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -88,9 +96,7 @@ export default function V7SavedServerView({race}) {
    <p className="font-bold text-rose-900">公式確定結果 三連単 {combination} ／ 払戻 {payout?yen(payout):'未取得'}</p>
    <p className="text-sm text-rose-900">{verdict==='hit'?`表示中の保存予想で的中：${hitStages.join('・')}`
     :verdict==='miss'?'表示中の保存予想は不的中（公式確定結果と照合）'
-    :!evidence?(matched?'実取得の証跡が無いため判定は保留（事後補完のみ）':'公式取得経路の記録を確認できないため判定は保留')
-    :!judged?'公式払戻を確認できていないため判定は保留'
-    :'表示できる保存予想が無いため判定は保留'}</p>
+    :holdText}</p>
    {evidence&&<p className="text-xs text-rose-900">取得経路 {evidence.endpoint||evidence.source} ／ {evidenceTimeLabel(evidence.source)} {evidence.fetched_at||'不明'} ／ 結果ID {evidence.result_id||'不明'}</p>}
   </div>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{resultRows.length?'公式取得元・確定状態・三連単の形式を確認できないため照合は保留です。':'確定結果はまだ取得できていません。結果が入り次第、この画面に反映されます。'}</p>}
 

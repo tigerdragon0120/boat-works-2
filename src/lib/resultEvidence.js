@@ -1,40 +1,80 @@
-// 公式結果の実取得証跡(ResultProvenance)の判定条件。
-// 画面と日次照合(verifyV7Daily)で同じ条件を使う:
-//   実取得(LIVE)・結果ID一致・三連単と取得元の一致・実取得時刻あり
-// 事後補完(BACKFILL)だけの結果は証跡として扱わない。
+// 結果の証跡(ResultProvenance)の取得条件・保留条件。
+// 日次照合(base44/shared/resultEvidenceRules.js)と同じ規則を持つ画面用の写し。
+// 判定に使える証跡: evidence_type=LIVE ・実取得時刻あり・結果ID一致・三連単と取得元一致・レース一致
+// 候補はすべて走査し、一致が2件以上ある場合は削除や恣意的な採用をせず保留する。
 
-const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
-const OFFICIAL_SOURCES = ['BOATCAST', 'LOCAL', 'TXT'];
+export const OFFICIAL_RESULT_SOURCES = ['BOATCAST', 'LOCAL', 'TXT'];
 
-export const validTrifecta = (value) => COMBO_RE.test(String(value ?? '')) && new Set(String(value).split('-')).size === 3;
-export const officialSource = (value) => OFFICIAL_SOURCES.includes(String(value ?? ''));
+export const isValidTrifecta = (value) => {
+  const combo = String(value ?? '');
+  return /^[1-6]-[1-6]-[1-6]$/.test(combo) && new Set(combo.split('-')).size === 3;
+};
 
-// 三連単・取得元が一致する記録(事後補完を含む)
-function findAnyEvidence(rows, { combination, source }) {
-  if (!validTrifecta(combination) || !officialSource(source)) return null;
-  const combo = String(combination);
-  const src = String(source);
-  return (rows || []).find(
-    (row) => String(row?.result_trifecta ?? '') === combo && String(row?.source ?? '') === src,
-  ) || null;
-}
-
-export function findResultEvidence(rows, { combination, source, resultId }) {
-  if (!resultId || !validTrifecta(combination) || !officialSource(source)) return null;
-  const combo = String(combination);
-  const src = String(source);
-  const id = String(resultId);
-  return (rows || []).find((row) => String(row?.evidence_type ?? '') === 'LIVE'
-    && String(row?.result_trifecta ?? '') === combo
-    && String(row?.source ?? '') === src
-    && String(row?.result_id ?? '') === id
-    && !!row?.fetched_at) || null;
-}
-
-export function findBackfillEvidence(rows, { combination, source }) {
-  const found = findAnyEvidence(rows, { combination, source });
-  return found && String(found.evidence_type ?? '') === 'BACKFILL' ? found : null;
-}
+export const isOfficialSource = (value) => OFFICIAL_RESULT_SOURCES.includes(String(value ?? ''));
 
 // TXT取込はファイルを取り込んだ時刻を残すため「取込時刻」と表示する
 export const evidenceTimeLabel = (source) => (String(source ?? '') === 'TXT' ? '取込時刻' : '実取得');
+
+const matchesComboSource = (row, combo, src) =>
+  String(row?.result_trifecta ?? '') === combo && String(row?.source ?? '') === src;
+
+// 事後補完(BACKFILL)の記録。判定には使わない(保留理由の切り分けに使う)
+export function findBackfillEvidence(rows, { combination, source }) {
+  if (!isValidTrifecta(combination) || !isOfficialSource(source)) return null;
+  const combo = String(combination);
+  const src = String(source);
+  return (rows || []).find((row) => String(row?.evidence_type ?? '') === 'BACKFILL'
+    && matchesComboSource(row, combo, src)) || null;
+}
+
+// 有効な証跡を判定する。rows は対象レースの証跡(全候補)を渡す。
+//   ok / duplicate / backfill / missing
+export function resolveEvidence(rows, { combination, source, resultId, raceId }) {
+  if (!isValidTrifecta(combination) || !isOfficialSource(source)) {
+    return { status: 'missing', row: null, matches: [], count: 0 };
+  }
+  const combo = String(combination);
+  const src = String(source);
+  const id = resultId ? String(resultId) : null;
+  const race = raceId ? String(raceId) : null;
+
+  const matches = (rows || []).filter((row) => String(row?.evidence_type ?? '') === 'LIVE'
+    && !!row?.fetched_at
+    && matchesComboSource(row, combo, src)
+    && !!id && String(row?.result_id ?? '') === id
+    && (!race || String(row?.race_id ?? '') === race));
+
+  if (matches.length > 1) return { status: 'duplicate', row: null, matches, count: matches.length };
+  if (matches.length === 1) return { status: 'ok', row: matches[0], matches, count: 1 };
+  const backfill = findBackfillEvidence(rows, { combination: combo, source: src });
+  return { status: backfill ? 'backfill' : 'missing', row: null, matches: [], count: 0 };
+}
+
+// 証跡の状態から保留理由を返す(有効ならnull)
+export function evidenceHoldReason(status) {
+  if (status === 'ok') return null;
+  if (status === 'duplicate') return 'PROVENANCE_DUPLICATE';
+  if (status === 'backfill') return 'PROVENANCE_BACKFILL';
+  return 'PROVENANCE_MISSING';
+}
+
+const PAGE_SIZE = 200;
+const MAX_PAGES = 50;
+
+// 取得上限(20件・2000件)で見落とさないよう、カーソルで対象レースの証跡を全件読み切る
+export async function loadRaceEvidence(entity, raceId) {
+  if (!entity || !raceId) return [];
+  const rows = [];
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const result = await entity.filter(
+      { race_id: raceId, evidence_type: { $in: ['LIVE', 'BACKFILL'] } },
+      { sort: '-recorded_at', limit: PAGE_SIZE, ...(cursor ? { cursor } : {}) },
+    );
+    const items = result?.items || [];
+    rows.push(...items);
+    if (!result?.has_more || !result?.next_cursor || !items.length) break;
+    cursor = result.next_cursor;
+  }
+  return rows;
+}

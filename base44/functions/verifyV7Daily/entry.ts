@@ -19,7 +19,8 @@
 //   dry_run    true で書き込みを行わない
 // =====================================================
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
-import { findBackfillProvenance, findProvenanceEvidence, loadProvenanceByRace } from "../../shared/resultProvenance.js";
+import { loadProvenanceByRace } from "../../shared/resultProvenance.js";
+import { resolveEvidence, evidenceHoldReason } from "../../shared/resultEvidenceRules.js";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const TIME_BUDGET_MS = 60000;
@@ -301,18 +302,16 @@ export default async function(req: Request) {
         // 実取得の証跡が結果ID・三連単・取得元と一致することを確認できた結果だけを照合に使う。
         // 事後補完だけの結果は判定保留とする
         const evidenceRows = provenanceByRace.get(race.id) || [];
-        evidence = findProvenanceEvidence(evidenceRows, {
+        const resolvedEvidence = resolveEvidence(evidenceRows, {
           combination: result.result_trifecta,
           source: result.source,
           resultId: result.id,
+          raceId: String(race.id),
         });
-        if (!evidence) {
-          const backfilled = findBackfillProvenance(evidenceRows, {
-            combination: result.result_trifecta,
-            source: result.source,
-          });
-          reasons.push(backfilled ? "PROVENANCE_BACKFILL" : "PROVENANCE_MISSING");
-        }
+        evidence = resolvedEvidence.status === "ok" ? resolvedEvidence.row : null;
+        // 重複した実取得の証跡は削除も採用もしない
+        const evidenceHold = evidenceHoldReason(resolvedEvidence.status);
+        if (evidenceHold) reasons.push(evidenceHold);
         if (payout == null) reasons.push("PAYOUT_MISSING");
         if (!tickets.length) reasons.push("TICKETS_MISSING");
       }
@@ -322,7 +321,7 @@ export default async function(req: Request) {
 
       if (reasons.length) {
         const unique = [...new Set(reasons)];
-        const priority = ["RACE_MISMATCH", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PROVENANCE_MISSING", "PROVENANCE_BACKFILL", "PAYOUT_MISSING", "TICKETS_MISSING"];
+        const priority = ["RACE_MISMATCH", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PROVENANCE_MISSING", "PROVENANCE_DUPLICATE", "PROVENANCE_BACKFILL", "PAYOUT_MISSING", "TICKETS_MISSING"];
         const primary = priority.find((reason) => unique.includes(reason)) || unique[0];
         const nextStatus = `HELD_${primary}`;
         // 同じ保留のままなら記録を増やさない(補完後に判定が変わったときだけ追記する)
