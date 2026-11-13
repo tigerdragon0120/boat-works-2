@@ -13,6 +13,7 @@ import { runAndSavePredictionV3, verifyV3Prediction } from "./predictionServiceV
 import { runAndSavePredictionV31, verifyV31Prediction } from "./predictionServiceV31.js";
 import { runAndSavePredictionV4, verifyV4Prediction } from "./predictionServiceV4.js";
 import { verifyEnsemblePrediction } from "./predictionServiceEnsemble.js";
+import { recordResultProvenance, RESULT_ENDPOINTS } from "./resultProvenance.js";
 
 const VERSION = "v3";
 
@@ -716,6 +717,12 @@ async function saveSingleRaceResult(sr, race, doc) {
   for (const row of after) {
     if (row.id !== canonical.id) await sr.RaceResult.delete(row.id).catch(() => {});
   }
+  // どの公式取得経路から取得した結果かを、結果とセットで記録する(記録失敗は保存を妨げない)
+  await recordResultProvenance(sr, {
+    race,
+    result: canonical,
+    endpoint: RESULT_ENDPOINTS[String(canonical?.source ?? '')] || null,
+  }).catch(() => {});
   return canonical;
 }
 

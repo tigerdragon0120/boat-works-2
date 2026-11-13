@@ -43,14 +43,16 @@ function StageBlock({row,combination,payout,judged}){
 }
 
 export default function V7SavedServerView({race}) {
- const [rows,setRows]=useState([]),[resultRows,setResultRows]=useState([]),[loading,setLoading]=useState(true),[error,setError]=useState(false);
- useEffect(()=>{let active=true;setRows([]);setResultRows([]);setLoading(true);setError(false);
+ const [rows,setRows]=useState([]),[resultRows,setResultRows]=useState([]),[evidenceRows,setEvidenceRows]=useState([]),[loading,setLoading]=useState(true),[error,setError]=useState(false);
+ useEffect(()=>{let active=true;setRows([]);setResultRows([]);setEvidenceRows([]);setLoading(true);setError(false);
   Promise.all([
    base44.entities.PredictionV7.filter({race_id:race.id},'-created_date',30),
    base44.entities.RaceResult.filter({race_id:race.id},'-created_date',5).catch(()=>[]),
-  ]).then(([saved,results])=>{if(!active)return;
+   base44.entities.ResultProvenance.filter({race_id:race.id},'-recorded_at',20).catch(()=>[]),
+  ]).then(([saved,results,evidence])=>{if(!active)return;
    setRows(Array.isArray(saved)?saved:[]);
    setResultRows(Array.isArray(results)?results:[]);
+   setEvidenceRows(Array.isArray(evidence)?evidence:[]);
   }).catch(()=>{if(active)setError(true)}).finally(()=>{if(active)setLoading(false)});
   return()=>{active=false};
  },[race.id]);
@@ -63,12 +65,14 @@ export default function V7SavedServerView({race}) {
  // 有効な払戻(100円あたり1円以上)を確認できたものだけを判定材料にする
  const payoutValue=Number(result?.payout??result?.payouts?.trifecta?.payout);
  const payout=Number.isFinite(payoutValue)&&payoutValue>0?payoutValue:null;
+ // 公式取得経路の記録（ResultProvenance）と三連単・取得元が一致することを確認できた結果だけを照合に使う
+ const evidence=result?evidenceRows.find(p=>String(p.result_trifecta||'')===String(result.result_trifecta||'')&&String(p.source||'')===String(result.source||''))||null:null;
  // 判定に使うのは「画面に表示している保存予想」(重複なく1件だけの組)のみ。
  // 予想が無い・重複保留の場合は判定せず保留とする
  const shown=['FINAL','PRE'].map(stage=>[stage,valid.filter(r=>r.stage===stage)]).filter(([,list])=>list.length===1);
  const hitStages=shown.filter(([,list])=>PLAN_KEYS.some(key=>Array.isArray(list[0].plans?.[key]?.tickets)&&list[0].plans[key].tickets.includes(combination))).map(([stage])=>stage);
  // 公式ソース(確定結果)と有効な払戻の両方を確認できた場合に限り的中・不的中を判定する
- const judged=!!combination&&payout!=null;
+ const judged=!!combination&&payout!=null&&!!evidence;
  const verdict=!combination?null:!judged||!shown.length?'held':(hitStages.length?'hit':'miss');
 
  return <div className="rounded-xl border-2 border-indigo-200 bg-white p-4 space-y-3">
@@ -82,8 +86,10 @@ export default function V7SavedServerView({race}) {
    <p className="font-bold text-rose-900">公式確定結果 三連単 {combination} ／ 払戻 {payout?yen(payout):'未取得'}</p>
    <p className="text-sm text-rose-900">{verdict==='hit'?`表示中の保存予想で的中：${hitStages.join('・')}`
     :verdict==='miss'?'表示中の保存予想は不的中（公式確定結果と照合）'
+    :!evidence?'公式取得経路の記録を確認できないため判定は保留'
     :!judged?'公式払戻を確認できていないため判定は保留'
     :'表示できる保存予想が無いため判定は保留'}</p>
+   {evidence&&<p className="text-xs text-rose-900">取得経路 {evidence.endpoint||evidence.source} ／ 記録 {evidence.recorded_at||'不明'}{evidence.evidence_type==='BACKFILL'?'（保存済み結果から事後補完）':''}</p>}
   </div>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{resultRows.length?'公式取得元・確定状態・三連単の形式を確認できないため照合は保留です。':'確定結果はまだ取得できていません。結果が入り次第、この画面に反映されます。'}</p>}
 
   {loading?<p className="text-sm text-slate-600">取得中…</p>

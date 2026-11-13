@@ -9,6 +9,7 @@ export const HOLD_LABELS = {
   LATE: '締切後の保存',
   DEADLINE_UNKNOWN: '締切不明',
   TIME_CONFLICT: '時刻の矛盾',
+  PROVENANCE_MISSING: '公式取得経路の記録なし',
   PAYOUT_MISSING: '払戻不足',
   TICKETS_MISSING: '買い目不足',
   RACE_MISMATCH: '参照先の不一致',

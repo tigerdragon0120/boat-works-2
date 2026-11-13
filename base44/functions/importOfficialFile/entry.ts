@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { waitUntil } from 'base44:runtime';
 import { upsertRace, upsertEntry, getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
+import { recordResultProvenance, RESULT_ENDPOINTS } from '../../shared/resultProvenance.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -319,14 +320,23 @@ async function processPastResults(base44: any, results: any[]) {
         payout: num(r.payout) || 0,
         is_finished: true,
         finished_at: new Date(raceDate).toISOString(),
+        source: 'TXT',
+        result_status: 'RESULT_FINAL',
       };
+      let savedResult = null;
       if (existingResult && existingResult[0]) {
-        await sr.RaceResult.update(existingResult[0].id, resultDoc);
+        savedResult = await sr.RaceResult.update(existingResult[0].id, resultDoc);
         updated++;
       } else {
-        await sr.RaceResult.create(resultDoc);
+        savedResult = await sr.RaceResult.create(resultDoc);
         created++;
       }
+      // 公式ファイル取込で保存した結果の取得経路を記録する(記録失敗は取込を妨げない)
+      await recordResultProvenance(sr, {
+        race,
+        result: savedResult || resultDoc,
+        endpoint: RESULT_ENDPOINTS.TXT,
+      }).catch(() => {});
       await sr.Race.update(race.id, { status: 'finished' });
       // RacerRaceHistory蓄積
       const entries = r.entries || [];
