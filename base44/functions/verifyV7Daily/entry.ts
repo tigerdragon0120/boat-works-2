@@ -24,7 +24,7 @@ import { loadProvenanceByRace } from "../../shared/resultProvenance.js";
 // 予想・検証記録も全件読み切る(途中で切れると重複した組を見落とすため)
 import { fetchAllPaged } from "../../shared/pagedFetch.js";
 // 証跡は全件取得できない場合に判定を保留する(共有のページ取得処理を使用)
-import { resolveEvidence, evidenceHoldReason } from "../../shared/resultEvidenceRules.js";
+import { resolveEvidence, evidenceHoldReason, distinctResultCombinations, RESULT_CONFLICT_HOLD } from "../../shared/resultEvidenceRules.js";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const TIME_BUDGET_MS = 60000;
@@ -161,7 +161,7 @@ export default async function(req: Request) {
     // 証跡が不足して保留した記録は、あとから公式結果を実取得したときに再判定できるよう、
     // 通常の対象日より前の日も照合し直す。保留は保留のまま維持し、
     // 実取得の証跡が揃って判定が変わったときだけ新しい行を追記する
-    const PROVENANCE_HOLDS = ["HELD_PROVENANCE_MISSING", "HELD_PROVENANCE_BACKFILL", "HELD_PROVENANCE_INCOMPLETE", "HELD_PROVENANCE_DUPLICATE"];
+    const PROVENANCE_HOLDS = ["HELD_PROVENANCE_MISSING", "HELD_PROVENANCE_BACKFILL", "HELD_PROVENANCE_INCOMPLETE", "HELD_PROVENANCE_DUPLICATE", "HELD_RESULT_CONFLICT"];
     const recheckDays = Number.isFinite(Number(body?.recheck_days)) ? Math.min(30, Math.max(1, Number(body.recheck_days))) : 7;
     let recheckDates: string[] = [];
     if (!requestedDate) {
@@ -219,13 +219,22 @@ export default async function(req: Request) {
       ? await sr.RaceResult.filter({ race_id: { $in: raceIds } }, "-created_date", 2000).catch(() => [])
       : [];
 
-    const resultByRace = new Map<string, any>();
+    // 確定結果をレースごとにまとめる。同じレースに異なる三連単の確定結果が複数ある場合は、
+    // 一方を選んで的中・不的中を決めず、判定を保留する
+    const confirmedByRace = new Map<string, any[]>();
     for (const result of results || []) {
       const combination = String(result?.result_trifecta || "");
       if (!COMBO_RE.test(combination) || new Set(combination.split("-")).size !== 3) continue;
       if (!(result?.is_finished === true || result?.result_status === "RESULT_FINAL")) continue;
-      const previous = resultByRace.get(result.race_id);
-      if (!previous || (previous.conflict_log && !result.conflict_log)) resultByRace.set(result.race_id, result);
+      const list = confirmedByRace.get(result.race_id) || [];
+      list.push(result);
+      confirmedByRace.set(result.race_id, list);
+    }
+    const resultByRace = new Map<string, any>();
+    const conflictRaceIds = new Set<string>();
+    for (const [raceId, list] of confirmedByRace) {
+      if (distinctResultCombinations(list).length > 1) { conflictRaceIds.add(raceId); continue; }
+      resultByRace.set(raceId, list[0]);
     }
 
     // 公式取得経路の記録: 結果の取得時に保存された実取得の証跡だけを読む(事後補完は判定に使わない)。
@@ -345,6 +354,9 @@ export default async function(req: Request) {
       }
 
       const result = race ? resultByRace.get(race.id) || null : null;
+      // 矛盾した確定結果があるレースは、どちらかを採用せず保留する
+      const conflict = !!(race && conflictRaceIds.has(race.id));
+      if (conflict) reasons.push(RESULT_CONFLICT_HOLD);
       const tickets = validTickets(record);
       const payout = result ? dividend(result) : null;
       let evidence: any = null;
@@ -375,14 +387,14 @@ export default async function(req: Request) {
 
       if (reasons.length) {
         const unique = [...new Set(reasons)];
-        const priority = ["RACE_MISMATCH", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PROVENANCE_INCOMPLETE", "PROVENANCE_MISSING", "PROVENANCE_DUPLICATE", "PROVENANCE_BACKFILL", "PAYOUT_MISSING", "TICKETS_MISSING"];
+        const priority = ["RACE_MISMATCH", "RESULT_CONFLICT", "DEADLINE_UNKNOWN", "LATE", "TIME_CONFLICT", "PROVENANCE_INCOMPLETE", "PROVENANCE_MISSING", "PROVENANCE_DUPLICATE", "PROVENANCE_BACKFILL", "PAYOUT_MISSING", "TICKETS_MISSING"];
         const primary = priority.find((reason) => unique.includes(reason)) || unique[0];
         const nextStatus = `HELD_${primary}`;
         // 同じ保留のままなら記録を増やさない(補完後に判定が変わったときだけ追記する)
         if (previous && judgmentOf(previous) === nextStatus) { skippedAlready += 1; continue; }
         const doc = heldDoc(record, race, primary, unique, {
-          result_status: result ? result.result_status || null : null,
-          result_finished: !!result,
+          result_status: conflict ? "CONFLICT" : result ? result.result_status || null : null,
+          result_finished: conflict ? false : !!result,
         }, nowIso);
         docs.push(doc);
         latestByHash.set(String(record.record_hash), doc);

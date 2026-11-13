@@ -23,6 +23,17 @@ export const isValidTrifecta = (value) => {
 
 export const isOfficialSource = (value) => OFFICIAL_RESULT_SOURCES.includes(String(value ?? ''));
 
+// 同じレースに異なる三連単の確定結果が複数ある場合の保留理由。
+// 一方を選んで的中・不的中を決めず、判定そのものを保留する
+export const RESULT_CONFLICT_HOLD = 'RESULT_CONFLICT';
+
+// 確定結果の三連単の種類(2種類以上なら矛盾)
+export function distinctResultCombinations(results) {
+  return [...new Set((results || [])
+    .map((row) => String(row?.result_trifecta ?? ''))
+    .filter((combo) => isValidTrifecta(combo)))];
+}
+
 // TXT取込はファイルを取り込んだ時刻を残すため「取込時刻」と表示する
 export const evidenceTimeLabel = (source) => (String(source ?? '') === 'TXT' ? '取込時刻' : '実取得');
 

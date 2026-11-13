@@ -113,7 +113,12 @@ export function createGenerationTrace({
     const known = state.get(key) || previous.get(key);
     // 保存済みの組は、あとから別の理由で上書きしない
     if (known && known.outcome === "SAVED" && outcome !== "SAVED") return;
-    state.set(key, { ...base(race, stage), outcome, reason: reason || null, ...extra });
+    const next = { ...base(race, stage), outcome, reason: reason || null, ...extra };
+    // その回に取得できなかった項目は、既に記録済みの値を消さない(不明で上書きしない)
+    for (const field of ["exhibition_fetched_at", "exhibition_usable", "exhibition_active_boats"]) {
+      if (next[field] == null && known && known[field] != null) next[field] = known[field];
+    }
+    state.set(key, next);
   };
 
   // 前回までに保存された予想を「保存結果」として記録する
@@ -161,6 +166,8 @@ export function createGenerationTrace({
     for (const [key, value] of state) {
       const known = previous.get(key) || null;
       const doc = { ...value, observed_at: observedAt, first_observed_at: known?.first_observed_at || observedAt };
+      // 記録しない項目も空として明示する(前回の値を残さず、次回の比較を安定させる)
+      for (const field of TRACE_FIELDS) if (doc[field] === undefined) doc[field] = null;
       if (!known) { creates.push(doc); continue; }
       if (!TRACE_FIELDS.some((field) => String(known[field] ?? "") !== String(doc[field] ?? ""))) continue;
       updates.push({ id: known.id, ...doc });

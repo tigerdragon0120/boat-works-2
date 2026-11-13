@@ -1,6 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {base44} from '@/api/base44Client';
-import {resolveEvidence,loadRaceEvidence,evidenceTimeLabel} from '@/lib/resultEvidence';
+import {resolveEvidence,loadRaceEvidence,evidenceTimeLabel,distinctResultCombinations} from '@/lib/resultEvidence';
 
 // DBのcreated_dateはオフセットの無いUTC壁時計時刻なので、UTCとして解釈する
 const dbMs=v=>{const raw=String(v??'').trim().replace(/(\.\d{3})\d+/,'$1');if(!raw)return NaN;return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(raw)?raw:`${raw}Z`);};
@@ -63,7 +63,10 @@ export default function V7SavedServerView({race}) {
  const deadline=dbMs(race.deadline);
  const valid=rows.filter(r=>{const t=dbMs(r.created_date);return Number.isFinite(deadline)&&Number.isFinite(t)&&t<deadline});
  // 公式取得元・確定状態・三連単の形式をすべて確認できた結果だけを照合に使う
- const result=resultRows.find(isOfficialResult)||null;
+ const officialResults=resultRows.filter(isOfficialResult);
+ // 同じレースに異なる三連単の確定結果が複数ある場合は、一方を選ばず判定を保留する
+ const resultConflict=distinctResultCombinations(officialResults).length>1;
+ const result=resultConflict?null:(officialResults[0]||null);
  const combination=result?String(result.result_trifecta):null;
  // 有効な払戻(100円あたり1円以上)を確認できたものだけを判定材料にする
  const payoutValue=Number(result?.payout??result?.payouts?.trifecta?.payout);
@@ -94,7 +97,11 @@ export default function V7SavedServerView({race}) {
   </div>
   <p className="text-xs text-slate-600">締切前にDBへ保存されたV7予想（FINAL優先）のBUY判定と買い目を表示します。締切後に新たな予想は作成しません。</p>
 
-  {combination?<div className="rounded-lg border-2 border-rose-400 bg-rose-50 p-3 space-y-1">
+  {resultConflict?<div className="rounded-lg border-2 border-rose-400 bg-rose-50 p-3 space-y-1">
+   <p className="font-bold text-rose-900">公式確定結果が矛盾しています（{distinctResultCombinations(officialResults).join(' / ')}）</p>
+   <p className="text-sm text-rose-900">どちらかを選んで的中・不的中を決めないため、判定は保留です。確定結果が整理されたあとに再照合します。</p>
+  </div>
+  :combination?<div className="rounded-lg border-2 border-rose-400 bg-rose-50 p-3 space-y-1">
    <p className="font-bold text-rose-900">公式確定結果 三連単 {combination} ／ 払戻 {payout?yen(payout):'未取得'}</p>
    <p className="text-sm text-rose-900">{verdict==='hit'?`表示中の保存予想で的中：${hitStages.join('・')}`
     :verdict==='miss'?'表示中の保存予想は不的中（公式確定結果と照合）'

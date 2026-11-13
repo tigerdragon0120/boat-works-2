@@ -16,6 +16,7 @@ export const HOLD_LABELS = {
   PAYOUT_MISSING: '払戻不足',
   TICKETS_MISSING: '買い目不足',
   RACE_MISMATCH: '参照先の不一致',
+  RESULT_CONFLICT: '公式確定結果の矛盾',
 };
 
 export const isNewFormat = (row) => row?.verification_version === NEW_VERSION;
