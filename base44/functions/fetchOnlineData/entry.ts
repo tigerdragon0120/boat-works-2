@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { upsertResultAndVerify, getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
+import { runV7AutoGeneration } from '../../shared/v7AutoGeneration.js';
 import { fetchHtml, parseBeforeInfo, parseResult, parseOdds3t, parseRaceCard, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 
 const num = (v: any) => {
@@ -128,7 +129,21 @@ async function processExhibition(base44: any, race: any, parsed: any) {
   if (parsed.wave_height != null) raceUpdate.wave_height = parsed.wave_height;
   await sr.Race.update(race.id, raceUpdate);
 
-  return { entries_updated: updated, exhibition_ready: realCount >= activeBoatCount, real_exhibition_count: realCount, active_boat_count: activeBoatCount };
+  // 展示データの保存を起点に、V7のFINALを判定する。
+  // 締切・開催状態・二重登録の制御は共通の保存処理(v7PredictionStore)が保存の瞬間に行う。
+  let v7: any = null;
+  if (realCount >= activeBoatCount) {
+    v7 = await runV7AutoGeneration(base44, { race_date: race.race_date, race_keys: [race.race_key] })
+      .catch((e: any) => ({ error: e?.message || String(e) }));
+  }
+
+  return {
+    entries_updated: updated,
+    exhibition_ready: realCount >= activeBoatCount,
+    real_exhibition_count: realCount,
+    active_boat_count: activeBoatCount,
+    v7_final: v7 ? { saved: v7.saved_final ?? 0, reasons: v7.reasons || {} } : null,
+  };
 }
 
 // === オッズデータ処理(決定論的パーサー出力 → OddsSnapshot保存 + FINAL生成) ===

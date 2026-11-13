@@ -8,6 +8,7 @@ import { base44 } from '@/api/base44Client';
 
 const SAVED_KEY = 'BOAT_V7_SYNCED_V1';
 const THROTTLE_MS = 30000;
+const SYNC_BATCH = 100;
 let saved = null;
 let inflight = null;
 let lastRun = 0;
@@ -117,33 +118,19 @@ export function syncV7ToServer(controller, { force = false } = {}) {
       return { saved: 0 };
     }
 
-    // 端末の保存が消えて再送された場合に二重登録しない。
-    // さらに、同じレース・段階の記録がサーバー生成分などで既にある場合は登録しない
-    // (record_hash が違っても race_key × stage は一意に保つ)。
-    const existing = new Set();
-    const existingPairs = new Set();
-    for (let i = 0; i < docs.length; i += 40) {
-      const chunk = docs.slice(i, i + 40);
-      const rows = await base44.entities.PredictionV7
-        .filter({ record_hash: { $in: chunk.map((doc) => doc.record_hash) } }, '-generated_at', 200)
-        .catch(() => []);
-      for (const row of rows || []) existing.add(row.record_hash);
-
-      const keys = [...new Set(chunk.map((doc) => doc.race_key).filter(Boolean))];
-      if (!keys.length) continue;
-      const sameStage = await base44.entities.PredictionV7
-        .filter({ race_key: { $in: keys } }, '-generated_at', 500)
-        .catch(() => []);
-      for (const row of sameStage || []) existingPairs.add(`${row.race_key}::${row.stage}`);
+    // 締切・開催状態・重複の判定はサーバー側の共通保存処理(saveV7Predictions)に委ねる。
+    // 端末は、サーバーが受け付けた(再送不要の)レコードだけを同期済みにする。
+    let savedCount = 0;
+    for (let i = 0; i < docs.length; i += SYNC_BATCH) {
+      const chunk = docs.slice(i, i + SYNC_BATCH);
+      const response = await base44.functions.invoke('saveV7Predictions', { docs: chunk });
+      const result = response?.data || {};
+      savedCount += Number(result.saved || 0);
+      const handled = Array.isArray(result.handled_hashes) ? result.handled_hashes : [];
+      for (const hash of handled) set.add(hash);
     }
-
-    const fresh = docs.filter(
-      (doc) => !existing.has(doc.record_hash) && !existingPairs.has(`${doc.race_key}::${doc.stage}`)
-    );
-    if (fresh.length) await base44.entities.PredictionV7.bulkCreate(fresh);
-    for (const doc of docs) set.add(doc.record_hash);
     remember(set);
-    return { saved: fresh.length };
+    return { saved: savedCount };
   })()
     .catch(() => null)
     .finally(() => {

@@ -18,6 +18,7 @@
 import { buildSnapshot, fingerprintInput } from "./liveV7Snapshot.js";
 import { unifiedV7 } from "./liveV7Unified.js";
 import { digest, raceKey, platformUtc, timeMs } from "./liveV7Time.js";
+import { saveV7Predictions } from "./v7PredictionStore.js";
 
 const DEFAULT_HORIZON_MINUTES = 25;
 const MAX_RACES = 200;
@@ -221,47 +222,21 @@ export async function runV7AutoGeneration(client, options = {}) {
     return { race_date: raceDate, targets: targets.length, saved: 0, saved_pre: 0, saved_final: 0, reasons };
   }
 
-  // === DB書込直前の最終確認 ===
-  // 締切・開催状態・確定結果・重複を、保存する瞬間のDBの値で再検証する。
-  const docKeys = [...new Set(docs.map((doc) => doc.race_key))];
-  const [freshRaces, freshExisting] = await Promise.all([
-    sr.Race.filter({ race_key: { $in: docKeys } }, "-created_date", 2000).catch(() => []),
-    sr.PredictionV7.filter({ race_key: { $in: docKeys } }, "-created_date", 2000).catch(() => []),
-  ]);
-
-  const freshByKey = new Map();
-  for (const race of freshRaces || []) {
-    const previous = freshByKey.get(race.race_key);
-    if (!previous || (!previous.deadline && race.deadline)) freshByKey.set(race.race_key, race);
+  // === 共通の保存処理に委ねる ===
+  // 締切・開催状態・確定結果の確認と、同一レース×段階の原子的な登録制御は、
+  // 端末同期と共通の処理(v7PredictionStore)が保存の瞬間に行う。
+  const writeResult = await saveV7Predictions(client, docs);
+  for (const [key, count] of Object.entries(writeResult.reasons || {})) {
+    reasons[key] = (reasons[key] || 0) + Number(count || 0);
   }
-  const freshPairs = new Set((freshExisting || []).map((row) => pairKey(row.race_key, row.stage)));
-
-  const writeDocs = [];
-  for (const doc of docs) {
-    const fresh = freshByKey.get(doc.race_key);
-    if (!fresh) { bump("race_missing"); continue; }
-    if (["finished", "cancelled"].includes(fresh.status)) { bump("race_closed"); continue; }
-    const deadline = timeMs(fresh.deadline);
-    if (deadline == null || deadline <= Date.now()) { bump("deadline_passed"); continue; }
-    if (confirmedRaceIds.has(fresh.id)) { bump("result_confirmed"); continue; }
-    // 既存の確定記録は書き換えず、そのまま残す
-    if (freshPairs.has(pairKey(doc.race_key, doc.stage))) { bump("duplicate_rejected"); continue; }
-    if (writeDocs.some((row) => pairKey(row.race_key, row.stage) === pairKey(doc.race_key, doc.stage))) {
-      bump("duplicate_rejected");
-      continue;
-    }
-    writeDocs.push(doc);
-  }
-
-  if (writeDocs.length) await sr.PredictionV7.bulkCreate(writeDocs);
 
   return {
     race_date: raceDate,
     horizon_minutes: horizonMinutes,
     targets: targets.length,
-    saved: writeDocs.length,
-    saved_pre: writeDocs.filter((doc) => doc.stage === "PRE").length,
-    saved_final: writeDocs.filter((doc) => doc.stage === "FINAL").length,
+    saved: writeResult.saved,
+    saved_pre: writeResult.saved_pre,
+    saved_final: writeResult.saved_final,
     reasons,
   };
 }
