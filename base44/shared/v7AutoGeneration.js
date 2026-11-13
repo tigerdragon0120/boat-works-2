@@ -22,11 +22,11 @@ import { saveV7Predictions } from "./v7PredictionStore.js";
 import { createGenerationTrace, hasPartialExhibition } from "./v7GenerationTrace.js";
 import { refreshRaceForGeneration } from "./v7RaceRefresh.js";
 import { fetchAllPaged } from "./pagedFetch.js";
+import { loadOfficialResultsByRace } from "./officialResultRead.js";
 
 const DEFAULT_HORIZON_MINUTES = 25;
 const MAX_RACES = 200;
 const TIME_BUDGET_MS = 90000;
-const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 
 function jstToday() {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
@@ -109,7 +109,7 @@ export async function runV7AutoGeneration(client, options = {}) {
     // 同一レース・段階の記録は(生成元が違っても)二重登録しない。
     // 追跡記録にも保存結果を正しく反映するため、同日の予想を全件読む
     fetchAllPaged((query, options) => sr.PredictionV7.filter(query, options), { race_date: raceDate }),
-    sr.RaceResult.filter({ race_id: { $in: ids } }, "-created_date", 1000).catch(() => []),
+    loadOfficialResultsByRace(sr, ids),
     // 追跡記録は診断専用。読めない場合は上書きだけを止める。
     fetchAllPaged((query, options) => sr.V7GenerationTrace.filter(query, options), { race_date: raceDate }),
   ]);
@@ -141,12 +141,9 @@ export async function runV7AutoGeneration(client, options = {}) {
   }
 
   // 確定結果が出たレースは予想を作らない(結果確定後の追記を拒否)
-  const confirmedRaceIds = new Set();
-  for (const result of results || []) {
-    const combination = String((result && result.result_trifecta) || "");
-    const finished = result && (result.is_finished === true || result.result_status === "RESULT_FINAL");
-    if (finished && COMBO_RE.test(combination)) confirmedRaceIds.add(result.race_id);
-  }
+  const confirmedRaceIds = new Set([...results.byRace.entries()]
+    .filter(([, resolution]) => ['ready', 'conflict'].includes(resolution.status))
+    .map(([id]) => id));
 
   // 追跡記録(診断専用): 展示取得時刻・生成開始・失敗理由・保存結果を残す。
   // 予想の生成・保存の判定には使わない
@@ -191,9 +188,10 @@ export async function runV7AutoGeneration(client, options = {}) {
     for (const stage of ["PRE", "FINAL"]) {
       if (takenPairs.has(pairKey(key, stage))) { bump("already"); continue; }
 
-      if (!existing.complete) {
-        bump('prediction_read_unavailable');
-        trace.observe(race, stage, 'UNKNOWN', 'RETRY_REQUIRED', { reason_detail: 'prediction_read_unavailable' });
+      if (!existing.complete || results.byRace.get(race.id)?.status === 'incomplete') {
+        const reason = !existing.complete ? 'prediction_read_unavailable' : 'result_read_incomplete';
+        bump(reason);
+        trace.observe(race, stage, 'UNKNOWN', 'RETRY_REQUIRED', { reason_detail: reason });
         continue;
       }
       // PRE/FINALそれぞれの直前に再取得。失敗・空応答・タイムアウト時は古い値を使わない。
@@ -201,7 +199,8 @@ export async function runV7AutoGeneration(client, options = {}) {
       if (refreshed.status !== 'READY') {
         bump(refreshed.reason);
         trace.observe(refreshed.race || race, stage, refreshed.status, refreshed.status === 'UNKNOWN' ? 'RETRY_REQUIRED' : refreshed.reason,
-          { reason_detail: refreshed.reason, deadline_passed: refreshed.status === 'UNKNOWN' ? null : refreshed.reason === 'deadline_passed' });
+          { reason_detail: refreshed.reason, deadline: refreshed.status === 'UNKNOWN' ? null : refreshed.race.deadline,
+            deadline_passed: refreshed.status === 'UNKNOWN' ? null : refreshed.reason === 'deadline_passed' });
         continue;
       }
       const liveRace = refreshed.race;

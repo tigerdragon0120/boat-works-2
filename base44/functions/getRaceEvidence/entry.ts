@@ -1,6 +1,6 @@
 // =====================================================
 // getRaceEvidence
-// 画面用: 対象レースの結果証跡(ResultProvenance)を全件返す。
+// 画面用: 対象レースの結果証跡と、全確定結果候補を共通処理で読み切った判定を返す。
 // ページ取得は日次照合と同じ共通処理(shared/resultProvenance → shared/pagedFetch)を使い、
 // 例外・想定外の応答・カーソル欠落・ページ上限では complete=false(未完了)を返す。
 // 画面は complete=false を判定に使わず保留とする。

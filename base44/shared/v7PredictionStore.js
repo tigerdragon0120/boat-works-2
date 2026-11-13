@@ -89,6 +89,7 @@ async function readRaceGate(sr, raceKey) {
   const page = await fetchAllPaged((query, options) => sr.Race.filter(query, options), { race_key: raceKey });
   if (!page.complete || page.rows.length !== 1) return { reason: 'race_unconfirmed' };
   const race = page.rows[0];
+  if (!['scheduled', 'pre', 'final', 'finished', 'cancelled'].includes(race.status)) return { reason: 'race_unconfirmed' };
   if (["finished", "cancelled"].includes(race.status)) return { reason: "race_closed" };
   const deadline = timeMs(race.deadline);
   if (deadline == null) return { reason: 'race_unconfirmed' };

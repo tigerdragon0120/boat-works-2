@@ -14,6 +14,7 @@ import { createClientFromRequest } from "npm:@base44/sdk@0.8.60";
 import { acquireLock, releaseLock } from "../../shared/concurrencyLock.js";
 import { runV7AutoGeneration } from "../../shared/v7AutoGeneration.js";
 // 共有モジュール(v7AutoGeneration)を更新した場合はこの関数を再保存して再バンドルする。
+// 監査差分: 生成前再取得のUNKNOWN停止と、保存未確認の再書込禁止を使用する。
 
 export default async function (req: Request): Promise<Response> {
   const base44 = createClientFromRequest(req);

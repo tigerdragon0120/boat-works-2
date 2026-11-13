@@ -8,6 +8,7 @@
 // =====================================================
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.60";
 import { saveV7Predictions as saveShared } from "../../shared/v7PredictionStore.js";
+// 監査差分: 未確認の登録枠は期限切れでも再取得せず、DB再照合だけを行う。
 
 const MAX_DOCS = 120;
 

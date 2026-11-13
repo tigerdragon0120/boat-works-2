@@ -23,7 +23,7 @@ import { createClientFromRequest } from "npm:@base44/sdk@0.8.60";
 import { loadProvenanceByRace } from "../../shared/resultProvenance.js";
 // 予想・検証記録も全件読み切る(途中で切れると重複した組を見落とすため)
 import { fetchAllPaged } from "../../shared/pagedFetch.js";
-// 証跡は全件取得できない場合に判定を保留する(共有のページ取得処理を使用)
+// 証跡・公式確定結果は、画面と共通の全候補取得・未完了保留の規則を使用する
 import { resolveEvidence, evidenceHoldReason } from "../../shared/resultEvidenceRules.js";
 import { loadOfficialResultsByRace } from "../../shared/officialResultRead.js";
 

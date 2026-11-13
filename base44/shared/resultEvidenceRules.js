@@ -40,8 +40,8 @@ export function resolveOfficialResults(rows, { raceId, complete } = {}) {
   if (complete !== true || !Array.isArray(rows)) return incomplete;
   if (rows.some(row => !row?.id || String(row.race_id) !== String(raceId))) return incomplete;
   const finalRows = rows.filter(row => row.is_finished === true || row.result_status === 'RESULT_FINAL');
-  const official = finalRows.filter(row => isOfficialSource(row.source));
-  if (official.some(row => !isValidTrifecta(row.result_trifecta))) return incomplete;
+  if (finalRows.some(row => !isOfficialSource(row.source) || !isValidTrifecta(row.result_trifecta))) return incomplete;
+  const official = finalRows;
   const combinations = distinctResultCombinations(official);
   if (combinations.length > 1) return { status: 'conflict', result: null, combinations, hold_reason: RESULT_CONFLICT_HOLD };
   return { status: official.length ? 'ready' : 'missing', result: official[0] || null, combinations, hold_reason: null };
