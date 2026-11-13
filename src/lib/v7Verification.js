@@ -102,9 +102,8 @@ const raceTime = (value) => {
   return Date.parse(/(Z|[+-]\d{2}:?\d{2})$/.test(raw) ? raw : `${raw}Z`);
 };
 
-// 同一レース×段階は、最初に保存された1件だけを代表とする。
-// 後から保存された重複(後発の重複)は集計から除外する
-export function splitRepresentatives(predictions) {
+// レース×段階ごとにまとめる。2件以上ある組は、最初の1件も含めて全件を重複保留として扱う
+export function groupPredictions(predictions) {
   const groups = new Map();
   for (const row of predictions || []) {
     if (!row?.record_hash || !row?.race_key || !row?.stage) continue;
@@ -113,14 +112,7 @@ export function splitRepresentatives(predictions) {
     list.push(row);
     groups.set(key, list);
   }
-  const representatives = [];
-  const duplicates = [];
-  for (const list of groups.values()) {
-    const ordered = [...list].sort(rowOrder);
-    representatives.push(ordered[0]);
-    duplicates.push(...ordered.slice(1));
-  }
-  return { groups: groups.size, representatives, duplicates };
+  return groups;
 }
 
 // 予想1件につき最新の照合記録だけを現在の判定として採用する(再判定は追記されるため)
@@ -135,9 +127,10 @@ export function latestPerRecord(rows) {
   return map;
 }
 
-// 画面の4件数(未保存・未検証・保留・有効検証)を照合処理と同じ条件で数える
+// 画面の4件数(未保存・未検証・保留・有効検証)を照合処理と同じ条件で数える。
+// 数えるのはレース×段階の組(2件以上ある組は重複保留1組として数える)
 export function reconcileV7({ predictions = [], verifications = [], races = [] }) {
-  const { groups, representatives, duplicates } = splitRepresentatives(predictions);
+  const groups = groupPredictions(predictions);
   const latest = latestPerRecord(verifications);
   const now = Date.now();
   const closed = (races || []).filter((race) => race?.status !== 'cancelled'
@@ -148,8 +141,20 @@ export function reconcileV7({ predictions = [], verifications = [], races = [] }
   const holds = {};
   const rows = [];
   let verified = 0, held = 0, unverified = 0, legacy = 0;
-  for (const representative of representatives) {
-    const row = latest.get(representative.record_hash) || null;
+  let duplicateGroups = 0, duplicateRecords = 0, singleGroups = 0;
+
+  for (const list of groups.values()) {
+    const ordered = [...list].sort(rowOrder);
+    // 2件以上ある組は代表を決めず、全件を的中率・回収率から除外する
+    if (ordered.length > 1) {
+      duplicateGroups++;
+      duplicateRecords += ordered.length;
+      held++;
+      holds.DUPLICATE = (holds.DUPLICATE || 0) + 1;
+      continue;
+    }
+    singleGroups++;
+    const row = latest.get(ordered[0].record_hash) || null;
     const status = judgmentOf(row);
     if (!row) { unverified++; continue; }
     if (status === 'VERIFIED') { verified++; rows.push(row); continue; }
@@ -163,9 +168,10 @@ export function reconcileV7({ predictions = [], verifications = [], races = [] }
   return {
     closedRaces: closed.length,
     records: predictions.length,
-    groups,
-    representatives: representatives.length,
-    laterDuplicates: duplicates.length,
+    groups: groups.size,
+    singleGroups,
+    duplicateGroups,
+    duplicateRecords,
     verified,
     held,
     unverified,

@@ -222,7 +222,8 @@ export default async function(req: Request) {
     const heldByReason: Record<string, number> = {};
     let verified = 0;
     let heldCount = 0;
-    let laterDuplicates = 0;
+    let duplicateGroups = 0;
+    let duplicateRecords = 0;
     let rejudgedCount = 0;
     let skippedAlready = 0;
     let skippedNotReady = 0;
@@ -232,32 +233,39 @@ export default async function(req: Request) {
 
     for (const list of groups.values()) {
       if (Date.now() - startedAt > TIME_BUDGET_MS) { timedOut = true; break; }
-      // 集計単位: レース×段階ごとの代表=最初に保存された1件。後発の重複は代表にしない
+      // 集計単位: レース×段階。2件以上ある場合は最初の1件も含めて全件を重複保留とする
       const ordered = [...list].sort(rowOrder);
       const record = ordered[0];
-      const duplicates = ordered.slice(1);
       const raceRows = raceRowsByKey.get(record.race_key) || [];
       const resolved = resolveRace(raceRows, record);
       const race = resolved.race || null;
       const hashes = ordered.map((row: any) => String(row.record_hash));
 
-      // 1) 後発の重複は DUPLICATE として記録し、的中率・回収率の分子分母から除外する
-      for (const extra of duplicates) {
-        const hash = String(extra.record_hash);
-        const known = latestByHash.get(hash) || null;
-        // 既に記録がある行(確定済み・旧方式・既存の保留)は動かさない
-        if (known && !canJudgeAgain(known)) continue;
-        const doc = heldDoc(extra, race, "DUPLICATE", ["DUPLICATE"], {
-          duplicate_of: record.record_hash,
-          duplicate_count: ordered.length,
-          duplicate_hashes: hashes.slice(0, 10),
-          result_finished: !!(race ? resultByRace.get(race.id) : null),
-        }, nowIso);
-        docs.push(doc);
-        latestByHash.set(hash, doc);
-        laterDuplicates += 1;
-        bump("DUPLICATE");
-        samples.push({ race_key: record.race_key, stage: record.stage, status: "HELD_DUPLICATE", reasons: ["DUPLICATE"], duplicate_of: record.record_hash });
+      // 1) 重複したレース×段階は全件 DUPLICATE(代表を決めず、的中率・回収率から除外)
+      if (ordered.length > 1) {
+        for (const row of ordered) {
+          const hash = String(row.record_hash);
+          const known = latestByHash.get(hash) || null;
+          const knownStatus = judgmentOf(known);
+          // 旧方式の記録は動かさない。既に重複保留・別理由の保留も増やさない
+          if (known && known.verification_version !== NEW_VERSION) continue;
+          if (knownStatus === "HELD_DUPLICATE") continue;
+          if (knownStatus && knownStatus.startsWith("HELD_")) continue;
+          const doc = heldDoc(row, race, "DUPLICATE", ["DUPLICATE"], {
+            duplicate_count: ordered.length,
+            duplicate_hashes: hashes.slice(0, 10),
+            result_finished: !!(race ? resultByRace.get(race.id) : null),
+          }, nowIso);
+          docs.push(doc);
+          latestByHash.set(hash, doc);
+          duplicateRecords += 1;
+          heldCount += 1;
+          if (known) rejudgedCount += 1;
+          bump("DUPLICATE");
+          samples.push({ race_key: record.race_key, stage: record.stage, status: "HELD_DUPLICATE", reasons: ["DUPLICATE"], duplicate_count: ordered.length });
+        }
+        duplicateGroups += 1;
+        continue;
       }
 
       // 2) 代表の判定。確定済み・回復不能な保留は再判定しない
@@ -306,7 +314,6 @@ export default async function(req: Request) {
         // 同じ保留のままなら記録を増やさない(補完後に判定が変わったときだけ追記する)
         if (previous && judgmentOf(previous) === nextStatus) { skippedAlready += 1; continue; }
         const doc = heldDoc(record, race, primary, unique, {
-          ...(duplicates.length ? { duplicate_count: ordered.length, duplicate_hashes: hashes.slice(0, 10) } : {}),
           result_status: result ? result.result_status || null : null,
           result_finished: !!result,
         }, nowIso);
@@ -375,10 +382,6 @@ export default async function(req: Request) {
         verified_at: nowIso,
       });
       const verifiedDoc = docs[docs.length - 1];
-      if (duplicates.length) {
-        verifiedDoc.duplicate_count = ordered.length;
-        verifiedDoc.duplicate_hashes = hashes.slice(0, 10);
-      }
       latestByHash.set(String(record.record_hash), verifiedDoc);
       if (previous) rejudgedCount += 1;
       verified += 1;
@@ -387,15 +390,23 @@ export default async function(req: Request) {
 
     const held = heldCount;
 
-    // 画面と同じ定義(代表=最初に保存された1件・最新の記録だけを採用)で4件数を数え、
+    // 画面と同じ定義(レース×段階=1組・2件以上は全件保留・最新の記録だけを採用)で4件数を数え、
     // 照合結果と並べて確認できるよう snapshot として返す。
     // 未保存(締切済みで予想が無いレース)はレース単位のため画面側が同じ条件で数える。
-    const representativeHashes = [...groups.values()].map((rows: any[]) =>
-      String([...rows].sort(rowOrder)[0].record_hash));
     const snapshotHolds: Record<string, number> = {};
     let snapshotVerified = 0, snapshotHeld = 0, snapshotUnverified = 0, snapshotLegacy = 0;
-    for (const hash of representativeHashes) {
-      const row = latestByHash.get(hash) || null;
+    let snapshotSingleGroups = 0, snapshotDuplicateGroups = 0, snapshotDuplicateRecords = 0;
+    for (const list of groups.values()) {
+      const ordered = [...list].sort(rowOrder);
+      if (ordered.length > 1) {
+        snapshotDuplicateGroups += 1;
+        snapshotDuplicateRecords += ordered.length;
+        snapshotHeld += 1;
+        snapshotHolds.DUPLICATE = (snapshotHolds.DUPLICATE || 0) + 1;
+        continue;
+      }
+      snapshotSingleGroups += 1;
+      const row = latestByHash.get(String(ordered[0].record_hash)) || null;
       const status = judgmentOf(row);
       if (!status) { snapshotUnverified += 1; continue; }
       if (status === "VERIFIED") { snapshotVerified += 1; continue; }
@@ -407,8 +418,9 @@ export default async function(req: Request) {
     const snapshot = {
       records: limited.length,
       groups: groups.size,
-      representatives: representativeHashes.length,
-      later_duplicates: laterDuplicates,
+      single_groups: snapshotSingleGroups,
+      duplicate_groups: snapshotDuplicateGroups,
+      duplicate_records: snapshotDuplicateRecords,
       verified: snapshotVerified,
       held: snapshotHeld,
       unverified: snapshotUnverified,
@@ -430,7 +442,8 @@ export default async function(req: Request) {
       version: NEW_VERSION,
       records: limited.length,
       groups: groups.size,
-      later_duplicates: laterDuplicates,
+      duplicate_groups: duplicateGroups,
+      duplicate_records: duplicateRecords,
       rejudged: rejudgedCount,
       snapshot,
       verified,

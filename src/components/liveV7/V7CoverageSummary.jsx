@@ -8,26 +8,26 @@ function Tile({ value, unit, label, tone, valueTone }) {
   </div>;
 }
 
-// 画面の4件数。照合処理と同じ集計単位(代表=最初に保存された1件)で数えた値を表示する。
+// 画面の4件数。照合処理と同じ集計単位(レース×段階=1組、2件以上は全件重複保留)で数えた値を表示する。
 export default function V7CoverageSummary({ summary }) {
   if (!summary) return null;
-  const represented = summary.verified + summary.held + summary.unverified + summary.legacy;
+  const checked = summary.verified + summary.held + summary.unverified + summary.legacy;
 
   return <div className="rounded-lg border border-slate-200 p-3 space-y-2">
     <h3 className="text-sm font-semibold text-slate-800">直近3日の保存・検証状況（同一時点）</h3>
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
       <Tile value={summary.unsaved} unit="R" label="未保存（締切済みで予想なし）" tone="bg-slate-50" valueTone="text-slate-900" />
-      <Tile value={summary.unverified} unit="件" label="未検証（照合待ち）" tone="bg-slate-50" valueTone="text-slate-900" />
-      <Tile value={summary.held} unit="件" label="保留（集計除外）" tone="bg-amber-50" valueTone="text-amber-800" />
-      <Tile value={summary.verified} unit="件" label="有効検証" tone="bg-emerald-50" valueTone="text-emerald-700" />
+      <Tile value={summary.unverified} unit="組" label="未検証（照合待ち）" tone="bg-slate-50" valueTone="text-slate-900" />
+      <Tile value={summary.held} unit="組" label="保留（集計除外）" tone="bg-amber-50" valueTone="text-amber-800" />
+      <Tile value={summary.verified} unit="組" label="有効検証" tone="bg-emerald-50" valueTone="text-emerald-700" />
     </div>
     <p className="text-[11px] text-slate-600">
-      代表{summary.representatives}件 ＝ 有効検証{summary.verified} ＋ 保留{summary.held} ＋ 未検証{summary.unverified}{summary.legacy ? ` ＋ 旧方式${summary.legacy}` : ''}（合計{represented}件）
+      照合対象{summary.groups}組 ＝ 有効検証{summary.verified} ＋ 保留{summary.held} ＋ 未検証{summary.unverified}{summary.legacy ? ` ＋ 旧方式${summary.legacy}` : ''}（合計{checked}組）
       <br />
-      予想{summary.records}件 ＝ 代表{summary.representatives}件 ＋ 後発の重複{summary.laterDuplicates}件（後発の重複は集計から除外）
+      重複保留 {summary.duplicateGroups}組（{summary.duplicateRecords}件）は代表を決めず全件を集計から除外（予想{summary.records}件）
     </p>
     {summary.holds.length > 0 && <p className="text-xs text-slate-600">
-      保留内訳: {summary.holds.map(([key, value]) => `${HOLD_LABELS[key] || key} ${value}件`).join(' / ')}
+      保留内訳: {summary.holds.map(([key, value]) => `${HOLD_LABELS[key] || key} ${value}組`).join(' / ')}
     </p>}
   </div>;
 }
