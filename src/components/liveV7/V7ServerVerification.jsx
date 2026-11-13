@@ -10,6 +10,36 @@ import V7CurrentStats from '@/components/liveV7/V7CurrentStats';
 import V7LegacyStats from '@/components/liveV7/V7LegacyStats';
 import V7DryRunPanel from '@/components/liveV7/V7DryRunPanel';
 
+const PAGE_SIZE = 200;
+
+async function loadAllRows(entity, query) {
+  const rows = [];
+  const seenCursors = new Set();
+  let cursor;
+
+  while (true) {
+    const page = await entity.filter(query, {
+      sort: '-created_date',
+      limit: PAGE_SIZE,
+      ...(cursor ? { cursor } : {}),
+    });
+    if (!Array.isArray(page?.items) || typeof page.has_more !== 'boolean') {
+      throw new Error('Invalid page response');
+    }
+    rows.push(...page.items);
+    const next = page.next_cursor;
+    if (!page.has_more) {
+      if (next != null && next !== '') throw new Error('Unexpected next cursor');
+      return rows;
+    }
+    if (typeof next !== 'string' || !next.trim() || !page.items.length || seenCursors.has(next)) {
+      throw new Error('Invalid next cursor');
+    }
+    seenCursors.add(next);
+    cursor = next;
+  }
+}
+
 export default function V7ServerVerification() {
   const [state, setState] = useState(null);
   const [error, setError] = useState(null);
@@ -19,26 +49,18 @@ export default function V7ServerVerification() {
 
   useEffect(() => {
     let cancelled = false;
-    const coverageDates = [jstDate(0), jstDate(-1), jstDate(-2)];
-    const since = jstDate(-30);
+    // JSTの当日を含む30暦日を、すべての集計で共通に使う。
+    const period = { race_date: { $gte: jstDate(-29), $lte: jstDate(0) } };
     Promise.all([
-      base44.entities.Race.filter({ race_date: { $in: coverageDates } }, '-created_date', 2000),
-      base44.entities.PredictionV7.filter({ race_date: { $gte: since } }, '-created_date', 3000),
-      base44.entities.PredictionV7Verification.filter({ race_date: { $gte: since } }, '-verified_at', 3000),
+      loadAllRows(base44.entities.Race, period),
+      loadAllRows(base44.entities.PredictionV7, period),
+      loadAllRows(base44.entities.PredictionV7Verification, period),
     ]).then(([races, predictions, verifications]) => {
       if (cancelled) return;
-      const allPredictions = predictions || [];
-      const allVerifications = verifications || [];
-      const month = reconcileV7({ predictions: allPredictions, verifications: allVerifications });
-      setState({
-        coverage: reconcileV7({
-          predictions: allPredictions.filter((row) => coverageDates.includes(row.race_date)),
-          verifications: allVerifications,
-          races: races || [],
-        }),
-        month,
-      });
-    }).catch((e) => { if (!cancelled) setError(e?.message || String(e)); });
+      setState(reconcileV7({ races, predictions, verifications }));
+    }).catch(() => {
+      if (!cancelled) setError('直近30日分を全件取得できなかったため、件数と成績の表示を保留しています。');
+    });
     return () => { cancelled = true; };
   }, []);
 
@@ -52,13 +74,13 @@ export default function V7ServerVerification() {
       <label>方式 <select className="min-h-11 border rounded px-2" value={mode} onChange={(e) => setMode(e.target.value)}><option value="hit">的中率優先</option><option value="value">回収率優先</option></select></label>
       <label>点数 <select className="min-h-11 border rounded px-2" value={count} onChange={(e) => setCount(Number(e.target.value))}>{[4, 6, 8, 12].map((n) => <option key={n} value={n}>{n}点</option>)}</select></label>
     </div>
-    {error && <p role="alert" className="text-sm text-red-700">検証データを取得できません：{error}</p>}
+    {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {!state && !error && <p className="text-sm text-slate-600">読み込み中…</p>}
-    {state && <V7CoverageSummary summary={state.coverage} />}
-    {state && <V7DryRunPanel saved={state.coverage} />}
+    {state && <V7CoverageSummary summary={state} />}
+    {state && <V7DryRunPanel saved={state} />}
     {state && <h3 className="text-sm font-semibold text-slate-800">直近30日の成績（重複保留を除く）</h3>}
-    {state && <V7CurrentStats rows={state.month.rows} counts={state.month} stage={stage} mode={mode} count={count} />}
-    {state && <V7LegacyStats rows={state.month.rows} stage={stage} mode={mode} count={count} />}
+    {state && <V7CurrentStats rows={state.rows} counts={state} stage={stage} mode={mode} count={count} />}
+    {state && <V7LegacyStats rows={state.rows} stage={stage} mode={mode} count={count} />}
     <p className="text-xs text-slate-600">各組番100円の仮想計算です。有効検証のみを集計し、保留と重複保留は件数のみ表示します。</p>
   </section>;
 }
