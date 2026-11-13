@@ -38,7 +38,10 @@ export async function fetchAllPaged(fetchPage, query, options = {}) {
     rows.push(...result.items);
     // has_more が欠落・真偽値以外の場合は、続きの有無を判断できないため未完了として扱う
     if (typeof result.has_more !== 'boolean') return { rows, complete: false };
-    if (result.has_more === false) return { rows, complete: true };
+    // 終端のはずなのに次カーソルが同時に返る場合は、続きの有無が確定できないため未完了として扱う
+    if (result.has_more === false) {
+      return { rows, complete: !result.next_cursor };
+    }
     // 続きがあるのにカーソルが無い・空ページの場合は読み切れていない
     if (!result.next_cursor || !result.items.length) return { rows, complete: false };
     cursor = result.next_cursor;
