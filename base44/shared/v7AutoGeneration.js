@@ -246,8 +246,8 @@ export async function runV7AutoGeneration(client, options = {}) {
   }
 
   if (!docs.length) {
-    await trace.flush(sr);
-    return { race_date: raceDate, targets: targets.length, saved: 0, saved_pre: 0, saved_final: 0, reasons };
+    const traced = await trace.flush(sr);
+    return { race_date: raceDate, targets: targets.length, saved: 0, saved_pre: 0, saved_final: 0, traced: traced.tracked, reasons };
   }
 
   // === 共通の保存処理に委ねる ===

@@ -28,13 +28,21 @@ export function hasPartialExhibition(entries, race) {
   return usable.length >= 3 && new Set(usable.map((e) => Number(e.exhibition_course))).size === usable.length;
 }
 
+// 出走表(展示値)の最終更新時刻。オフセットの無い値はUTC壁時計として扱う
+function latestEntryUpdate(entries) {
+  if (!Array.isArray(entries)) return null;
+  const latest = entries.map((entry) => String(entry?.updated_date || "")).filter(Boolean).sort().pop() || null;
+  if (!latest) return null;
+  return /(Z|[+-]\d{2}:?\d{2})$/.test(latest) ? latest : `${latest}Z`;
+}
+
 function exhibitionInfoFor(race, entries, logs) {
   // 出走表を読んでいないレースは「展示が無い」ではなく「未確認(null)」として残す
   const known = Array.isArray(entries);
   const scratched = new Set((race && race.scratched_boats ? race.scratched_boats : []).map(Number));
   const active = (entries || []).filter((e) => !e.is_absent && !e.is_scratched && !scratched.has(Number(e.boat_number)));
   const fetched = (logs || [])
-    .filter((log) => log && log.fetch_type === "exhibition"
+    .filter((log) => log && log.fetch_type === "exhibition" && (!log.status || log.status === "success")
       && (!log.venue_code || String(log.venue_code) === String(race.venue_code))
       && (!log.race_number || Number(log.race_number) === Number(race.race_number))
       && (!log.race_id || log.race_id === race.id))
@@ -46,7 +54,8 @@ function exhibitionInfoFor(race, entries, logs) {
     ready: race.exhibition_ready === true,
     usable: known ? hasPartialExhibition(entries, race) : null,
     active_boats: known ? active.length : null,
-    fetched_at: fetched,
+    // 展示取得ログが無い場合でも、出走表(展示値)の最終更新時刻を取得時刻として残す
+    fetched_at: fetched || latestEntryUpdate(entries),
   };
 }
 
@@ -131,7 +140,13 @@ export function createGenerationTrace({
         const key = PAIR(race.race_key, stage);
         if (state.has(key) || previous.get(key)?.outcome === "SAVED") continue;
         if (closed || stopped) {
-          state.set(key, { ...base(race, stage), outcome: "BLOCKED", reason: closed ? "deadline_passed" : "race_closed" });
+          // 締切まで生成できなかった場合は、その時点の理由(展示待ちなど)を残す。
+          // 理由が無い場合だけ deadline_passed とする
+          const carried = previous.get(key)?.reason;
+          const reason = carried && !["outside_horizon", "not_attempted", "race_closed", "deadline_passed"].includes(carried)
+            ? carried
+            : (closed ? "deadline_passed" : "race_closed");
+          state.set(key, { ...base(race, stage), outcome: "BLOCKED", reason });
         } else {
           state.set(key, { ...base(race, stage), outcome: "PENDING", reason: targetIds.has(race.id) ? "not_attempted" : "outside_horizon" });
         }
