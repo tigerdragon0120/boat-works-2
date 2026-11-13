@@ -23,6 +23,8 @@ import { createGenerationTrace, hasPartialExhibition } from "./v7GenerationTrace
 import { refreshRaceForGeneration } from "./v7RaceRefresh.js";
 import { fetchAllPaged } from "./pagedFetch.js";
 import { loadOfficialResultsByRace } from "./officialResultRead.js";
+import { provisionStageClaims } from "./v7StageClaimProvision.js";
+import { acquireLock, releaseLock } from "./concurrencyLock.js";
 
 const DEFAULT_HORIZON_MINUTES = 25;
 const MAX_RACES = 200;
@@ -82,6 +84,22 @@ export async function runV7AutoGeneration(client, options = {}) {
     return deadline - nowMs <= horizonMinutes * 60000;
   }).slice(0, MAX_RACES);
 
+  // 保存には事前登録枠(V7StageClaim)が必要。未来の対象レース×PRE/FINALだけを
+  // 冪等に用意し、作成応答ではなく再読取で1行だけ存在することを確認する。
+  // 作成は登録枠専用のロック内で行い、取得できない場合は確認のみにする(重複作成を避ける)。
+  const claimLockId = targets.length
+    ? await acquireLock(client, `v7_claims_${raceDate}`, "v7StageClaimProvision", 120 * 1000)
+    : null;
+  const claims = targets.length
+    ? await provisionStageClaims(sr, targets, { nowMs, allowCreate: !!claimLockId })
+    : { expected: 0, created: 0, ready: 0, missing: [], duplicate: [], read_complete: true, creation_unconfirmed: 0, readyPairs: new Set() };
+  if (claimLockId) await releaseLock(client, claimLockId);
+  const claimSummary = {
+    expected: claims.expected, created: claims.created, ready: claims.ready,
+    missing: claims.missing.length, duplicate: claims.duplicate.length,
+    read_complete: claims.read_complete, creation_unconfirmed: claims.creation_unconfirmed,
+  };
+
   if (!targets.length) {
     // 生成対象が無い日でも、締切後の組を「生成対象外」として記録に残す
     const [savedPage, idleTraces] = await Promise.all([
@@ -94,7 +112,7 @@ export async function runV7AutoGeneration(client, options = {}) {
     idle.applySavedPredictions(savedPage.rows);
     idle.fillUntouched(new Set());
     await idle.flush(sr);
-    return { race_date: raceDate, targets: 0, saved: 0, saved_pre: 0, saved_final: 0, reasons: {} };
+    return { race_date: raceDate, targets: 0, saved: 0, saved_pre: 0, saved_final: 0, reasons: {}, claims: claimSummary };
   }
 
   const ids = targets.map((race) => race.id);
@@ -188,6 +206,15 @@ export async function runV7AutoGeneration(client, options = {}) {
     for (const stage of ["PRE", "FINAL"]) {
       if (takenPairs.has(pairKey(key, stage))) { bump("already"); continue; }
 
+      // 登録枠が1行に揃っていない組は保存しない(未準備として記録し、次回の実行で再確認する)
+      if (!claims.readyPairs.has(pairKey(key, stage))) {
+        bump("claim_unprepared");
+        trace.observe(race, stage, "BLOCKED", "claim_unprepared", {
+          reason_detail: claims.read_complete ? "登録枠が1行に揃っていません" : "登録枠を読み切れませんでした",
+        });
+        continue;
+      }
+
       if (!existing.complete || results.byRace.get(race.id)?.status === 'incomplete') {
         const reason = !existing.complete ? 'prediction_read_unavailable' : 'result_read_incomplete';
         bump(reason);
@@ -280,7 +307,7 @@ export async function runV7AutoGeneration(client, options = {}) {
 
   if (!docs.length) {
     const traced = await trace.flush(sr);
-    return { race_date: raceDate, targets: targets.length, saved: 0, saved_pre: 0, saved_final: 0, traced: traced.tracked, reasons };
+    return { race_date: raceDate, targets: targets.length, saved: 0, saved_pre: 0, saved_final: 0, traced: traced.tracked, reasons, claims: claimSummary };
   }
 
   // === 共通の保存処理に委ねる ===
@@ -328,5 +355,6 @@ export async function runV7AutoGeneration(client, options = {}) {
     saved_final: writeResult.saved_final,
     traced: traced.tracked,
     reasons,
+    claims: claimSummary,
   };
 }

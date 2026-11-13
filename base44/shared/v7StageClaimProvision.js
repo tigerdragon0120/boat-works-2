@@ -78,7 +78,8 @@ export async function provisionStageClaims(sr, races, { nowMs = Date.now(), allo
   }
 
   // 作成後も必ず全件を読み直す。作成応答は存在の証明にしない
-  const after = await loadClaims(sr, [...expected.keys()]);
+  // (作成していない場合は、直前の読み取り結果をそのまま確認結果として使う)
+  const after = missingKeys.length ? await loadClaims(sr, [...expected.keys()]) : { rows: before.rows, complete: true };
   if (!after.complete) {
     summary.read_complete = false;
     return { ...summary, readyPairs: new Set() };
@@ -90,7 +91,8 @@ export async function provisionStageClaims(sr, races, { nowMs = Date.now(), allo
     if (count === 1) { readyPairs.add(key); summary.ready += 1; continue; }
     if (count > 1) summary.duplicate.push(key); else summary.missing.push(key);
   }
-  summary.created = missingKeys.filter((key) => afterCounts.get(key) === 1).length;
-  summary.creation_unconfirmed = missingKeys.length - summary.created;
+  summary.created = allowCreate ? missingKeys.filter((key) => afterCounts.get(key) === 1).length : 0;
+  // 作成を試みたが再読取で確認できなかった組だけを「作成未確認」とする
+  summary.creation_unconfirmed = allowCreate ? missingKeys.length - summary.created : 0;
   return { ...summary, readyPairs };
 }
