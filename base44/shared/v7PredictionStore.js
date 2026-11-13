@@ -3,9 +3,9 @@
 // サーバー自動生成(SERVER)と端末同期(BROWSER)は、どちらもこの1本を通る。
 //
 //  1. 締切・開催状態・確定結果は「保存する瞬間」のDB値(Race / RaceResult)で確認する
-//  2. 同一レース×段階の登録権(V7StageClaim)は常に1行だけを正とし、
-//     free → writing → written の状態遷移を条件付き書込(CAS)で行う。
-//     状態遷移が成立した1つの呼び出しだけが予想を書き込める
+//  2. 同一レース×段階の事前配置済み登録枠(V7StageClaim)が1行と確認できる場合だけ進む。
+//     free → writing → written の状態遷移を使い、writingを時間だけで再取得しない。
+//     登録枠の欠損・重複・応答不明では新規保存を止める
 //  3. 予想を書き込む直前に、自分の登録権であることを
 //     条件付き書込の成立(所有権の確認)で確かめてから書き込む
 //  4. 応答が消えても増えない: 再送は登録権の状態とDBの予想で判定し、
@@ -122,10 +122,9 @@ async function findPrediction(sr, doc) {
     : { status: "absent", count: 0 };
 }
 
-// 登録権の獲得と再送判定(状態遷移の条件付き書込で原子的に行う)
+// 登録枠の獲得と再送判定。未確認の保存を再試行の新規書込へ戻さない。
 //   acquired      : 自分が書き込む番(1つの呼び出しだけが得る)
-//   already_saved : 同じ要求が既に確定済み(増やさない)
-//   in_flight     : 同じ要求が書き込み中(増やさない)
+//   in_flight     : 書込履歴あり。DBの再照合だけを行う(増やさない)
 //   taken         : 別の要求が登録権を持つ(増やさない)
 async function acquireClaim(sr, doc) {
   const pair = pairOf(doc.race_key, doc.stage);
@@ -205,12 +204,12 @@ export async function saveV7Predictions(client, docs) {
     const pair = pairOf(doc.race_key, doc.stage);
     if (donePairs.has(pair)) { bump("duplicate_rejected"); continue; }
 
-    // 登録権の獲得と再送判定(条件付き書込なので、書き込む番は常に1つだけ)
+    // 事前配置済み登録枠の確認と再送判定
     const claim = await acquireClaim(sr, doc);
     if (claim.status === 'taken') { bump('claim_unconfirmed'); transient.add(doc.record_hash); continue; }
 
     if (claim.status === "in_flight") {
-      // 同じ要求が書き込み中: 予想が入っていれば確定させ、無ければ増やさず次回に回す
+      // 別hash・リース切れも再読取だけ。行が見えなくても未確認のまま増やさない
       const current = await findPrediction(sr, doc);
       if (current.status === "found") {
         if (current.count > 1) { bump('duplicate_detected'); transient.add(doc.record_hash); continue; }

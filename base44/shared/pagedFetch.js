@@ -50,7 +50,10 @@ export async function fetchAllPaged(fetchPage, query, options = {}) {
       ids.add(row.id);
       rows.push(row);
     }
-    if (result.has_more === false) return result.next_cursor ? incomplete('terminal_cursor_invalid') : { rows, complete: true };
+    if (result.has_more === false) {
+      const terminal = result.next_cursor == null || result.next_cursor === '';
+      return terminal ? { rows, complete: true } : incomplete('terminal_cursor_invalid');
+    }
     if (typeof result.next_cursor !== 'string' || !result.next_cursor || !result.items.length || cursors.has(result.next_cursor)) {
       return incomplete('continuation_invalid_or_repeated');
     }

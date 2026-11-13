@@ -110,10 +110,9 @@ export async function runV7AutoGeneration(client, options = {}) {
     // 追跡記録にも保存結果を正しく反映するため、同日の予想を全件読む
     fetchAllPaged((query, options) => sr.PredictionV7.filter(query, options), { race_date: raceDate }),
     sr.RaceResult.filter({ race_id: { $in: ids } }, "-created_date", 1000).catch(() => []),
-    // 追跡記録(診断専用)。無い場合や取得に失敗しても生成は続ける
+    // 追跡記録は診断専用。読めない場合は上書きだけを止める。
     fetchAllPaged((query, options) => sr.V7GenerationTrace.filter(query, options), { race_date: raceDate }),
   ]);
-  if (!traceRows.complete) return { race_date: raceDate, targets: targets.length, saved: 0, reasons: { trace_read_unavailable: 1 } };
 
   const dedupe = (rows) => {
     const map = new Map();
@@ -152,7 +151,7 @@ export async function runV7AutoGeneration(client, options = {}) {
   // 追跡記録(診断専用): 展示取得時刻・生成開始・失敗理由・保存結果を残す。
   // 予想の生成・保存の判定には使わない
   const trace = createGenerationTrace({
-    races, entriesByKey: entriesByRaceKey, logs, traces: traceRows.rows, raceDate, nowMs,
+    races, entriesByKey: entriesByRaceKey, logs, traces: traceRows.rows, raceDate, nowMs, writable: traceRows.complete,
   });
   trace.applySavedPredictions(existing.rows);
   trace.fillUntouched(new Set(targets.map((race) => race.id)));
@@ -286,7 +285,7 @@ export async function runV7AutoGeneration(client, options = {}) {
   }
 
   // === 共通の保存処理に委ねる ===
-  // 締切・開催状態・確定結果の確認と、同一レース×段階の原子的な登録制御は、
+  // 締切・開催状態・確定結果の確認と、同一レース×段階の登録枠の確認は、
   // 端末同期と共通の処理(v7PredictionStore)が保存の瞬間に行う。
   const writeResult = await saveV7Predictions(client, docs).catch(() => ({
     saved: 0, saved_pre: 0, saved_final: 0, reasons: { save_unconfirmed: docs.length },

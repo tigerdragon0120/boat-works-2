@@ -67,7 +67,7 @@ const TRACE_FIELDS = [
 ];
 
 export function createGenerationTrace({
-  races = [], entriesByKey = new Map(), logs = [], traces = [], raceDate = null, nowMs = Date.now(),
+  races = [], entriesByKey = new Map(), logs = [], traces = [], raceDate = null, nowMs = Date.now(), writable = true,
 } = {}) {
   const raceByKey = new Map();
   const exhibition = new Map();
@@ -150,7 +150,7 @@ export function createGenerationTrace({
         const key = PAIR(race.race_key, stage);
         if (state.has(key) || previous.get(key)?.outcome === "SAVED") continue;
         const known = previous.get(key);
-        if (known?.reason === 'save_unconfirmed') {
+        if (known?.reason === 'save_unconfirmed' || (known?.outcome === 'UNKNOWN' && known?.reason === 'RETRY_REQUIRED')) {
           state.set(key, { ...base(race, stage), ...Object.fromEntries(TRACE_FIELDS.map(field => [field, known[field] ?? null])), outcome: 'UNKNOWN' });
           continue;
         }
@@ -171,6 +171,8 @@ export function createGenerationTrace({
 
   // 状態が変わった行だけを書く。記録の失敗で生成を止めない
   const flush = async (sr, observedAt = new Date().toISOString()) => {
+    // 読み切れなかった診断記録を新規作成・別状態で上書きしない。
+    if (!writable) return { created: 0, updated: 0, tracked: 0, unconfirmed: true };
     const creates = [];
     const updates = [];
     for (const [key, value] of state) {
