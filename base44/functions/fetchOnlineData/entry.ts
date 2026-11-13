@@ -1,4 +1,5 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
+// V7の共通取得処理はページ形式({items,next_cursor,has_more})を使うため0.8.60で実行する
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.60';
 import { upsertResultAndVerify, getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 import { runV7AutoGeneration } from '../../shared/v7AutoGeneration.js';
