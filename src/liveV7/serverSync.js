@@ -117,17 +117,29 @@ export function syncV7ToServer(controller, { force = false } = {}) {
       return { saved: 0 };
     }
 
-    // 端末の保存が消えて再送された場合に二重登録しない
+    // 端末の保存が消えて再送された場合に二重登録しない。
+    // さらに、同じレース・段階の記録がサーバー生成分などで既にある場合は登録しない
+    // (record_hash が違っても race_key × stage は一意に保つ)。
     const existing = new Set();
+    const existingPairs = new Set();
     for (let i = 0; i < docs.length; i += 40) {
-      const chunk = docs.slice(i, i + 40).map((doc) => doc.record_hash);
+      const chunk = docs.slice(i, i + 40);
       const rows = await base44.entities.PredictionV7
-        .filter({ record_hash: { $in: chunk } }, '-generated_at', 200)
+        .filter({ record_hash: { $in: chunk.map((doc) => doc.record_hash) } }, '-generated_at', 200)
         .catch(() => []);
       for (const row of rows || []) existing.add(row.record_hash);
+
+      const keys = [...new Set(chunk.map((doc) => doc.race_key).filter(Boolean))];
+      if (!keys.length) continue;
+      const sameStage = await base44.entities.PredictionV7
+        .filter({ race_key: { $in: keys } }, '-generated_at', 500)
+        .catch(() => []);
+      for (const row of sameStage || []) existingPairs.add(`${row.race_key}::${row.stage}`);
     }
 
-    const fresh = docs.filter((doc) => !existing.has(doc.record_hash));
+    const fresh = docs.filter(
+      (doc) => !existing.has(doc.record_hash) && !existingPairs.has(`${doc.race_key}::${doc.stage}`)
+    );
     if (fresh.length) await base44.entities.PredictionV7.bulkCreate(fresh);
     for (const doc of docs) set.add(doc.record_hash);
     remember(set);
