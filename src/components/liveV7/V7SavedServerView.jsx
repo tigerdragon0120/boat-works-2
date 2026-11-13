@@ -9,9 +9,9 @@ export default function V7SavedServerView({race}) {
  const deadline=Date.parse(race.deadline||'');
  const valid=rows.filter(r=>{const t=Date.parse(r.created_date||'');return Number.isFinite(deadline)&&Number.isFinite(t)&&t<deadline});
  return <div className="rounded-xl border-2 border-indigo-200 bg-white p-4 space-y-3">
- <h3 className="font-black text-lg">V7・サーバー保存済み予想</h3>
- <p className="text-xs text-slate-600">締切前にDB保存された予想を読み取り専用で表示。締切後に新たな予想は生成しません。</p>
- {loading?<p>取得中…</p>:error?<p role="alert">DB保存履歴を取得できませんでした</p>:['PRE','FINAL'].map(stage=>{
+ <h3 className="font-black text-lg">統合V7・締切前の保存予想（FINAL優先）</h3>
+ <p className="text-xs text-slate-600">展示後のFINALを先頭に、PREを続けて表示します。DBの締切前保存記録のみ読み込み、締切後の予想は作成しません。</p>
+ {loading?<p>取得中…</p>:error?<p role="alert">DB保存履歴を取得できませんでした</p>:['FINAL','PRE'].map(stage=>{
  const matches=valid.filter(r=>r.stage===stage);
  if(matches.length!==1)return <p key={stage} className="rounded-lg bg-amber-50 p-3">{stage}：{matches.length?'重複のため表示保留':'保存済み記録なし'}</p>;
  const r=matches[0],plan=r.plans?.hit_8||r.plans?.hit_6||r.plans?.hit_4;
