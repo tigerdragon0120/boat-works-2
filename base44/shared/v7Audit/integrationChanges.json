@@ -1,0 +1,57 @@
+{
+  "status": "LOCAL_ONLY_NOT_APPLIED",
+  "base_commit": "89ba8ab700710d94e49f7010e7a15f012b7419d7",
+  "warning": "Do not apply automatically. Shared edits redeploy workflow dependencies. This plan needs separate runtime-change approval.",
+  "files": [
+    {
+      "path": "base44/shared/v7AutoGeneration.js",
+      "edits": [
+        {
+          "find": "import { provisionStageClaims } from \"./v7StageClaimProvision.js\";\nimport { acquireLock, releaseLock } from \"./concurrencyLock.js\";",
+          "replace": "import { inspectStageClaims } from \"./v7Audit/v7StageClaimRead.js\";"
+        },
+        {
+          "find": "  // 保存には事前登録枠(V7StageClaim)が必要。未来の対象レース×PRE/FINALだけを\n  // 冪等に用意し、作成応答ではなく再読取で1行だけ存在することを確認する。\n  // 作成は登録枠専用のロック内で行い、取得できない場合は確認のみにする(重複作成を避ける)。\n  const claimLockId = targets.length\n    ? await acquireLock(client, `v7_claims_${raceDate}`, \"v7StageClaimProvision\", 120 * 1000)\n    : null;\n  const claims = targets.length\n    ? await provisionStageClaims(sr, targets, { nowMs, allowCreate: !!claimLockId })\n    : { expected: 0, created: 0, ready: 0, missing: [], duplicate: [], read_complete: true, creation_unconfirmed: 0, readyPairs: new Set() };\n  if (claimLockId) await releaseLock(client, claimLockId);",
+          "replace": "  // 展示保存・定時生成は既存枠を読むだけ。作成・枠用ロック・整理削除を行わない。\n  // 初回作成の一意性は保証しない。管理処理で事前準備し、未準備・重複は安全停止。\n  const claims = await inspectStageClaims(sr, targets, { nowMs });"
+        },
+        {
+          "find": "    read_complete: claims.read_complete, creation_unconfirmed: claims.creation_unconfirmed,\n  };",
+          "replace": "    read_complete: claims.read_complete, creation_unconfirmed: claims.creation_unconfirmed,\n    invalid: claims.invalid.length, uniqueness_guaranteed: false, preparation_mode: 'READ_ONLY',\n  };"
+        },
+        {
+          "find": "          reason_detail: claims.read_complete ? \"登録枠が1行に揃っていません\" : \"登録枠を読み切れませんでした\",",
+          "replace": "          reason_detail: !claims.read_complete ? '登録枠の全件取得が未完了のため安全停止'\n            : claims.duplicate.includes(pairKey(key, stage)) ? '登録枠が重複しているため安全停止'\n            : claims.invalid.includes(pairKey(key, stage)) ? '登録枠の識別・状態が不正のため安全停止'\n            : '登録枠が未準備のため安全停止。管理処理での事前準備が必要',"
+        }
+      ]
+    },
+    {
+      "path": "base44/shared/v7StageClaimProvision.js",
+      "replacement": "// 管理用処理専用。生成経路からは呼ばない。初回作成の一意性は保証しない。\nexport { provisionStageClaims } from './v7Audit/v7StageClaimProvision.js';\n"
+    },
+    {
+      "path": "base44/functions/provisionV7StageClaims/entry.ts",
+      "edits": [
+        {
+          "find": "// 未来の対象レース×PRE/FINALの登録枠(V7StageClaim)を、冪等に用意し存在を確認する。",
+          "replace": "// 単一の管理者が事前準備を順次実行する入口。DBで初回作成の一意性は保証しない。"
+        },
+        {
+          "find": "//   dry_run    true で作成せず、確認だけを行う",
+          "replace": "//   dry_run    省略またはtrueでは読取のみ。falseを明示した場合だけ作成候補\n//   single_writer_confirmed true: 管理者が他の準備実行と重ねないことを確認(一意性保証ではない)"
+        },
+        {
+          "find": "import { acquireLock, releaseLock } from \"../../shared/concurrencyLock.js\";\n",
+          "replace": ""
+        },
+        {
+          "find": "    const dryRun = body?.dry_run === true;",
+          "replace": "    const dryRun = body?.dry_run !== false;\n    if (!dryRun && body?.single_writer_confirmed !== true) {\n      return Response.json({ ok: false, error: 'SINGLE_ADMIN_RUN_REQUIRED', uniqueness_guaranteed: false, warning: '管理処理を他の準備実行と重ねず、完了後に次を実行してください' }, { status: 409 });\n    }"
+        },
+        {
+          "find": "    const lockId = dryRun ? null : await acquireLock(base44, `v7_claims_${raceDate}`, \"provisionV7StageClaims\", 2 * 60 * 1000);\n    if (!dryRun && !lockId) {\n      return Response.json({ ok: true, race_date: raceDate, skipped: \"locked\" });\n    }\n    try {\n      const result = await provisionStageClaims(sr, races, { allowCreate: !dryRun });\n      return Response.json({\n        ok: true,\n        race_date: raceDate,\n        dry_run: dryRun,\n        races: races.length,\n        expected: result.expected,\n        created: result.created,\n        ready: result.ready,\n        missing: result.missing.length,\n        duplicate: result.duplicate.length,\n        read_complete: result.read_complete,\n        creation_unconfirmed: result.creation_unconfirmed,\n        missing_sample: result.missing.slice(0, 10),\n        duplicate_sample: result.duplicate.slice(0, 10),\n      });\n    } finally {\n      if (lockId) await releaseLock(base44, lockId);\n    }",
+          "replace": "    const result = await provisionStageClaims(sr, races, {\n      allowCreate: !dryRun, singleWriterConfirmed: body?.single_writer_confirmed === true,\n    });\n    const { readyPairs, ...summary } = result;\n    return Response.json({\n      ...summary, ok: result.all_ready, blocked: !result.all_ready,\n      race_date: raceDate, dry_run: dryRun, races: races.length,\n      missing: result.missing.length, duplicate: result.duplicate.length, invalid: result.invalid.length,\n      missing_sample: result.missing.slice(0, 10), duplicate_sample: result.duplicate.slice(0, 10),\n      invalid_sample: result.invalid.slice(0, 10),\n    });"
+        }
+      ]
+    }
+  ]
+}
