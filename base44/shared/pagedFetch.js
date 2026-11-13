@@ -36,7 +36,9 @@ export async function fetchAllPaged(fetchPage, query, options = {}) {
     // ページ形式でない応答は、読み切れたか判断できないため未完了として扱う
     if (isUnexpectedResponse(result)) return { rows, complete: false };
     rows.push(...result.items);
-    if (result.has_more !== true) return { rows, complete: true };
+    // has_more が欠落・真偽値以外の場合は、続きの有無を判断できないため未完了として扱う
+    if (typeof result.has_more !== 'boolean') return { rows, complete: false };
+    if (result.has_more === false) return { rows, complete: true };
     // 続きがあるのにカーソルが無い・空ページの場合は読み切れていない
     if (!result.next_cursor || !result.items.length) return { rows, complete: false };
     cursor = result.next_cursor;
