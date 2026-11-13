@@ -290,7 +290,7 @@ async function processRacerData(base44: any, racers: any[]) {
 }
 
 // === 過去成績取込処理 ===
-async function processPastResults(base44: any, results: any[]) {
+async function processPastResults(base44: any, results: any[], fetchedAt: string) {
   const sr = base44.asServiceRole.entities;
   let created = 0, updated = 0, skipped = 0, errors = 0;
   for (const r of results) {
@@ -336,6 +336,7 @@ async function processPastResults(base44: any, results: any[]) {
         race,
         result: savedResult || resultDoc,
         endpoint: RESULT_ENDPOINTS.TXT,
+        fetchedAt,
       }).catch(() => {});
       await sr.Race.update(race.id, { status: 'finished' });
       // RacerRaceHistory蓄積
@@ -445,7 +446,7 @@ export default async function(req: Request) {
           result = await processRacerData(base44, data.racers || []);
           break;
         case 'past_results':
-          result = await processPastResults(base44, data.results || []);
+          result = await processPastResults(base44, data.results || [], now);
           break;
         case 'motor_boat':
           result = await processMotorBoat(base44, data);

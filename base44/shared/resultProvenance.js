@@ -126,8 +126,11 @@ export async function recordResultProvenance(sr, { race, result, endpoint, evide
   const doc = buildProvenanceDoc(race, result, endpoint, evidenceType, fetchedAt);
   if (!doc) return null;
   const existing = await sr.ResultProvenance
-    .filter({ race_id: race.id, evidence_hash: doc.evidence_hash }, '-recorded_at', 1)
+    .filter({ race_id: race.id, evidence_hash: doc.evidence_hash }, '-recorded_at', 20)
     .catch(() => []);
-  if (existing && existing[0]) return existing[0];
+  // 同じ種類の記録が既にあれば増やさない。旧い事後補完(BACKFILL)は
+  // 新しい実取得(LIVE)の保存を妨げない(種類ごとに重複を判定する)
+  const sameType = (existing || []).find((row) => String(row?.evidence_type ?? '') === doc.evidence_type);
+  if (sameType) return sameType;
   return await sr.ResultProvenance.create(doc);
 }
