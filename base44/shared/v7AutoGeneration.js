@@ -20,12 +20,13 @@ import { unifiedV7 } from "./liveV7Unified.js";
 import { digest, raceKey, platformUtc, timeMs } from "./liveV7Time.js";
 import { saveV7Predictions } from "./v7PredictionStore.js";
 import { createGenerationTrace, hasPartialExhibition } from "./v7GenerationTrace.js";
+import { refreshRaceForGeneration } from "./v7RaceRefresh.js";
+import { fetchAllPaged } from "./pagedFetch.js";
 
 const DEFAULT_HORIZON_MINUTES = 25;
 const MAX_RACES = 200;
 const TIME_BUDGET_MS = 90000;
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
-const TRACE_LIMIT = 1000;
 
 function jstToday() {
   return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
@@ -83,11 +84,14 @@ export async function runV7AutoGeneration(client, options = {}) {
 
   if (!targets.length) {
     // 生成対象が無い日でも、締切後の組を「生成対象外」として記録に残す
-    const idle = createGenerationTrace({ races, raceDate, nowMs });
-    // DBに保存済みの予想を読み戻し、追跡記録の状態を整合させる
-    // (過去にFAILEDで残っていても、DBに記録があれば保存済みとする)
-    const savedRows = await sr.PredictionV7.filter({ race_date: raceDate }, "-created_date", 2000).catch(() => []);
-    idle.applySavedPredictions(savedRows);
+    const [savedPage, idleTraces] = await Promise.all([
+      fetchAllPaged((query, options) => sr.PredictionV7.filter(query, options), { race_date: raceDate }),
+      fetchAllPaged((query, options) => sr.V7GenerationTrace.filter(query, options), { race_date: raceDate }),
+    ]);
+    // 過去の未確認状態を読めなければ、別状態で上書きせず終了する。
+    if (!idleTraces.complete) return { race_date: raceDate, targets: 0, saved: 0, reasons: { trace_read_unavailable: 1 } };
+    const idle = createGenerationTrace({ races, traces: idleTraces.rows, raceDate, nowMs });
+    idle.applySavedPredictions(savedPage.rows);
     idle.fillUntouched(new Set());
     await idle.flush(sr);
     return { race_date: raceDate, targets: 0, saved: 0, saved_pre: 0, saved_final: 0, reasons: {} };
@@ -104,13 +108,12 @@ export async function runV7AutoGeneration(client, options = {}) {
     sr.OnlineFetchLog.filter({ race_date: raceDate }, "-fetched_at", 1000).catch(() => []),
     // 同一レース・段階の記録は(生成元が違っても)二重登録しない。
     // 追跡記録にも保存結果を正しく反映するため、同日の予想を全件読む
-    sr.PredictionV7.filter({ race_date: raceDate }, "-created_date", 2000).catch(() => []),
+    fetchAllPaged((query, options) => sr.PredictionV7.filter(query, options), { race_date: raceDate }),
     sr.RaceResult.filter({ race_id: { $in: ids } }, "-created_date", 1000).catch(() => []),
     // 追跡記録(診断専用)。無い場合や取得に失敗しても生成は続ける
-    (sr.V7GenerationTrace
-      ? sr.V7GenerationTrace.filter({ race_date: raceDate }, "-created_date", TRACE_LIMIT)
-      : Promise.resolve([])).catch(() => []),
+    fetchAllPaged((query, options) => sr.V7GenerationTrace.filter(query, options), { race_date: raceDate }),
   ]);
+  if (!traceRows.complete) return { race_date: raceDate, targets: targets.length, saved: 0, reasons: { trace_read_unavailable: 1 } };
 
   const dedupe = (rows) => {
     const map = new Map();
@@ -149,13 +152,13 @@ export async function runV7AutoGeneration(client, options = {}) {
   // 追跡記録(診断専用): 展示取得時刻・生成開始・失敗理由・保存結果を残す。
   // 予想の生成・保存の判定には使わない
   const trace = createGenerationTrace({
-    races, entriesByKey: entriesByRaceKey, logs, traces: traceRows, raceDate, nowMs,
+    races, entriesByKey: entriesByRaceKey, logs, traces: traceRows.rows, raceDate, nowMs,
   });
-  trace.applySavedPredictions(existing);
+  trace.applySavedPredictions(existing.rows);
   trace.fillUntouched(new Set(targets.map((race) => race.id)));
   const raceByKey = new Map((races || []).map((race) => [race.race_key, race]));
 
-  const takenPairs = new Set((existing || []).map((row) => pairKey(row.race_key, row.stage)));
+  const takenPairs = new Set(existing.rows.map((row) => pairKey(row.race_key, row.stage)));
   const docs = [];
   const reasons = {};
   const bump = (key) => { reasons[key] = (reasons[key] || 0) + 1; };
@@ -172,12 +175,6 @@ export async function runV7AutoGeneration(client, options = {}) {
       continue;
     }
 
-    // 対象選定から生成までの間に締切をまたぐ可能性があるため、エンジンを呼ぶ直前に
-    // Raceを読み直し、サーバー時計と最新の開催状態で再確認する(締切後は事後生成しない)。
-    // 読み直しに失敗しても生成は止めず、選定時の情報とサーバー時計で判定を続ける
-    const currentRace = await sr.Race.get(race.id).catch(() => null);
-    const liveRace = currentRace && currentRace.id ? currentRace : race;
-
     const raceEntries = (entriesByRaceKey.get(race.race_key) || []).map((row) => ({
       ...row, updated_date: platformUtc(row.updated_date),
     }));
@@ -192,25 +189,26 @@ export async function runV7AutoGeneration(client, options = {}) {
       .filter((log) => log.fetch_type === "odds" && timeMs(platformUtc(log.fetched_at)) != null)
       .sort((a, b) => String(b.fetched_at).localeCompare(String(a.fetched_at)));
     const quality = { rows: [{ key: "odds", failed: !!oddsLogs[0] && oddsLogs[0].status !== "success" }] };
-    const normalizedRace = { ...race, updated_date: platformUtc(race.updated_date) };
-
     for (const stage of ["PRE", "FINAL"]) {
       if (takenPairs.has(pairKey(key, stage))) { bump("already"); continue; }
 
-      // エンジンを呼ぶ直前の再確認: 締切・開催状態をサーバー時計で判定する。
-      // 締切を過ぎていたら生成せずBLOCKEDとして記録する
-      const clockMs = Date.now();
-      const liveDeadlineMs = timeMs(liveRace.deadline);
-      const deadlineClosed = liveDeadlineMs != null && liveDeadlineMs <= clockMs;
-      const raceStopped = ["finished", "cancelled"].includes(liveRace.status);
-      if (deadlineClosed || raceStopped) {
-        bump(deadlineClosed ? "deadline_passed" : "race_closed");
-        trace.observe(liveRace, stage, "BLOCKED", deadlineClosed ? "deadline_passed" : "race_closed",
-          deadlineClosed ? { deadline_passed: true } : {});
+      if (!existing.complete) {
+        bump('prediction_read_unavailable');
+        trace.observe(race, stage, 'UNKNOWN', 'RETRY_REQUIRED', { reason_detail: 'prediction_read_unavailable' });
         continue;
       }
-
-      if (stage === "FINAL" && !hasPartialExhibition(raceEntries, race)) {
+      // PRE/FINALそれぞれの直前に再取得。失敗・空応答・タイムアウト時は古い値を使わない。
+      const refreshed = await refreshRaceForGeneration(sr, race);
+      if (refreshed.status !== 'READY') {
+        bump(refreshed.reason);
+        trace.observe(refreshed.race || race, stage, refreshed.status, refreshed.status === 'UNKNOWN' ? 'RETRY_REQUIRED' : refreshed.reason,
+          { reason_detail: refreshed.reason, deadline_passed: refreshed.status === 'UNKNOWN' ? null : refreshed.reason === 'deadline_passed' });
+        continue;
+      }
+      const liveRace = refreshed.race;
+      raceByKey.set(race.race_key, liveRace);
+      const normalizedRace = { ...liveRace, updated_date: platformUtc(liveRace.updated_date) };
+      if (stage === "FINAL" && !hasPartialExhibition(raceEntries, liveRace)) {
         // 出走表を読めていない場合は「展示が無い」と断定せず、理由を不明として区別する
         const unknown = !entriesByRaceKey.has(race.race_key);
         bump(unknown ? "exhibition_unknown" : "waiting_exhibition");
@@ -219,12 +217,23 @@ export async function runV7AutoGeneration(client, options = {}) {
       }
 
       const attemptStartedAt = new Date().toISOString();
+      // 再取得完了後も、エンジン実行時の時計で締切を確認する。
+      if (timeMs(liveRace.deadline) <= Date.now()) {
+        bump('deadline_passed');
+        trace.observe(liveRace, stage, 'BLOCKED', 'deadline_passed', { deadline_passed: true });
+        continue;
+      }
       let snapshot;
       try {
-        snapshot = buildSnapshot({ race: normalizedRace, entries: raceEntries, odds: raceOdds, observedAt: nowIso, quality }, stage);
+        snapshot = buildSnapshot({ race: normalizedRace, entries: raceEntries, odds: raceOdds, observedAt: attemptStartedAt, quality }, stage);
       } catch {
         bump("input_incomplete");
         trace.observe(race, stage, "FAILED", "input_incomplete", { generation_started_at: attemptStartedAt });
+        continue;
+      }
+      if (timeMs(liveRace.deadline) <= Date.now()) {
+        bump('deadline_passed');
+        trace.observe(liveRace, stage, 'BLOCKED', 'deadline_passed', { deadline_passed: true });
         continue;
       }
       const output = unifiedV7(snapshot, stage);
@@ -247,17 +256,17 @@ export async function runV7AutoGeneration(client, options = {}) {
       const doc = {
         record_hash: `server:${key}:${stage}`,
         input_hash: await digest(fingerprintInput(snapshot)),
-        race_id: race.id,
+        race_id: liveRace.id,
         race_key: key,
-        race_date: race.race_date || key.slice(0, 10),
-        venue_code: race.venue_code != null ? String(race.venue_code) : null,
-        race_number: Number.isFinite(Number(race.race_number)) ? Number(race.race_number) : null,
-        series_name: race.series_name || null,
+        race_date: liveRace.race_date || key.slice(0, 10),
+        venue_code: liveRace.venue_code != null ? String(liveRace.venue_code) : null,
+        race_number: Number.isFinite(Number(liveRace.race_number)) ? Number(liveRace.race_number) : null,
+        series_name: liveRace.series_name || null,
         is_womens: output.model === "WOMENS",
         model: output.model,
         stage,
-        generated_at: nowIso,
-        deadline: race.deadline,
+        generated_at: attemptStartedAt,
+        deadline: liveRace.deadline,
         top_combination: top ? top.combination : null,
         top_probability: top ? num(top.probability) : null,
         rank_order: rankOrder(output),
@@ -279,22 +288,20 @@ export async function runV7AutoGeneration(client, options = {}) {
   // === 共通の保存処理に委ねる ===
   // 締切・開催状態・確定結果の確認と、同一レース×段階の原子的な登録制御は、
   // 端末同期と共通の処理(v7PredictionStore)が保存の瞬間に行う。
-  const writeResult = await saveV7Predictions(client, docs);
+  const writeResult = await saveV7Predictions(client, docs).catch(() => ({
+    saved: 0, saved_pre: 0, saved_final: 0, reasons: { save_unconfirmed: docs.length },
+  }));
   for (const [key, count] of Object.entries(writeResult.reasons || {})) {
     reasons[key] = (reasons[key] || 0) + Number(count || 0);
   }
 
-  // 保存結果を追跡記録へ反映する。DBに残った組だけを保存済みとし、
-  // 残らなかった組は保存失敗として理由の内訳とともに残す
+  // 空の再読取は保存失敗の証拠ではない。応答不明時はUNKNOWNを維持する。
   const attemptedKeys = [...new Set(docs.map((doc) => doc.race_key))];
-  // 保存応答が失われた場合でも、DBに残った記録を読み戻して状態を整合させる。
-  // 読み戻せなかった場合は保存失敗と決めつけず「未確認」として残す(次回の実行で照合する)
-  let readbackOk = true;
-  const storedRows = attemptedKeys.length
-    ? await sr.PredictionV7.filter({ race_key: { $in: attemptedKeys } }, "-created_date", 2000)
-      .catch(() => { readbackOk = false; return []; })
-    : [];
-  const storedByPair = new Map((storedRows || []).map((row) => [pairKey(row.race_key, row.stage), row]));
+  const storedPage = await fetchAllPaged(
+    (query, options) => sr.PredictionV7.filter(query, options),
+    { race_key: { $in: attemptedKeys } },
+  );
+  const storedByPair = new Map(storedPage.rows.map((row) => [pairKey(row.race_key, row.stage), row]));
   for (const doc of docs) {
     const race = raceByKey.get(doc.race_key);
     if (!race) continue;
@@ -306,11 +313,9 @@ export async function runV7AutoGeneration(client, options = {}) {
         generation_started_at: doc.generated_at || null,
       });
     } else {
-      trace.observe(race, doc.stage, readbackOk ? "FAILED" : "PENDING", readbackOk ? "save_rejected" : "save_unconfirmed", {
+      trace.observe(race, doc.stage, 'UNKNOWN', 'save_unconfirmed', {
         generation_started_at: doc.generated_at || null,
-        reason_detail: readbackOk
-          ? JSON.stringify(writeResult.reasons || {}).slice(0, 300)
-          : "保存結果を読み戻せず未確認",
+        reason_detail: storedPage.complete ? '再読取で行が未可視。保存失敗とは断定しない' : '再読取未完了。保存結果は未確認',
       });
     }
   }

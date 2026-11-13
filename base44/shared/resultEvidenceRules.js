@@ -34,6 +34,19 @@ export function distinctResultCombinations(results) {
     .filter((combo) => isValidTrifecta(combo)))];
 }
 
+// 公式確定結果の選択はここだけで行う。未完了の候補から代表を選ばない。
+export function resolveOfficialResults(rows, { raceId, complete } = {}) {
+  const incomplete = { status: 'incomplete', result: null, combinations: [], hold_reason: 'RESULT_INCOMPLETE' };
+  if (complete !== true || !Array.isArray(rows)) return incomplete;
+  if (rows.some(row => !row?.id || String(row.race_id) !== String(raceId))) return incomplete;
+  const finalRows = rows.filter(row => row.is_finished === true || row.result_status === 'RESULT_FINAL');
+  const official = finalRows.filter(row => isOfficialSource(row.source));
+  if (official.some(row => !isValidTrifecta(row.result_trifecta))) return incomplete;
+  const combinations = distinctResultCombinations(official);
+  if (combinations.length > 1) return { status: 'conflict', result: null, combinations, hold_reason: RESULT_CONFLICT_HOLD };
+  return { status: official.length ? 'ready' : 'missing', result: official[0] || null, combinations, hold_reason: null };
+}
+
 // TXT取込はファイルを取り込んだ時刻を残すため「取込時刻」と表示する
 export const evidenceTimeLabel = (source) => (String(source ?? '') === 'TXT' ? '取込時刻' : '実取得');
 

@@ -72,14 +72,19 @@ export function evidenceHoldReason(status) {
 // 対象レースの証跡を全件読み切る。ページ取得は日次照合とまったく同じ共通処理(サーバー側)に
 // 任せ、画面はその結果だけを使う。例外・想定外の応答・未完了は complete=false として保留する
 export async function loadRaceEvidence(raceId) {
-  if (!raceId) return { rows: [], complete: false };
+  const incomplete = { rows: [], complete: false, resultResolution: { status: 'incomplete', result: null, combinations: [], hold_reason: 'RESULT_INCOMPLETE' } };
+  if (!raceId) return incomplete;
   try {
     const response = await base44.functions.invoke('getRaceEvidence', { race_id: raceId });
     const data = response?.data;
     // 想定外の応答(失敗・形式違い)は読み切れたか判断できないため未完了として扱う
-    if (!data || data.ok !== true || !Array.isArray(data.rows)) return { rows: [], complete: false };
-    return { rows: data.rows, complete: data.complete === true };
+    if (!data || data.ok !== true || !Array.isArray(data.rows)) return incomplete;
+    const resolution = data.result_resolution;
+    const valid = resolution && ['ready', 'missing', 'conflict', 'incomplete'].includes(resolution.status)
+      && Array.isArray(resolution.combinations)
+      && (resolution.status !== 'ready' || (data.results_complete === true && resolution.result?.id));
+    return { rows: data.rows, complete: data.complete === true, resultResolution: valid ? resolution : incomplete.resultResolution };
   } catch {
-    return { rows: [], complete: false };
+    return incomplete;
   }
 }

@@ -6,7 +6,7 @@
 //   - 同一レース×段階はロックで直列化して1件だけ登録する
 //   - 既存の確定記録は更新しない
 // =====================================================
-import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
+import { createClientFromRequest } from "npm:@base44/sdk@0.8.60";
 import { saveV7Predictions as saveShared } from "../../shared/v7PredictionStore.js";
 
 const MAX_DOCS = 120;

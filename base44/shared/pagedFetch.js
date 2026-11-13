@@ -25,27 +25,37 @@ export async function fetchAllPaged(fetchPage, query, options = {}) {
   const pageSize = options.pageSize || PAGE_SIZE;
   const maxPages = options.maxPages || MAX_PAGES;
   const rows = [];
+  const cursors = new Set();
+  const ids = new Set();
+  const incomplete = (error) => ({ rows, complete: false, error });
   let cursor = null;
   for (let page = 0; page < maxPages; page += 1) {
     let result = null;
+    let timer;
     try {
-      result = await fetchPage(query, { sort, limit: pageSize, ...(cursor ? { cursor } : {}) });
+      result = await Promise.race([
+        fetchPage(query, { sort, limit: pageSize, ...(cursor ? { cursor } : {}) }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('page_timeout')), options.pageTimeoutMs || 10000); }),
+      ]);
     } catch {
-      return { rows, complete: false };
+      return incomplete('page_read_failed_or_timed_out');
+    } finally {
+      clearTimeout(timer);
     }
-    // ページ形式でない応答は、読み切れたか判断できないため未完了として扱う
-    if (isUnexpectedResponse(result)) return { rows, complete: false };
-    rows.push(...result.items);
-    // has_more が欠落・真偽値以外の場合は、続きの有無を判断できないため未完了として扱う
-    if (typeof result.has_more !== 'boolean') return { rows, complete: false };
-    // 終端のはずなのに次カーソルが同時に返る場合は、続きの有無が確定できないため未完了として扱う
-    if (result.has_more === false) {
-      return { rows, complete: !result.next_cursor };
+    if (isUnexpectedResponse(result) || typeof result.has_more !== 'boolean') return incomplete('page_format_invalid');
+    for (const row of result.items) {
+      if (!row || typeof row !== 'object' || Array.isArray(row) || typeof row.id !== 'string' || !row.id || ids.has(row.id)) {
+        return incomplete('page_row_invalid_or_repeated');
+      }
+      ids.add(row.id);
+      rows.push(row);
     }
-    // 続きがあるのにカーソルが無い・空ページの場合は読み切れていない
-    if (!result.next_cursor || !result.items.length) return { rows, complete: false };
+    if (result.has_more === false) return result.next_cursor ? incomplete('terminal_cursor_invalid') : { rows, complete: true };
+    if (typeof result.next_cursor !== 'string' || !result.next_cursor || !result.items.length || cursors.has(result.next_cursor)) {
+      return incomplete('continuation_invalid_or_repeated');
+    }
+    cursors.add(result.next_cursor);
     cursor = result.next_cursor;
   }
-  // ページ上限に達した場合も読み切れていない
-  return { rows, complete: false };
+  return incomplete('page_safety_limit');
 }

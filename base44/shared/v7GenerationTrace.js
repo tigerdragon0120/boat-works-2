@@ -113,6 +113,11 @@ export function createGenerationTrace({
     const known = state.get(key) || previous.get(key);
     // 保存済みの組は、あとから別の理由で上書きしない
     if (known && known.outcome === "SAVED" && outcome !== "SAVED") return;
+    // 保存応答不明は、行が実際に確認できるまで期限到来・再試行失敗で降格させない。
+    if (known?.reason === 'save_unconfirmed' && outcome !== 'SAVED') {
+      state.set(key, { ...base(race, stage), ...Object.fromEntries(TRACE_FIELDS.map(field => [field, known[field] ?? null])), outcome: 'UNKNOWN' });
+      return;
+    }
     const next = { ...base(race, stage), outcome, reason: reason || null, ...extra };
     // その回に取得できなかった項目は、既に記録済みの値を消さない(不明で上書きしない)
     for (const field of ["exhibition_fetched_at", "exhibition_usable", "exhibition_active_boats"]) {
@@ -144,6 +149,11 @@ export function createGenerationTrace({
       for (const stage of ["PRE", "FINAL"]) {
         const key = PAIR(race.race_key, stage);
         if (state.has(key) || previous.get(key)?.outcome === "SAVED") continue;
+        const known = previous.get(key);
+        if (known?.reason === 'save_unconfirmed') {
+          state.set(key, { ...base(race, stage), ...Object.fromEntries(TRACE_FIELDS.map(field => [field, known[field] ?? null])), outcome: 'UNKNOWN' });
+          continue;
+        }
         if (closed || stopped) {
           // 締切まで生成できなかった場合は、その時点の理由(展示待ちなど)を残す。
           // 理由が無い場合だけ deadline_passed とする

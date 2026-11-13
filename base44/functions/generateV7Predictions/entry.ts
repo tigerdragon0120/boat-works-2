@@ -10,7 +10,7 @@
 //   race_keys        明示指定(指定時はそのレースのみ)
 //   force            true でロックを取らずに実行(検証用)
 // =====================================================
-import { createClientFromRequest } from "npm:@base44/sdk@0.8.44";
+import { createClientFromRequest } from "npm:@base44/sdk@0.8.60";
 import { acquireLock, releaseLock } from "../../shared/concurrencyLock.js";
 import { runV7AutoGeneration } from "../../shared/v7AutoGeneration.js";
 // 共有モジュール(v7AutoGeneration)を更新した場合はこの関数を再保存して再バンドルする。

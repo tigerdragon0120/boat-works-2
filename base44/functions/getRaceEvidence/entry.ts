@@ -10,6 +10,7 @@
 // ページ形式({items, next_cursor, has_more})の取得を使うため 0.8.60 を使用する
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.60";
 import { loadProvenanceByRace } from "../../shared/resultProvenance.js";
+import { loadOfficialResultsByRace } from "../../shared/officialResultRead.js";
 
 export default async function(req: Request) {
   try {
@@ -20,8 +21,14 @@ export default async function(req: Request) {
       return Response.json({ ok: false, error: "race_id is required" }, { status: 400 });
     }
 
-    const { byRace, complete } = await loadProvenanceByRace(base44.asServiceRole.entities, [raceId]);
-    return Response.json({ ok: true, rows: byRace.get(raceId) || [], complete });
+    const [evidence, results] = await Promise.all([
+      loadProvenanceByRace(base44.asServiceRole.entities, [raceId]),
+      loadOfficialResultsByRace(base44.asServiceRole.entities, [raceId]),
+    ]);
+    return Response.json({
+      ok: true, rows: evidence.byRace.get(raceId) || [], complete: evidence.complete,
+      result_resolution: results.byRace.get(raceId), results_complete: results.complete,
+    });
   } catch (error: any) {
     console.error("[GET RACE EVIDENCE]", error);
     return Response.json({ ok: false, error: error?.message || String(error) }, { status: 500 });

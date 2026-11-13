@@ -17,6 +17,7 @@ export const HOLD_LABELS = {
   TICKETS_MISSING: '買い目不足',
   RACE_MISMATCH: '参照先の不一致',
   RESULT_CONFLICT: '公式確定結果の矛盾',
+  RESULT_INCOMPLETE: '公式確定結果の全候補取得が未完了',
 };
 
 export const isNewFormat = (row) => row?.verification_version === NEW_VERSION;
