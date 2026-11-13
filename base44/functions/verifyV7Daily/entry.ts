@@ -27,8 +27,6 @@ const MAX_RECORDS = 600;
 const IMMUTABLE_TOLERANCE_MS = 5000;
 const MAX_SAMPLE = 60;
 const NEW_VERSION = "v2";
-// 補完後に判定し直せる保留理由(払戻が入る・締切が入る)。それ以外の保留は動かさない
-const REJUDGEABLE_HOLDS = new Set(["PAYOUT_MISSING", "DEADLINE_UNKNOWN"]);
 
 function jstDateOffset(days: number): string {
   const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
@@ -105,15 +103,11 @@ function judgmentOf(row: any): string | null {
   return "LEGACY";
 }
 
-// 既存の記録がある場合に再判定してよいのは「回復可能な保留」だけ。
-// 確定済み・旧方式・回復不能な保留は動かさない(追記のみの原則を守る)
-function canJudgeAgain(previous: any): boolean {
+// 判定が変わったかどうかだけを見る。最新の記録と同じ判定なら追記しない
+const judgmentChanged = (previous: any, nextStatus: string): boolean => {
   if (!previous) return true;
-  if (previous.verification_version !== NEW_VERSION) return false;
-  const status = judgmentOf(previous);
-  if (!status || !status.startsWith("HELD_")) return false;
-  return REJUDGEABLE_HOLDS.has(String(previous.hold_reason || status.replace(/^HELD_/, "")));
-}
+  return judgmentOf(previous) !== nextStatus;
+};
 
 function heldDoc(record: any, race: any, reason: string, reasons: string[], extra: any, nowIso: string) {
   return {
@@ -225,6 +219,7 @@ export default async function(req: Request) {
     let duplicateGroups = 0;
     let duplicateRecords = 0;
     let rejudgedCount = 0;
+    let newCount = 0;
     let skippedAlready = 0;
     let skippedNotReady = 0;
     let timedOut = false;
@@ -247,10 +242,9 @@ export default async function(req: Request) {
           const hash = String(row.record_hash);
           const known = latestByHash.get(hash) || null;
           const knownStatus = judgmentOf(known);
-          // 旧方式の記録は動かさない。既に重複保留・別理由の保留も増やさない
+          // 旧方式の記録は動かさない。同じ重複保留なら増やさない(別の判定から変わったときだけ追記)
           if (known && known.verification_version !== NEW_VERSION) continue;
-          if (knownStatus === "HELD_DUPLICATE") continue;
-          if (knownStatus && knownStatus.startsWith("HELD_")) continue;
+          if (!judgmentChanged(known, "HELD_DUPLICATE")) continue;
           const doc = heldDoc(row, race, "DUPLICATE", ["DUPLICATE"], {
             duplicate_count: ordered.length,
             duplicate_hashes: hashes.slice(0, 10),
@@ -260,7 +254,7 @@ export default async function(req: Request) {
           latestByHash.set(hash, doc);
           duplicateRecords += 1;
           heldCount += 1;
-          if (known) rejudgedCount += 1;
+          if (known) rejudgedCount += 1; else newCount += 1;
           bump("DUPLICATE");
           samples.push({ race_key: record.race_key, stage: record.stage, status: "HELD_DUPLICATE", reasons: ["DUPLICATE"], duplicate_count: ordered.length });
         }
@@ -268,10 +262,10 @@ export default async function(req: Request) {
         continue;
       }
 
-      // 2) 代表の判定。確定済み・回復不能な保留は再判定しない
-      //    (払戻不足・締切不明は補完後に判定し直す)
+      // 2) 判定。最新の記録と同じ判定なら追記しない(判定が変わったときだけ追記する)
       const previous = latestByHash.get(String(record.record_hash)) || null;
-      if (!canJudgeAgain(previous)) { skippedAlready += 1; continue; }
+      // 旧方式の記録は書き換えない
+      if (previous && previous.verification_version !== NEW_VERSION) { skippedAlready += 1; continue; }
 
       // 理由別の保留判定
       const reasons: string[] = [];
@@ -319,7 +313,7 @@ export default async function(req: Request) {
         }, nowIso);
         docs.push(doc);
         latestByHash.set(String(record.record_hash), doc);
-        if (previous) rejudgedCount += 1;
+        if (previous) rejudgedCount += 1; else newCount += 1;
         heldCount += 1;
         bump(primary);
         samples.push({ race_key: record.race_key, stage: record.stage, status: nextStatus, reasons: unique });
@@ -327,6 +321,8 @@ export default async function(req: Request) {
       }
 
       // 3) 有効検証: 締切前のDB保存・記録固定・確定結果・払戻・買い目がすべて揃っている
+      //    既に有効検証として記録済みなら追記しない
+      if (!judgmentChanged(previous, "VERIFIED")) { skippedAlready += 1; continue; }
       const combination = String(result.result_trifecta);
       const actual = combination.split("-").map(Number);
       const plans: any[] = [];
@@ -383,7 +379,7 @@ export default async function(req: Request) {
       });
       const verifiedDoc = docs[docs.length - 1];
       latestByHash.set(String(record.record_hash), verifiedDoc);
-      if (previous) rejudgedCount += 1;
+      if (previous) rejudgedCount += 1; else newCount += 1;
       verified += 1;
       samples.push({ race_key: record.race_key, stage: record.stage, status: "VERIFIED", reasons: [] });
     }
@@ -445,6 +441,8 @@ export default async function(req: Request) {
       duplicate_groups: duplicateGroups,
       duplicate_records: duplicateRecords,
       rejudged: rejudgedCount,
+      new_records: newCount,
+      would_write: docs.length,
       snapshot,
       verified,
       held,

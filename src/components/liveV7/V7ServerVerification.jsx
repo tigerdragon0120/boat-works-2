@@ -8,6 +8,7 @@ import { jstDate, reconcileV7 } from '@/lib/v7Verification';
 import V7CoverageSummary from '@/components/liveV7/V7CoverageSummary';
 import V7CurrentStats from '@/components/liveV7/V7CurrentStats';
 import V7LegacyStats from '@/components/liveV7/V7LegacyStats';
+import V7DryRunPanel from '@/components/liveV7/V7DryRunPanel';
 
 export default function V7ServerVerification() {
   const [state, setState] = useState(null);
@@ -54,6 +55,7 @@ export default function V7ServerVerification() {
     {error && <p role="alert" className="text-sm text-red-700">検証データを取得できません：{error}</p>}
     {!state && !error && <p className="text-sm text-slate-600">読み込み中…</p>}
     {state && <V7CoverageSummary summary={state.coverage} />}
+    {state && <V7DryRunPanel saved={state.coverage} />}
     {state && <h3 className="text-sm font-semibold text-slate-800">直近30日の成績（重複保留を除く）</h3>}
     {state && <V7CurrentStats rows={state.month.rows} counts={state.month} stage={stage} mode={mode} count={count} />}
     {state && <V7LegacyStats rows={state.month.rows} stage={stage} mode={mode} count={count} />}
