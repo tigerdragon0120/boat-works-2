@@ -1,0 +1,131 @@
+{
+  "name": "PredictionV7Verification",
+  "type": "object",
+  "description": "\u7d71\u5408V7\u306e\u4e88\u60f3\u3092\u78ba\u5b9a\u7d50\u679c\u3068\u7167\u5408\u3057\u305f\u691c\u8a3c\u7d50\u679c\u30021\u4e88\u60f3\u30ec\u30b3\u30fc\u30c9\u306b\u3064\u304d1\u4ef6\u3002",
+  "properties": {
+    "record_hash": {
+      "type": "string",
+      "description": "\u5bfe\u8c61\u306ePredictionV7.record_hash"
+    },
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "model": {
+      "type": "string",
+      "enum": [
+        "OPEN",
+        "WOMENS"
+      ],
+      "enumColors": [
+        "blue",
+        "purple"
+      ]
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL"
+      ],
+      "enumColors": [
+        "gray",
+        "green"
+      ]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u4e88\u60f3\u306e\u751f\u6210\u6642\u523b(\u540c\u4e00\u30ec\u30fc\u30b9\u5185\u306e\u521d\u56de\u4e88\u60f3\u306e\u5224\u5b9a\u306b\u4f7f\u7528)"
+    },
+    "actual_result": {
+      "type": "string",
+      "description": "\u78ba\u5b9a\u3057\u305f\u4e09\u9023\u5358"
+    },
+    "actual_first_boat": {
+      "type": "number"
+    },
+    "top_hit": {
+      "type": "boolean",
+      "description": "\u672c\u547d\u4e09\u9023\u5358\u304c\u7684\u4e2d\u3057\u305f\u304b"
+    },
+    "rank_hits": {
+      "type": "array",
+      "items": {
+        "type": "boolean"
+      },
+      "description": "1\u301c3\u7740\u306e\u4e88\u60f3\u304c\u5f53\u305f\u3063\u305f\u304b"
+    },
+    "plans": {
+      "type": "array",
+      "description": "\u8cb7\u3044\u76ee\u3054\u3068\u306e\u7684\u4e2d\u30fb\u6295\u8cc7\u30fb\u6255\u623b",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "tickets": {
+            "type": "number"
+          },
+          "probability": {
+            "type": "number"
+          },
+          "judgment": {
+            "type": "string"
+          },
+          "hit": {
+            "type": "boolean"
+          },
+          "investment": {
+            "type": "number"
+          },
+          "payout": {
+            "type": "number"
+          },
+          "recovery": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "verified_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "record_hash",
+    "race_key"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

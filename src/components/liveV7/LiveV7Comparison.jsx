@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { archivedV7, liveV7 } from '@/liveV7/runtime';
 import { summarizeUnified } from '@/liveV7/unifiedSummary';
+import V7ServerVerification from '@/components/liveV7/V7ServerVerification';
 
 const pct = value => value == null ? '—' : `${(value * 100).toFixed(1)}%`;
 const yen = value => value == null ? '—' : `${value.toLocaleString('ja-JP')}円`;
@@ -53,6 +54,7 @@ export default function LiveV7Comparison() {
         </article>
       ))}
     </div>
-    <p className="text-xs text-slate-600">各組番100円の仮想計算です。確定払戻が欠ける的中は回収率を未算出とし、結果競合は除外します。実投票実績ではありません。正式実績はありません。</p>
+    <p className="text-xs text-slate-600">各組番100円の仮想計算です。確定払戻が欠ける的中は回収率を未算出とし、結果競合は除外します。実投票実績ではありません。</p>
+    <V7ServerVerification />
   </section>;
 }

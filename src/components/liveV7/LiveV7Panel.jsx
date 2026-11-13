@@ -1,6 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {liveV7} from '@/liveV7/runtime';
 import {minimumBalancedStakes} from '@/liveV7/compositeStake';
+import {syncV7ToServer} from '@/liveV7/serverSync';
 const pct=x=>x==null?'—':(x*100).toFixed(1)+'%';
 const fmt=v=>{const d=Date.parse(v||'');return Number.isFinite(d)?new Intl.DateTimeFormat('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit',timeZone:'Asia/Tokyo',hour12:false}).format(d):'未取得';};
 const COLORS=['','bg-white text-slate-900 border-slate-400','bg-slate-900 text-white border-slate-900','bg-red-600 text-white border-red-600','bg-blue-600 text-white border-blue-600','bg-yellow-400 text-slate-900 border-yellow-400','bg-emerald-600 text-white border-emerald-600'];
@@ -9,7 +10,13 @@ function Combination({value}){return <span className="inline-flex items-center g
 export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=true,exhibitionCount=6,activeBoatCount=6}){
  const [,refresh]=useState(0),[stage,setStage]=useState('AUTO'),[mode,setMode]=useState('hit'),[count,setCount]=useState(8),[refreshing,setRefreshing]=useState(false);
  useEffect(()=>setStage('AUTO'),[race.id]);
- useEffect(()=>{const off=liveV7.subscribe(()=>refresh(n=>n+1)),stop=liveV7.watch(race.id);return()=>{off();stop();};},[race.id]);
+ useEffect(()=>{
+  // 生成されたV7予想は端末内に加えてサーバーへも保存する(検証用)。
+  const off=liveV7.subscribe(()=>{refresh(n=>n+1);void syncV7ToServer(liveV7);});
+  const stop=liveV7.watch(race.id);
+  void syncV7ToServer(liveV7);
+  return()=>{off();stop();};
+ },[race.id]);
  const state=liveV7.get(race.id),selected=finalOnly?'FINAL':stage==='AUTO'?(state.stages.FINAL?.status==='READY'?'FINAL':'PRE'):stage;
  const result=state.stages[selected],p=result?.record?.payload,o=p?.output;
  const settlement=p&&!liveV7.conflicts.has(p.race_key)?liveV7.resultHistory.get(p.race_key):null;
