@@ -1,6 +1,7 @@
 {
   "name": "BoatPrediction",
   "type": "object",
+  "description": "\u30ec\u30fc\u30b9\u4e88\u60f3\u306e\u8247\u5225\u30b9\u30b3\u30a2\u3002\u8868\u793a\u7528\u306e\u8aad\u53d6\u306f\u516c\u958b\u3057\u305f\u307e\u307e\u3001\u4f5c\u6210\u30fb\u66f4\u65b0\u30fb\u524a\u9664\u306f\u7ba1\u7406\u8005\u306e\u6b63\u898f\u51e6\u7406(\u7ba1\u7406\u753b\u9762\u30fb\u30b5\u30fc\u30d3\u30b9\u30ed\u30fc\u30eb)\u306e\u307f\u306b\u9650\u5b9a\u3059\u308b\u3002",
   "properties": {
     "prediction_id": {
       "type": "string",
@@ -190,5 +191,23 @@
     "prediction_id",
     "race_id",
     "boat_number"
-  ]
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
 }

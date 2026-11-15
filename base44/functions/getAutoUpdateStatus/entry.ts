@@ -18,6 +18,10 @@ function getTomorrowJST(): string {
 export default async function(req: Request) {
   try {
     const base44 = createClientFromRequest(req);
+    // 認証: 未認証は401、管理者以外は403(エラー内容・内部ログを公開しない)
+    const user = await base44.auth.me().catch(() => null);
+    if (!user) return Response.json({ ok: false, error: "Authentication required" }, { status: 401 });
+    if (user.role !== "admin") return Response.json({ ok: false, error: "Forbidden: admin only" }, { status: 403 });
     const sr = base44.asServiceRole.entities;
 
     const today = getTodayJST();
