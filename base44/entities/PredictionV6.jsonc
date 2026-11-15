@@ -1,7 +1,7 @@
 {
   "name": "PredictionV6",
   "type": "object",
-  "description": "Prediction Engine V6 PROFIT Candidate\u3002\u56de\u53ce\u7387110%+\u3092\u6700\u91cd\u8981\u76ee\u6a19\u3068\u3059\u308b\u5229\u76ca\u578b\u4e88\u60f3\u30a8\u30f3\u30b8\u30f3\u3002V2\u301cV5\u3068\u306f\u5b8c\u5168\u72ec\u7acb\u3002",
+  "description": "Prediction Engine V6 PROFIT Candidate\u3002\u56de\u53ce\u7387110%+\u3092\u6700\u91cd\u8981\u76ee\u6a19\u3068\u3059\u308b\u5229\u76ca\u578b\u4e88\u60f3\u30a8\u30f3\u30b8\u30f3\u3002V2\u301cV5\u3068\u306f\u5b8c\u5168\u72ec\u7acb\u3002V6.1\u301cV6.5\u3082\u3053\u306e\u30a8\u30f3\u30c6\u30a3\u30c6\u30a3\u3092prediction_version\u3067\u5171\u7528\u3059\u308b\u3002\u533f\u540d\u95b2\u89a7\u3067\u4fdd\u5b58\u6e08\u307f\u4e88\u60f3\u3092\u8868\u793a\u3059\u308b\u305f\u3081\u8aad\u53d6\u306f\u516c\u958b\u3057\u3001\u66f8\u8fbc\u306f\u7ba1\u7406\u8005\u306e\u307f\u306b\u9650\u5b9a\u3059\u308b\u3002",
   "properties": {
     "race_id": {
       "type": "string"
@@ -336,5 +336,23 @@
     "race_id",
     "stage",
     "prediction_version"
-  ]
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
 }
