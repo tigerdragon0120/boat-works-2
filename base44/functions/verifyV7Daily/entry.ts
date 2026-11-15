@@ -141,12 +141,18 @@ function heldDoc(record: any, race: any, reason: string, reasons: string[], extr
   };
 }
 
+type ReadFailure = { reason: string; page: number; race_ids?: string[]; dates?: string[] };
+
+function logReadFailure(source: string, failure: ReadFailure) {
+  console.warn(JSON.stringify({ event: "v7_verification_read_failed", source, ...failure }));
+}
+
 export default async function(req: Request) {
   try {
     const base44 = createClientFromRequest(req);
-    let user = null;
-    try { user = await base44.auth.me(); } catch {}
-    if (user && user.role !== "admin") {
+    const user = await base44.auth.me().catch(() => null);
+    if (!user) return Response.json({ ok: false, error: "Authentication required" }, { status: 401 });
+    if (user.role !== "admin") {
       return Response.json({ ok: false, error: "Forbidden: admin only" }, { status: 403 });
     }
 
@@ -175,6 +181,14 @@ export default async function(req: Request) {
         .filter((value: any) => typeof value === "string" && value >= cutoff && !dates.includes(value)))];
     }
     const targetDates = [...dates, ...recheckDates];
+    const incompleteRead = (source: string, read: { complete: boolean; error?: string; page?: number }) => {
+      const failure = { reason: read.error ?? "unknown", page: read.page ?? 1, dates: targetDates };
+      logReadFailure(source, failure);
+      return Response.json({
+        ok: true, dates, dry_run: dryRun, skipped_incomplete: source, written: 0,
+        completed_at: nowIso,
+      });
+    };
 
     // 対象日の予想は全件読み切る。読み切れなかった場合は、重複した組を見落として
     // 的中率・回収率に混ぜてしまうため、判定そのものを行わず保留する
@@ -183,16 +197,7 @@ export default async function(req: Request) {
       { race_date: { $in: targetDates } },
       { sort: "-generated_at" },
     );
-    if (!predictionPages.complete) {
-      return Response.json({
-        ok: true,
-        dates,
-        dry_run: dryRun,
-        skipped_incomplete: "PREDICTIONS_INCOMPLETE",
-        written: 0,
-        completed_at: nowIso,
-      });
-    }
+    if (!predictionPages.complete) return incompleteRead("PREDICTIONS_INCOMPLETE", predictionPages);
     const records: any[] = predictionPages.rows;
 
     if (!records.length) {
@@ -202,11 +207,14 @@ export default async function(req: Request) {
     // 途中で切り捨てると重複した組が1件だけに見えてしまうため、切り捨ては行わない
     // (実行時間は下の TIME_BUDGET_MS で打ち切る)
     const limited = records.filter((record: any) => record?.race_key && record?.stage && record?.record_hash);
-    const raceKeys = [...new Set(limited.map((record: any) => record.race_key))];
-
-    const races: any[] = raceKeys.length
-      ? await sr.Race.filter({ race_key: { $in: raceKeys } }, "-created_date", 2000).catch(() => [])
-      : [];
+    const raceKeys = new Set(limited.map((record: any) => record.race_key));
+    const racePages = await fetchAllPaged(
+      (query: any, options: any) => sr.Race.filter(query, options),
+      { race_date: { $in: targetDates } },
+      { sort: "-created_date" },
+    );
+    if (!racePages.complete) return incompleteRead("RACE_RECORDS_INCOMPLETE", racePages);
+    const races = racePages.rows.filter((race: any) => raceKeys.has(race.race_key));
     const raceRowsByKey = new Map<string, any[]>();
     for (const race of races || []) {
       if (!race?.race_key) continue;
@@ -217,13 +225,17 @@ export default async function(req: Request) {
 
     const raceIds = [...new Set((races || []).map((race: any) => race.id).filter(Boolean))];
     // 画面と同じ全候補取得・共通判定。上限や失敗を「結果なし」に変換しない。
-    const officialResults = await loadOfficialResultsByRace(sr, raceIds);
+    const officialResults = await loadOfficialResultsByRace(sr, raceIds, { batched: true });
+    for (const failure of officialResults.failures) logReadFailure("official_results", failure);
 
     // 公式取得経路の記録: 結果の取得時に保存された実取得の証跡だけを読む(事後補完は判定に使わない)。
     // 証跡を全件読み切れなかった場合は、証跡に依存する判定を行わず保留する
     const provenance = await loadProvenanceByRace(sr, raceIds);
     const provenanceByRace = provenance.byRace;
     const provenanceComplete = provenance.complete;
+    if (!provenanceComplete) logReadFailure("provenance", {
+      reason: provenance.error ?? "unknown", page: provenance.page ?? 1, race_ids: raceIds,
+    });
 
     // 既存の照合記録は書き換えない。予想1件につき最新の記録だけを「現在の判定」として読む。
     // 判定が変わったときだけ新しい行を追記する(再判定)
@@ -232,16 +244,7 @@ export default async function(req: Request) {
       { race_date: { $in: targetDates } },
       { sort: "-verified_at" },
     );
-    if (!existingPages.complete) {
-      return Response.json({
-        ok: true,
-        dates,
-        dry_run: dryRun,
-        skipped_incomplete: "VERIFICATION_RECORDS_INCOMPLETE",
-        written: 0,
-        completed_at: nowIso,
-      });
-    }
+    if (!existingPages.complete) return incompleteRead("VERIFICATION_RECORDS_INCOMPLETE", existingPages);
     const existing: any[] = existingPages.rows;
     const latestByHash = new Map<string, any>();
     for (const row of existing || []) {
@@ -271,6 +274,7 @@ export default async function(req: Request) {
     let newCount = 0;
     let skippedAlready = 0;
     let skippedNotReady = 0;
+    let skippedReadFailure = 0;
     let timedOut = false;
     const startedAt = Date.now();
     const bump = (reason: string) => { heldByReason[reason] = (heldByReason[reason] || 0) + 1; };
@@ -284,6 +288,11 @@ export default async function(req: Request) {
       const resolved = resolveRace(raceRows, record);
       const race = resolved.race || null;
       const hashes = ordered.map((row: any) => String(row.record_hash));
+
+      if (race && officialResults.failedRaceIds.has(String(race.id))) {
+        skippedReadFailure += 1;
+        continue;
+      }
 
       // 1) 重複したレース×段階は全件 DUPLICATE(代表を決めず、的中率・回収率から除外)
       if (ordered.length > 1) {
@@ -344,6 +353,10 @@ export default async function(req: Request) {
       let evidence: any = null;
 
       if (result) {
+        if (!provenanceComplete) {
+          skippedReadFailure += 1;
+          continue;
+        }
         const finishedAt = dbMs(result.finished_at);
         if (finishedAt != null && savedAt != null && finishedAt < savedAt - IMMUTABLE_TOLERANCE_MS) reasons.push("TIME_CONFLICT");
         // 実取得の証跡が結果ID・三連単・取得元と一致することを確認できた結果だけを照合に使う。
@@ -359,7 +372,6 @@ export default async function(req: Request) {
         // 重複した実取得の証跡は削除も採用もしない
         const evidenceHold = evidenceHoldReason(resolvedEvidence.status);
         if (evidenceHold) reasons.push(evidenceHold);
-        if (!provenanceComplete) reasons.push("PROVENANCE_INCOMPLETE");
         if (payout == null) reasons.push("PAYOUT_MISSING");
         if (!tickets.length) reasons.push("TICKETS_MISSING");
       }
@@ -514,6 +526,8 @@ export default async function(req: Request) {
       would_write: docs.length,
       provenance_complete: provenanceComplete,
       results_complete: officialResults.complete,
+      skipped_read_failure_groups: skippedReadFailure,
+      result_read_failed_races: officialResults.failedRaceIds.size,
       snapshot,
       verified,
       held,

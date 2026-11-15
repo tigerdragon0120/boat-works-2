@@ -89,7 +89,7 @@ export async function loadProvenanceByRace(sr, raceIds) {
   const byRace = new Map();
   const ids = [...new Set((raceIds || []).filter(Boolean))];
   if (!ids.length) return { byRace, complete: true };
-  const { rows, complete } = await fetchAllPaged(
+  const { rows, complete, error, page } = await fetchAllPaged(
     (query, options) => sr.ResultProvenance.filter(query, options),
     {
       race_id: { $in: ids },
@@ -103,7 +103,7 @@ export async function loadProvenanceByRace(sr, raceIds) {
     list.push(row);
     byRace.set(row.race_id, list);
   }
-  return { byRace, complete };
+  return { byRace, complete, error, page };
 }
 
 // 結果の保存時に呼ぶ。同じ記録は増やさない(同時保存で重複した場合は判定側で保留する)

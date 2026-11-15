@@ -10,6 +10,7 @@ export default function V7DryRunPanel({ saved }) {
   const run = async () => {
     setBusy(true);
     setError(null);
+    setResult(null);
     try {
       const res = await base44.functions.invoke('verifyV7Daily', { days: 3, dry_run: true });
       setResult(res?.data || null);
@@ -38,7 +39,15 @@ export default function V7DryRunPanel({ saved }) {
       保存済みの有効件数 {saved?.verified ?? 0}組（保留 {saved?.held ?? 0}組／未検証 {saved?.unverified ?? 0}組）
     </p>
     {error && <p role="alert" className="text-sm text-red-700">確認モードを実行できません：{error}</p>}
-    {result && <>
+    {result?.skipped_incomplete && <p role="status" className="text-sm text-amber-800">
+      データを全件取得できなかったため、今回の判定を見送りました。保存済みの判定はそのままです。
+    </p>}
+    {result && !result.skipped_incomplete && <>
+      {(result.results_complete === false || result.provenance_complete === false) &&
+        <p role="status" className="text-sm text-amber-800">
+          結果または証跡の取得に失敗し、{result.skipped_read_failure_groups ?? 0}組を今回の判定から外しました。
+          取得障害は保留件数に含みません。
+        </p>}
       <p className="text-sm font-semibold text-slate-800">
         確認モードの候補 {result.would_write ?? 0}件（有効検証 {result.verified ?? 0}件／保留 {result.held ?? 0}件）
       </p>

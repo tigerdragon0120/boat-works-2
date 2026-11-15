@@ -27,38 +27,41 @@ export async function fetchAllPaged(fetchPage, query, options = {}) {
   const rows = [];
   const cursors = new Set();
   const ids = new Set();
-  const incomplete = (error) => ({ rows, complete: false, error });
+  const incomplete = (error, page) => ({ rows, complete: false, error, page });
   let cursor = null;
   for (let page = 0; page < maxPages; page += 1) {
+    const timeLeft = options.deadlineMs == null ? Infinity : options.deadlineMs - Date.now();
+    if (timeLeft <= 0) return incomplete('read_budget_exhausted', page + 1);
+    const timeoutMs = Math.min(timeLeft, options.pageTimeoutMs || 10000);
     let result = null;
     let timer;
     try {
       result = await Promise.race([
         fetchPage(query, { sort, limit: pageSize, ...(cursor ? { cursor } : {}) }),
-        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('page_timeout')), options.pageTimeoutMs || 10000); }),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('page_timeout')), timeoutMs); }),
       ]);
     } catch {
-      return incomplete('page_read_failed_or_timed_out');
+      return incomplete('page_read_failed_or_timed_out', page + 1);
     } finally {
       clearTimeout(timer);
     }
-    if (isUnexpectedResponse(result) || typeof result.has_more !== 'boolean') return incomplete('page_format_invalid');
+    if (isUnexpectedResponse(result) || typeof result.has_more !== 'boolean') return incomplete('page_format_invalid', page + 1);
     for (const row of result.items) {
       if (!row || typeof row !== 'object' || Array.isArray(row) || typeof row.id !== 'string' || !row.id || ids.has(row.id)) {
-        return incomplete('page_row_invalid_or_repeated');
+        return incomplete('page_row_invalid_or_repeated', page + 1);
       }
       ids.add(row.id);
       rows.push(row);
     }
     if (result.has_more === false) {
       const terminal = result.next_cursor == null || result.next_cursor === '';
-      return terminal ? { rows, complete: true } : incomplete('terminal_cursor_invalid');
+      return terminal ? { rows, complete: true } : incomplete('terminal_cursor_invalid', page + 1);
     }
     if (typeof result.next_cursor !== 'string' || !result.next_cursor || !result.items.length || cursors.has(result.next_cursor)) {
-      return incomplete('continuation_invalid_or_repeated');
+      return incomplete('continuation_invalid_or_repeated', page + 1);
     }
     cursors.add(result.next_cursor);
     cursor = result.next_cursor;
   }
-  return incomplete('page_safety_limit');
+  return incomplete('page_safety_limit', maxPages);
 }
