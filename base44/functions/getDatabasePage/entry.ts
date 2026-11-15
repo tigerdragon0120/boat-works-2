@@ -15,7 +15,12 @@ async function oneTerm(sr:any, termKey:string) {
 export default async function(req:Request){
  const base44=createClientFromRequest(req);
  try{
-  await base44.auth.me(); const sr=base44.asServiceRole.entities; const body=await req.json().catch(()=>({}));
+  // 管理画面専用: 一般ユーザー・匿名ユーザーからの直接呼び出しを拒否する
+  let user:any=null;
+  try{ user=await base44.auth.me(); }catch{}
+  if(!user)return Response.json({ok:false,error:'Unauthorized'},{status:401});
+  if(user.role!=='admin')return Response.json({ok:false,error:'Forbidden: admin only'},{status:403});
+  const sr=base44.asServiceRole.entities; const body=await req.json().catch(()=>({}));
   const latest=await sr.RacerTermStats.filter({},'-term_key',1,0);
   const latestTerm=String(latest?.[0]?.term_key||'');
   const mode=body.mode||'summary';

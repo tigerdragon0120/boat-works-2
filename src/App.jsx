@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import ScrollToTop from './components/ScrollToTop';
 import ProtectedRoute from '@/components/ProtectedRoute';
+import AdminRoute from '@/components/AdminRoute';
 import Login from '@/pages/Login';
 import Register from '@/pages/Register';
 import ForgotPassword from '@/pages/ForgotPassword';
@@ -65,10 +66,15 @@ const AuthenticatedApp = () => {
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<Layout />}>
           <Route path="/verify" element={<Verification />} />
-          <Route path="/database" element={<Database />} />
-          <Route path="/admin" element={<Admin />} />
           <Route path="/racer/:reg" element={<RacerDetail />} />
           <Route path="/alerts" element={<BuyAlerts />} />
+        </Route>
+      </Route>
+      {/* 管理者専用: 一般ユーザー・匿名ユーザーは直接URLでも拒否 */}
+      <Route element={<AdminRoute />}>
+        <Route element={<Layout />}>
+          <Route path="/database" element={<Database />} />
+          <Route path="/admin" element={<Admin />} />
         </Route>
       </Route>
       <Route path="*" element={<PageNotFound />} />
