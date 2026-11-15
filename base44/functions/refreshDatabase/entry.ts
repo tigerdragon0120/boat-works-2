@@ -39,9 +39,11 @@ function computeFinish(res, boatNumber) {
 
 export default async function(req) {
   const base44 = createClientFromRequest(req);
+  // 未認証は401、管理者以外は403(外部からの無許可実行を防ぐ)
   let user = null;
   try { user = await base44.auth.me(); } catch {}
-  if (user && user.role !== 'admin') return Response.json({ error: 'Forbidden' }, { status: 403 });
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (user.role !== 'admin') return Response.json({ error: 'Forbidden' }, { status: 403 });
   const sr = base44.asServiceRole.entities;
   const now = new Date().toISOString();
 

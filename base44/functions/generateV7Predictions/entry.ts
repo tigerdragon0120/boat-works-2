@@ -18,9 +18,14 @@ import { runV7AutoGeneration } from "../../shared/v7AutoGeneration.js";
 
 export default async function (req: Request): Promise<Response> {
   const base44 = createClientFromRequest(req);
+  // 認証: 未認証は401、管理者以外は403
+  // 定期実行はワークフローが作成者(管理者)として呼ぶため、この判定で通る。
   let user: any = null;
   try { user = await base44.auth.me(); } catch { user = null; }
-  if (user && user.role !== "admin") {
+  if (!user) {
+    return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+  if (user.role !== "admin") {
     return Response.json({ ok: false, error: "Forbidden: admin only" }, { status: 403 });
   }
 

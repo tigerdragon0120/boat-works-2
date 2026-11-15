@@ -4,6 +4,10 @@ import { normalizeTokutenHayami } from '../../shared/boatcastNormalizer.js';
 
 export default async function handler(req) {
   const base44 = createClientFromRequest(req);
+  // 未認証は401。保存を伴うため匿名からの実行は拒否する(ログイン済み一般ユーザーの既存機能は維持)
+  let user: any = null;
+  try { user = await base44.auth.me(); } catch { user = null; }
+  if (!user) return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
   const body = await req.json().catch(() => ({}));
   const raceDate = body.race_date;
   const venueCode = String(body.venue_code || '').padStart(2,'0');

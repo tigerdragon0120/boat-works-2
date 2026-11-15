@@ -7,6 +7,11 @@ function jstDate() {
 export default async function(req: Request) {
   try {
     const base44 = createClientFromRequest(req);
+    // 未認証は401、管理者以外は403(ワークフロー呼出は作成者=管理者として実行される)
+    let user: any = null;
+    try { user = await base44.auth.me(); } catch { user = null; }
+    if (!user) return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
+    if (user.role !== 'admin') return Response.json({ ok: false, error: 'Forbidden: admin only' }, { status: 403 });
     let body: any = {};
     try { body = await req.json(); } catch {}
     const date = body.date || jstDate();
