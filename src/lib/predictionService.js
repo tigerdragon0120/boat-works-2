@@ -5,6 +5,13 @@ import { runPrediction, judgeTrifecta } from "@/lib/predictionEngine";
 
 const VERSION = "v3";
 
+// 匿名閲覧(未ログイン)では予想の生成系APIを呼ばない。
+// 画面は保存済み予想の閲覧のみにする(生成・保存・更新は認証必須のまま)。
+let predictionReadOnly = false;
+export function setPredictionReadOnly(value) {
+  predictionReadOnly = !!value;
+}
+
 // レート制限(429)対策: 指数バックオフ付きリトライ
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function withRetry(fn, max = 4) {
@@ -935,6 +942,7 @@ export async function resolveV61Prediction(raceId, raceKey) {
 
 // V6.1予想の単一レース生成(UIの再実行ボタン用)
 export async function generateV61PredictionForRace(raceId, stage, force = false) {
+  if (predictionReadOnly) return null;
   const key = `v61:${raceId}:${stage}`;
   const active = predictionGenerationInFlight.get(key);
   if (active) return active;
@@ -1048,6 +1056,7 @@ export async function getV62Stages(raceId, raceKey) {
 
 // V6.2予想の単一レース生成(UIの再実行ボタン用)
 export async function generateV62PredictionForRace(raceId, stage, force = false) {
+  if (predictionReadOnly) return null;
   const key = `v62:${raceId}:${stage}`;
   const active = predictionGenerationInFlight.get(key);
   if (active) return active;
@@ -1138,6 +1147,7 @@ export async function getV63Stages(raceId, raceKey) {
 }
 
 export async function generateV63PredictionForRace(raceId, stage, force = false) {
+  if (predictionReadOnly) return null;
   const key = `v63:${raceId}:${stage}`;
   const active = predictionGenerationInFlight.get(key);
   if (active) return active;
@@ -1201,6 +1211,7 @@ export async function getV64Stages(raceId, raceKey) {
 }
 
 export async function generateV64PredictionForRace(raceId, stage, force = false) {
+  if (predictionReadOnly) return null;
   const key = `v64:${raceId}:${stage}`;
   const active = predictionGenerationInFlight.get(key);
   if (active) return active;
@@ -1289,6 +1300,7 @@ export async function getV65Stages(raceId, raceKey) {
 }
 
 export async function generateV65PredictionForRace(raceId, stage, force = false) {
+  if (predictionReadOnly) return null;
   const key = `v65:${raceId}:${stage}`;
   const active = predictionGenerationInFlight.get(key);
   if (active) return active;

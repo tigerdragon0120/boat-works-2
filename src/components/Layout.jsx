@@ -6,8 +6,9 @@ import { resumeKBatchImport, subscribeKBatchImport, getKBatchImportState } from 
 import { resumeRacerTermImport, subscribeRacerTermImport, getRacerTermImportState } from "@/lib/racerTermImportManager";
 import { base44 } from "@/api/base44Client";
 import V7ResultMonitor from "@/components/liveV7/V7ResultMonitor";
+import { useAuth } from "@/lib/AuthContext";
 
-const nav = [
+const navAll = [
   { to: "/", label: "レース一覧", icon: Home },
   { to: "/alerts", label: "アラート", icon: BellRing },
   { to: "/verify", label: "検証", icon: BarChart3 },
@@ -26,10 +27,15 @@ const subNav = [
 
 export default function Layout() {
   const loc = useLocation();
+  const { isAuthenticated } = useAuth();
+  // 匿名閲覧ではレース一覧だけを表示し、管理系の導線は出さない
+  const nav = isAuthenticated ? navAll : navAll.filter((n) => n.to === "/");
   const [kImport, setKImport] = useState(getKBatchImportState());
   const [termImport, setTermImport] = useState(getRacerTermImportState());
 
   useEffect(() => {
+    // 匿名閲覧では取込・運用状況などの内部データを問い合わせない
+    if (!isAuthenticated) return undefined;
     resumeKBatchImport();
     resumeRacerTermImport();
     const unsubK = subscribeKBatchImport(setKImport);
@@ -91,10 +97,10 @@ export default function Layout() {
       unsubK?.();
       unsubTerm?.();
     };
-  }, []);
+  }, [isAuthenticated]);
   return (
     <div className="min-h-screen bg-[#eef2f7] text-[#26364d]">
-      <V7ResultMonitor />
+      {isAuthenticated && <V7ResultMonitor />}
       <header className="sticky top-0 z-30 bg-gradient-to-r from-[#153aa8] to-[#075ee8] border-b border-blue-700 shadow-sm">
         <div className="max-w-[1400px] mx-auto px-3 sm:px-5 h-14 sm:h-16 flex items-center justify-between gap-4">
           <Link to="/" className="flex items-center gap-2.5 min-w-0 shrink-0">
@@ -121,6 +127,9 @@ export default function Layout() {
           </nav>
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {!isAuthenticated && (
+              <Link to="/login" className="px-3 h-9 sm:h-10 inline-flex items-center rounded-lg bg-white text-[#075ee8] text-sm font-bold">ログイン</Link>
+            )}
             <button className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-white hover:bg-white/10 flex items-center justify-center transition-colors">
               <Search className="w-4.5 h-4.5" />
             </button>

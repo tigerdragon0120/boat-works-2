@@ -20,9 +20,14 @@ import Admin from '@/pages/Admin';
 import Database from '@/pages/Database';
 import RacerDetail from '@/pages/RacerDetail';
 import BuyAlerts from '@/pages/BuyAlerts';
+import { setPredictionReadOnly } from '@/lib/predictionService';
 
 const AuthenticatedApp = () => {
-  const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+  const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin, isAuthenticated } = useAuth();
+
+  // 未ログイン(匿名)は保存済み予想の閲覧のみ。予想生成・保存の呼び出しを止める。
+  // 子画面のeffectより先に確定させるため、描画中に設定する。
+  setPredictionReadOnly(!isAuthenticated);
 
   // Show loading spinner while checking app public settings or auth
   if (isLoadingPublicSettings || isLoadingAuth) {
@@ -51,11 +56,14 @@ const AuthenticatedApp = () => {
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      {/* 匿名閲覧可: レース一覧・開催場・レース詳細(保存済み予想の閲覧のみ) */}
+      <Route element={<Layout />}>
+        <Route path="/" element={<Home />} />
+        <Route path="/venue/:code" element={<Venue />} />
+        <Route path="/race/:id" element={<RaceDetail />} />
+      </Route>
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<Layout />}>
-          <Route path="/" element={<Home />} />
-          <Route path="/venue/:code" element={<Venue />} />
-          <Route path="/race/:id" element={<RaceDetail />} />
           <Route path="/verify" element={<Verification />} />
           <Route path="/database" element={<Database />} />
           <Route path="/admin" element={<Admin />} />

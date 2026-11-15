@@ -194,6 +194,12 @@ export default function LanePast10Table({ entries, race }) {
     const load = async () => {
       setLoading(true);
 
+      // 匿名閲覧では統計の再取得・保存を行わない(閲覧のみ)
+      if (!(await base44.auth.isAuthenticated())) {
+        if (!cancelled) setLoading(false);
+        return;
+      }
+
       // BOATCAST優先取得(全レース対象) — 失敗時のみLOCAL fallback
       const boatcastStats = await fetchFromBoatcast();
       if (boatcastStats && Object.keys(boatcastStats).length > 0 && !cancelled) {

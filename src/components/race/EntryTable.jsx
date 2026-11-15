@@ -50,6 +50,8 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
     (async () => {
       setTokutenLoading(true);
       try {
+        // 匿名閲覧では外部取得(保存を伴う)を呼ばない
+        if (!(await base44.auth.isAuthenticated())) { setTokutenLoading(false); return; }
         await base44.functions.invoke("fetchBoatcastTokutenHayami", {
           race_date: race.race_date,
           venue_code: String(race.venue_code),

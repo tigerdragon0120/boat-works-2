@@ -16,11 +16,14 @@ import {
 import PredictionPanel from "@/components/race/PredictionPanel";
 import EntryTable from "@/components/race/EntryTable";
 import { getRaceResult } from "@/lib/raceResultService";
+import { useAuth } from "@/lib/AuthContext";
 import { ArrowLeft } from "lucide-react";
 
 export default function RaceDetail() {
   const { id } = useParams();
-  useEffect(() => liveV7.watch(id), [id]);
+  const { isAuthenticated } = useAuth();
+  // 端末側V7の観測はログイン時のみ。匿名は保存済み予想の閲覧だけにする。
+  useEffect(() => (isAuthenticated ? liveV7.watch(id) : undefined), [id, isAuthenticated]);
   const [race, setRace] = useState(null);
   const [entries, setEntries] = useState([]);
   // v61Stages: 合成(V6.1)の事前予想(PRE)と直前予想(FINAL)。
@@ -353,7 +356,7 @@ export default function RaceDetail() {
 
       {/* 統合V7試験予想：既存データ読取のみ、購入判定・旧エンジン・履歴を変更しない
           終了後は締切前に保存された予想（判定・買い目）と結果を表示する */}
-      {raceClosed ? <V7SavedServerView race={race} /> : <LiveV7Panel race={race} />}
+      {raceClosed || !isAuthenticated ? <V7SavedServerView race={race} /> : <LiveV7Panel race={race} />}
 
       {/* スプリットレイアウト: 左=予想サマリー / 右=出走表 */}
       <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
