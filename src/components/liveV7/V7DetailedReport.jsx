@@ -47,7 +47,7 @@ function summarize(entries) {
   };
 }
 
-function Metric({ label, value, sub, emphasis }) {
+function Metric({ label, value, sub, emphasis = false }) {
   return (
     <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-3">
       <div className="text-xs font-semibold text-slate-500">{label}</div>
