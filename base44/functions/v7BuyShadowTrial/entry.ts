@@ -12,7 +12,11 @@ const SAVE_MARGIN_MS = 75 * 1000;
 const MAX_TRIALS_PER_RUN = 30;
 const iso = (ms: number) => new Date(ms).toISOString();
 const validTime = (v: any): number | null => {
-  const ms = Date.parse(String(v || ""));
+  const raw = String(v || "").trim().replace(/(\\.\\d{3})\\d+/, "$1");
+  if (!raw) return null;
+  // Base44のDB保存時刻はTZ無しのUTC。クライアント端末のタイムゾーンに依存させない。
+  const normalized = /(Z|[+-]\\d{2}:?\\d{2})$/.test(raw) ? raw : raw + "Z";
+  const ms = Date.parse(normalized);
   return Number.isFinite(ms) ? ms : null;
 };
 const nowJstDay = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
