@@ -75,7 +75,7 @@ export default function V7DetailedReport({ groups, fetchedAt, onReload, loading 
   const [mode, setMode] = useState('hit');
   const [ticketCount, setTicketCount] = useState(8);
   const [judgment, setJudgment] = useState('ALL');
-  const [showAll, setShowAll] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(30);
 
   const allVerified = useMemo(() => groups.filter((r) => r.status === 'VERIFIED'), [groups]);
   const inScope = useMemo(() => groups.filter((r) =>
@@ -166,15 +166,15 @@ export default function V7DetailedReport({ groups, fetchedAt, onReload, loading 
       <div className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
         <h3 className="mb-3 text-sm font-bold text-slate-800">集計条件</h3>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-          <Filter label="予想段階" value={stage} onChange={(v) => { setStage(v); setShowAll(false); }}
+          <Filter label="予想段階" value={stage} onChange={(v) => { setStage(v); setVisibleCount(30); }}
             options={[{ value: 'FINAL', label: '直前予想（FINAL）' }, { value: 'PRE', label: '事前予想（PRE）' }]} />
-          <Filter label="対象レース" value={model} onChange={(v) => { setModel(v); setShowAll(false); }}
+          <Filter label="対象レース" value={model} onChange={(v) => { setModel(v); setVisibleCount(30); }}
             options={[{ value: 'ALL', label: 'すべて' }, { value: 'OPEN', label: '一般戦' }, { value: 'WOMENS', label: '女子戦' }]} />
           <Filter label="買い目方式" value={mode} onChange={setMode}
             options={[{ value: 'hit', label: '的中率優先' }, { value: 'value', label: '回収率優先' }]} />
           <Filter label="買い目点数" value={String(ticketCount)} onChange={(v) => setTicketCount(Number(v))}
             options={TICKET_COUNTS.map((n) => ({ value: String(n), label: n + '点' }))} />
-          <Filter label="V7判定" value={judgment} onChange={(v) => { setJudgment(v); setShowAll(false); }}
+          <Filter label="V7判定" value={judgment} onChange={(v) => { setJudgment(v); setVisibleCount(30); }}
             options={[{ value: 'ALL', label: 'すべて（WATCH含む）' }, { value: 'BUY', label: 'BUYのみ' }, { value: 'WATCH', label: 'WATCHのみ' }, { value: 'SKIP', label: 'SKIPのみ' }]} />
         </div>
       </div>
@@ -264,12 +264,12 @@ export default function V7DetailedReport({ groups, fetchedAt, onReload, loading 
       <section className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-black text-slate-900">レース別の検証履歴</h3>
-          <span className="text-xs text-slate-500">{number(detailed.length)}件のうち{Math.min(showAll ? detailed.length : 30, detailed.length)}件表示</span>
+          <span className="text-xs text-slate-500">{number(detailed.length)}件のうち{Math.min(visibleCount, detailed.length)}件表示</span>
         </div>
         <p className="mt-1 text-xs text-slate-500">保存された実際の結果・V7判定・選択点数の的中を表示。新しい順です。</p>
         {detailed.length ? (
           <div className="mt-3 space-y-2">
-            {detailed.slice(0, showAll ? detailed.length : 30).map(({ row, plan }) => (
+            {detailed.slice(0, visibleCount).map(({ row, plan }) => (
               <div key={row.key} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-bold text-slate-900">
@@ -289,10 +289,15 @@ export default function V7DetailedReport({ groups, fetchedAt, onReload, loading 
                 </div>
               </div>
             ))}
-            {detailed.length > 30 &&
-              <button type="button" onClick={() => setShowAll((v) => !v)}
+            {detailed.length > visibleCount &&
+              <button type="button" onClick={() => setVisibleCount((v) => v + 30)}
                 className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700">
-                {showAll ? '直近30件に戻す' : '全' + number(detailed.length) + '件を表示'}
+                さらに30件表示
+              </button>}
+            {visibleCount > 30 &&
+              <button type="button" onClick={() => setVisibleCount(30)}
+                className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700">
+                最新30件に戻す
               </button>}
           </div>
         ) : <p className="mt-3 rounded-lg bg-slate-50 p-5 text-center text-sm text-slate-600">
