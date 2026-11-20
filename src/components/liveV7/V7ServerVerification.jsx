@@ -1,86 +1,142 @@
-// 統合V7の検証集計(サーバー保存分)。
-// 集計単位はレース×段階。2件以上ある組は最初の1件も含めて全件を重複保留とし、集計から除外する。
-// 予想1件につき最新の照合記録だけを使い、再判定後の二重計上を防ぐ。
-// 4件数(未保存・未検証・保留・有効検証)は同じ読み込み時点のデータから1回だけ数える。
-import React, { useEffect, useState } from 'react';
+// V7の正式なサーバー保存記録のみを読み取り、詳細レポートへ渡す。
+// 端末ローカル記録・V7以前の検証集計は使用しない。
+import React, { useCallback, useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
-import { jstDate, reconcileV7 } from '@/lib/v7Verification';
-import V7CoverageSummary from '@/components/liveV7/V7CoverageSummary';
-import V7CurrentStats from '@/components/liveV7/V7CurrentStats';
-import V7LegacyStats from '@/components/liveV7/V7LegacyStats';
-import V7DryRunPanel from '@/components/liveV7/V7DryRunPanel';
+import { groupPredictions, latestPerRecord, rowOrder, jstDate } from '@/lib/v7Verification';
+import V7DetailedReport from '@/components/liveV7/V7DetailedReport';
 
 const PAGE_SIZE = 200;
+const MAX_PAGES = 100;
 
 async function loadAllRows(entity, query) {
   const rows = [];
+  const seenRows = new Set();
   const seenCursors = new Set();
   let cursor;
 
-  while (true) {
-    const page = await entity.filter(query, {
+  for (let pageNumber = 1; pageNumber <= MAX_PAGES; pageNumber++) {
+    const response = await entity.filter(query, {
       sort: '-created_date',
       limit: PAGE_SIZE,
       ...(cursor ? { cursor } : {}),
     });
-    if (!Array.isArray(page?.items) || typeof page.has_more !== 'boolean') {
-      throw new Error('Invalid page response');
+
+    if (!response || !Array.isArray(response.items) || typeof response.has_more !== 'boolean') {
+      throw new Error('取得形式が不正です（ページ ' + pageNumber + '）。');
     }
-    rows.push(...page.items);
-    const next = page.next_cursor;
-    if (!page.has_more) {
-      if (next != null && next !== '') throw new Error('Unexpected next cursor');
+
+    for (const row of response.items) {
+      if (!row || !row.id || seenRows.has(row.id)) {
+        throw new Error('取得データに重複または欠落があります（ページ ' + pageNumber + '）。');
+      }
+      seenRows.add(row.id);
+      rows.push(row);
+    }
+
+    if (!response.has_more) {
+      if (response.next_cursor != null && response.next_cursor !== '') {
+        throw new Error('最終ページの状態が不正です。');
+      }
       return rows;
     }
-    if (typeof next !== 'string' || !next.trim() || !page.items.length || seenCursors.has(next)) {
-      throw new Error('Invalid next cursor');
+
+    if (!response.items.length || !response.next_cursor ||
+      typeof response.next_cursor !== 'string' || seenCursors.has(response.next_cursor)) {
+      throw new Error('全ページを読み切れませんでした（ページ ' + pageNumber + '）。');
     }
-    seenCursors.add(next);
-    cursor = next;
+    seenCursors.add(response.next_cursor);
+    cursor = response.next_cursor;
   }
+
+  throw new Error('取得ページが上限を超えました。');
+}
+
+// 1レース×段階につき1組。重複は代表を選ばず保留とする。
+// 同じ予想に複数の照合がある場合は、追記された最新判定だけを採用。
+function buildGroups(predictions, verifications) {
+  const byGroup = groupPredictions(predictions);
+  const latest = latestPerRecord(verifications);
+  const result = [];
+
+  for (const [key, items] of byGroup) {
+    const ordered = [...items].sort(rowOrder);
+    const prediction = ordered[0];
+    const verification = latest.get(prediction.record_hash) || null;
+
+    let status = 'UNVERIFIED';
+    if (ordered.length > 1) status = 'HELD_DUPLICATE';
+    else if (verification && verification.verification_version !== 'v2') status = 'LEGACY';
+    else if (verification) status = verification.verification_status || 'UNVERIFIED';
+
+    result.push({
+      key,
+      raceDate: prediction.race_date,
+      raceKey: prediction.race_key,
+      stage: prediction.stage,
+      model: prediction.model || (prediction.is_womens ? 'WOMENS' : 'OPEN'),
+      venueCode: String(prediction.venue_code || '').padStart(2, '0'),
+      raceNumber: prediction.race_number,
+      status,
+      prediction,
+      verification,
+    });
+  }
+
+  return result;
 }
 
 export default function V7ServerVerification() {
-  const [state, setState] = useState(null);
+  const [groups, setGroups] = useState(null);
+  const [fetchedAt, setFetchedAt] = useState(null);
   const [error, setError] = useState(null);
-  const [stage, setStage] = useState('FINAL');
-  const [mode, setMode] = useState('hit');
-  const [count, setCount] = useState(8);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    // JSTの当日を含む30暦日を、すべての集計で共通に使う。
-    const period = { race_date: { $gte: jstDate(-29), $lte: jstDate(0) } };
-    Promise.all([
-      loadAllRows(base44.entities.Race, period),
-      loadAllRows(base44.entities.PredictionV7, period),
-      loadAllRows(base44.entities.PredictionV7Verification, period),
-    ]).then(([races, predictions, verifications]) => {
-      if (cancelled) return;
-      setState(reconcileV7({ races, predictions, verifications }));
-    }).catch(() => {
-      if (!cancelled) setError('直近30日分を全件取得できなかったため、件数と成績の表示を保留しています。');
-    });
-    return () => { cancelled = true; };
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const period = { race_date: { $gte: jstDate(-29), $lte: jstDate(0) } };
+      const [predictions, verifications] = await Promise.all([
+        loadAllRows(base44.entities.PredictionV7, period),
+        loadAllRows(base44.entities.PredictionV7Verification, period),
+      ]);
+      const next = buildGroups(predictions, verifications);
+      setGroups(next);
+      setFetchedAt(new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
+    } catch (err) {
+      // 古い数値や誤った0件を最新情報として表示しない。
+      setGroups(null);
+      setError(err?.message || '検証データを取得できませんでした。');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  return <section data-testid="v7-server-verification" className="rounded-xl border bg-white p-3 space-y-3 mt-3">
-    <div>
-      <h2 className="font-bold">V7 サーバー検証（全端末・日次照合）</h2>
-      <p className="text-sm text-slate-600">別の端末やタブで生成したV7予想も含めて、確定結果と照合した成績です。同一レース×段階に2件以上の予想がある場合は、最初の1件も含めて全件を重複保留とし、代表を決めずに集計から除外します。締切後の保存・締切不明・時刻の矛盾・払戻不足・買い目不足・参照先の不一致も理由別に保留とし、的中率・回収率の分子・分母から除外します（払戻・締切は補完後に再判定）。</p>
-    </div>
-    <div className="flex flex-wrap gap-3 items-center text-sm">
-      <label>段階 <select className="min-h-11 border rounded px-2" value={stage} onChange={(e) => setStage(e.target.value)}><option>PRE</option><option>FINAL</option></select></label>
-      <label>方式 <select className="min-h-11 border rounded px-2" value={mode} onChange={(e) => setMode(e.target.value)}><option value="hit">的中率優先</option><option value="value">回収率優先</option></select></label>
-      <label>点数 <select className="min-h-11 border rounded px-2" value={count} onChange={(e) => setCount(Number(e.target.value))}>{[4, 6, 8, 12].map((n) => <option key={n} value={n}>{n}点</option>)}</select></label>
-    </div>
-    {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
-    {!state && !error && <p className="text-sm text-slate-600">読み込み中…</p>}
-    {state && <V7CoverageSummary summary={state} />}
-    {state && <V7DryRunPanel saved={state} />}
-    {state && <h3 className="text-sm font-semibold text-slate-800">直近30日の成績（重複保留を除く）</h3>}
-    {state && <V7CurrentStats rows={state.rows} counts={state} stage={stage} mode={mode} count={count} />}
-    {state && <V7LegacyStats rows={state.rows} stage={stage} mode={mode} count={count} />}
-    <p className="text-xs text-slate-600">各組番100円の仮想計算です。有効検証のみを集計し、保留と重複保留は件数のみ表示します。</p>
+  useEffect(() => { void load(); }, [load]);
+
+  if (!groups) {
+    return (
+      <section className="rounded-xl border border-slate-200 bg-white p-5" data-testid="v7-server-verification">
+        {loading ? (
+          <div role="status" className="text-sm text-slate-600">サーバー保存済みのV7予想と照合記録を読み込み中…</div>
+        ) : (
+          <div role="alert" className="space-y-3">
+            <p className="font-semibold text-rose-700">V7の正式データを取得できませんでした。</p>
+            <p className="text-sm text-slate-600">{error}</p>
+            <p className="text-xs text-slate-500">取得に失敗した場合は0件と表示せず、再取得を案内します。</p>
+            <button type="button" onClick={load}
+              className="min-h-11 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold">
+              もう一度読み込む
+            </button>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  return <section data-testid="v7-server-verification">
+    {error && <p role="alert" className="mb-3 text-sm text-rose-700">{error}</p>}
+    <V7DetailedReport groups={groups} fetchedAt={fetchedAt} onReload={load} loading={loading} />
   </section>;
 }
