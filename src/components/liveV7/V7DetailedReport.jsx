@@ -282,11 +282,16 @@ export default function V7DetailedReport({ groups, fetchedAt, onReload, loading 
                   </div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
+                  <span>予想本命 <strong>{row.prediction?.top_combination || '—'}</strong></span>
                   <span>確定三連単 <strong>{row.verification?.actual_result || '—'}</strong></span>
                   <span>{ticketCount}点・投資 {yen(plan.investment)}</span>
                   <span>払戻 {yen(plan.payout)}</span>
                   <span>レース別回収率 {percentage(Number(plan.investment) > 0 ? Number(plan.payout || 0) / Number(plan.investment) * 100 : null)}</span>
                 </div>
+                {Array.isArray(row.prediction?.plans?.[mode + '_' + ticketCount]?.tickets) &&
+                  <p className="mt-2 break-words text-[11px] leading-5 text-slate-600">
+                    買い目：{row.prediction.plans[mode + '_' + ticketCount].tickets.join(' / ')}
+                  </p>}
               </div>
             ))}
             {detailed.length > visibleCount &&
