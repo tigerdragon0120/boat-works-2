@@ -38,18 +38,24 @@ export default async function(req: Request): Promise<Response> {
     recorded: 0, existing: 0, deferred: 0, read_errors: 0, too_late: 0, duplicate_predictions: 0, after_cutoff_saves: 0 };
 
   try {
-    const [races, predictionsPage] = await Promise.all([
-      sr.Race.filter({ race_date: day }, "-deadline", 500),
+    const [racesPage, predictionsPage] = await Promise.all([
+      fetchAllPaged(
+        (query: any, options: any) => sr.Race.filter(query, options),
+        { race_date: day },
+        { sort: "-deadline", pageSize: 200, maxPages: 5, deadlineMs: Date.now() + 20000 }
+      ),
       fetchAllPaged(
         (query: any, options: any) => sr.PredictionV7.filter(query, options),
         { race_date: day, stage: "FINAL" },
         { sort: "-generated_at", pageSize: 200, maxPages: 8, deadlineMs: Date.now() + 20000 }
       ),
     ]);
-    if (!Array.isArray(races) || races.length >= 500 || !predictionsPage.complete) {
+    if (!racesPage.complete || !predictionsPage.complete) {
       return Response.json({ ok: false, error: "SourceReadIncomplete",
+        race_error: racesPage?.error || null, race_page: racesPage?.page || null,
         prediction_error: predictionsPage?.error || null, prediction_page: predictionsPage?.page || null }, { status: 503 });
     }
+    const races = racesPage.rows;
     const predictionsByKey = new Map<string, any[]>();
     for (const row of predictionsPage.rows) {
       if (!row?.race_key || row.stage !== "FINAL") continue;
@@ -181,6 +187,6 @@ export default async function(req: Request): Promise<Response> {
     return Response.json({ ...report, completed_at: new Date().toISOString() });
   } catch (err: any) {
     console.error("[V7_BUY_SHADOW] run failed", String(err?.message || err).slice(0,250));
-    return Response.json({ ok: false, error: "TrialReadOrProcessingFailed" }, { status: 503 });
+    return Response.json({ ok: false, error: "TrialReadOrProcessingFailed", detail: String(err?.message || "unknown").replace(/[A-Za-z0-9_./:-]{50,}/g, "[redacted]").slice(0, 180) }, { status: 503 });
   }
 }
