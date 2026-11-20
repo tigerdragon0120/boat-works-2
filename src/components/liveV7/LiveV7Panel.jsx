@@ -12,22 +12,24 @@ function Combination({value}){return <span className="inline-flex items-center g
 export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=true,exhibitionCount=6,activeBoatCount=6,readOnly=false}){
  const [,refresh]=useState(0),[stage,setStage]=useState('AUTO'),[mode,setMode]=useState('hit'),[count,setCount]=useState(8),[refreshing,setRefreshing]=useState(false);
  const savedState=useV7SavedRace(race);
+ const deadlineMs=Date.parse(race.deadline||'');
+ const pageClosed=['finished','cancelled'].includes(race.status)||(Number.isFinite(deadlineMs)&&Date.now()>=deadlineMs);
  useEffect(()=>{const clock=window.setInterval(()=>refresh(n=>n+1),15000);return()=>window.clearInterval(clock);},[race.id]);
  useEffect(()=>setStage('AUTO'),[race.id]);
  useEffect(()=>{
   // 匿名・締切済みの画面からは予想を生成・同期しない。既存の見た目を維持して保存済み予想を表示する。
-  const deadlineMs=Date.parse(race.deadline||'');
-  if(readOnly||(Number.isFinite(deadlineMs)&&Date.now()>=deadlineMs)||['finished','cancelled'].includes(race.status))return undefined;
+  if(readOnly||pageClosed)return undefined;
   // 生成されたV7予想は端末内に加えてサーバーへも保存する(検証用)。
   const off=liveV7.subscribe(()=>{refresh(n=>n+1);void syncV7ToServer(liveV7);});
   const stop=liveV7.watch(race.id);
   void syncV7ToServer(liveV7);
   return()=>{off();stop();};
- },[race.id,readOnly]);
+ },[race.id,readOnly,pageClosed]);
  const state=liveV7.get(race.id);
  const selected=finalOnly?'FINAL':stage==='AUTO'?(state.stages.FINAL?.status==='READY'||savedState.stages.FINAL?'FINAL':'PRE'):stage;
  const local=state.stages[selected];
- const result=local?.status==='READY'?local:(savedState.stages[selected]||local);
+ // 締切後は固定のサーバー保存予想を優先。端末内のみの参考予想を正式結果として扱わない。
+ const result=(pageClosed&&savedState.stages[selected])|| (local?.status==='READY'?local:(savedState.stages[selected]||local));
  const p=result?.record?.payload,o=p?.output;
  const usingSaved=result?.fromServer===true;
  const settlement=p&&!liveV7.conflicts.has(p.race_key)?liveV7.resultHistory.get(p.race_key):null;
@@ -46,7 +48,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  const evidence=official&&officialCombo?resolveEvidence(evidenceData?.rows||[],{
   combination:officialCombo,source:official.source,resultId:official.id,raceId:String(race.id)
  }):null;
- const verifiedResult=!!officialCombo&&officialPayout!=null&&evidenceData?.complete===true&&evidence?.status==='ok'&&!savedState.resultConflict;
+ const verifiedResult=!!officialCombo&&officialPayout!=null&&evidenceData?.complete===true&&evidence?.status==='ok'&&!savedState.resultConflict&&usingSaved;
  const plan=(mode==='hit'?o?.ticketPlans:o?.recoveryPlans)?.[count];
  const oddsFailed=!usingSaved&&state.quality?.rows?.find(row=>row.key==='odds')?.failed;
  const firstId=p?liveV7.first.get(JSON.stringify([p.race_key,selected])):null;
@@ -54,7 +56,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  const revisionCount=p?[...liveV7.records.values()].filter(r=>r.payload?.race_key===p.race_key&&r.payload?.stage===selected).length:0;
  const oddsCaptured=p?.snapshot?.provenance?.odds_captured_at??null;
  const deadline=Date.parse(race.deadline||'');
- const closed=state.closed||['finished','cancelled'].includes(race.status)||(Number.isFinite(deadline)&&Date.now()>=deadline);
+ const closed=state.closed||pageClosed;
  const remaining=Number.isFinite(deadline)?Math.max(0,Math.ceil((deadline-Date.now())/60000)):null;
  const refreshNow=async()=>{if(refreshing||closed||readOnly)return;setRefreshing(true);try{await liveV7.refresh(race.id);}finally{setRefreshing(false);}};
  const ordered=(plan?.tickets||[]).map(key=>o?.combinations?.find(row=>row.combination===key)).filter(Boolean);
@@ -97,7 +99,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
         <p className="text-sm font-bold">{verifiedResult?'公式照合済み':'結果取得済み・照合待ち'} 三連単 {resultCombo} ／ 払戻 {resultPayout==null?'未確認':resultPayout.toLocaleString('ja-JP')+'円'}</p>
         <p className={'rounded-lg p-3 text-sm font-bold '+(verifiedResult?(plan?.tickets?.includes(resultCombo)?'bg-emerald-50 text-emerald-800':'bg-slate-100 text-slate-800'):'bg-amber-50 text-amber-900')}>
           {verifiedResult?(plan?.tickets?.includes(resultCombo)?'この買い目は的中！':'この買い目は不的中'):
-            '暫定照合：'+(plan?.tickets?.includes(resultCombo)?'組番一致':'組番不一致')+'（正式判定は証跡・払戻の確認待ち）'}
+            '暫定照合：'+(plan?.tickets?.includes(resultCombo)?'組番一致':'組番不一致')+(usingSaved?'（正式判定は証跡・払戻の確認待ち）':'（端末参考予想・締切前サーバー保存の確認待ち）')}
         </p>
       </>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{savedState.resultConflict||officialResolution?.status==='conflict'?'確定結果に矛盾があるため判定保留':officialResolution?.status==='incomplete'?'公式結果の取得が未完了のため判定保留':'結果取得待ち。予想と買い目はこのまま残します。'}</p>}
     </div>}
