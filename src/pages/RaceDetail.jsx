@@ -326,6 +326,13 @@ export default function RaceDetail() {
         <ArrowLeft className="w-4 h-4" /> レース一覧
       </Link>
 
+
+
+      {/* 統合V7試験予想：既存データ読取のみ、購入判定・旧エンジン・履歴を変更しない
+          終了後は締切前に保存された予想（判定・買い目）と結果を表示する */}
+      <LiveV7Panel race={race} readOnly={!isAuthenticated || raceClosed} />
+
+      {/* 詳しい払戻内訳はV7予想より下に表示し、結果到着時も予想の位置を動かさない。 */}
       {raceResult && (raceResult.result_status === "RESULT_FINAL" || raceResult.is_finished) && (
         <div className="mb-4 rounded-xl border-2 border-rose-500 bg-white p-4 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -353,10 +360,6 @@ export default function RaceDetail() {
           </div>
         </div>
       )}
-
-      {/* 統合V7試験予想：既存データ読取のみ、購入判定・旧エンジン・履歴を変更しない
-          終了後は締切前に保存された予想（判定・買い目）と結果を表示する */}
-      <LiveV7Panel race={race} readOnly={!isAuthenticated || raceClosed} />
 
       {/* スプリットレイアウト: 左=予想サマリー / 右=出走表 */}
       <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
