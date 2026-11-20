@@ -6,7 +6,11 @@ const num = (n) => Number(n || 0).toLocaleString('ja-JP');
 const money = (n) => num(n) + '円';
 const pct = (numerator, denominator) => denominator ? (numerator / denominator * 100).toFixed(1) + '%' : '—';
 const dateValue = (v) => {
-  const ms = Date.parse(String(v || ''));
+  const raw = String(v || '').trim().replace(/(\\.\\d{3})\\d+/, '$1');
+  if (!raw) return null;
+  // DBのcreated_dateはTZのないUTC。JSTのブラウザーでもUTCとして比較する。
+  const normalized = /(Z|[+-]\\d{2}:?\\d{2})$/.test(raw) ? raw : raw + 'Z';
+  const ms = Date.parse(normalized);
   return Number.isFinite(ms) ? ms : null;
 };
 const LIMIT = 200;
