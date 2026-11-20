@@ -1,6 +1,6 @@
 import React, {useMemo} from "react";
 import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
-import V7SavedServerView from "@/components/liveV7/V7SavedServerView";
+// 開始後も同じLiveV7Panelを保持して予想と結果を併記する。
 import {buildV5ScenarioForecast} from "@/lib/v5ScenarioEngine";
 
 // A partial exhibition is enough for an explicitly labelled, provisional V7 view.
@@ -42,7 +42,7 @@ export default function UnifiedRaceView({race, entries, nextOpenRace=null, onSel
       <p className="font-bold">このレースは締切済みです。サーバーに締切前保存されたV7予想を表示します。締切後に新たな予想は作成しません。</p>
       {nextOpenRace && <button type="button" onClick={onSelectNextRace} className="rounded-lg bg-amber-400 px-4 py-2 font-bold text-slate-900">締切前の {nextOpenRace.race_number}R を見る（締切 {String(nextOpenRace.deadline).slice(11,16)}）</button>}
     </div>}
-    {raceClosed ? <V7SavedServerView race={race}/> : !exhibitReady ? <div className="space-y-3">
+    {!raceClosed && !exhibitReady ? <div className="space-y-3">
       {scenarios ? <>
         <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
           <p className="font-bold text-slate-900">{scenarios.verdict}</p>
@@ -59,6 +59,6 @@ export default function UnifiedRaceView({race, entries, nextOpenRace=null, onSel
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
         展示進入・ST・タイムの取得待ちです。取得できたデータが予想に足り次第、V7の予想候補を表示します。オッズの確定は待ちません。
       </div>
-    </div> : <LiveV7Panel key={race.id} race={race} finalOnly exhibitionComplete={exhibition.complete} exhibitionCount={exhibition.valid} activeBoatCount={activeBoatCount}/>}
+    </div> : <LiveV7Panel key={race.id} race={race} finalOnly readOnly={raceClosed} exhibitionComplete={exhibition.complete} exhibitionCount={exhibition.valid} activeBoatCount={activeBoatCount}/>}
   </section>;
 }
