@@ -25,6 +25,7 @@ import { fetchAllPaged } from "./pagedFetch.js";
 import { loadOfficialResultsByRace } from "./officialResultRead.js";
 import { provisionStageClaims } from "./v7StageClaimProvision.js";
 import { acquireLock, releaseLock } from "./concurrencyLock.js";
+import { selectV7RaceEntries } from "./v7RaceEntrySelector.js";
 
 const DEFAULT_HORIZON_MINUTES = 25;
 const MAX_RACES = 200;
@@ -149,7 +150,15 @@ export async function runV7AutoGeneration(client, options = {}) {
     list.push(row);
     entriesByRaceKey.set(key, list);
   }
-  for (const list of entriesByRaceKey.values()) list.sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
+  // 同じレース・艇が2回登録される場合がある。元データを消さず、
+  // 予想側だけで最新の6艇へ正規化する。選手ID矛盾は予想禁止。
+  const entryIssues = new Map();
+  for (const [key, list] of entriesByRaceKey) {
+    const race = targets.find((r) => r.race_key === key);
+    const chosen = selectV7RaceEntries(list, race);
+    if (chosen.reason) entryIssues.set(key, chosen.reason);
+    entriesByRaceKey.set(key, chosen.entries);
+  }
 
   const oddsByRaceId = new Map();
   for (const row of oddsRows) {
@@ -192,6 +201,12 @@ export async function runV7AutoGeneration(client, options = {}) {
     const raceEntries = (entriesByRaceKey.get(race.race_key) || []).map((row) => ({
       ...row, updated_date: platformUtc(row.updated_date),
     }));
+    if (entryIssues.has(race.race_key)) {
+      bump(entryIssues.get(race.race_key));
+      trace.observe(race, "PRE", "FAILED", entryIssues.get(race.race_key));
+      trace.observe(race, "FINAL", "FAILED", entryIssues.get(race.race_key));
+      continue;
+    }
     const raceOdds = (oddsByRaceId.get(race.id) || []).map((row) => ({
       ...row, captured_at: platformUtc(row.captured_at), updated_date: platformUtc(row.updated_date),
     }));
