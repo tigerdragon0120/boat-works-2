@@ -16,9 +16,10 @@ export default function useV7SavedRace(race) {
           base44.entities.OddsSnapshot.filter({race_id:race.id,stage:'FINAL'},'-captured_at',30),
         ]);
         if(!Array.isArray(rows) || !Array.isArray(odds)) throw new Error('V7の保存データを取得できませんでした');
-        const stages = Object.fromEntries(['PRE','FINAL'].map(stage=>[
-          stage,adaptSavedStage(selectSavedStage(rows,stage,race),odds)
-        ]));
+        const stages = {
+          PRE: adaptSavedStage(selectSavedStage(rows,'PRE',race),odds),
+          FINAL: adaptSavedStage(selectSavedStage(rows,'FINAL',race),odds),
+        };
         let evidence=null;
         const deadline = Date.parse(race.deadline || '');
         if(race.status==='finished'||(Number.isFinite(deadline)&&Date.now()>=deadline)) {
