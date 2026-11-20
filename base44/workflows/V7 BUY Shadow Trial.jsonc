@@ -1,0 +1,45 @@
+{
+  "name": "V7 BUY Shadow Trial",
+  "description": "V7 FINAL\u306e8\u70b9\u30fb\u30a4\u30f3\u96c6\u4e2d5\u70b9\u30fb\u5145\u8db3\u738795%\u4ee5\u4e0a\u30fb\u6700\u4f4e\u30aa\u30c3\u30ba8\u500d\u3092\u7de0\u520760\u79d2\u524d\u307e\u3067\u306b\u5224\u5b9a\u3057\u3001\u65b0\u898f\u53f0\u5e33\u306bBUY/SKIP/\u672a\u5224\u5b9a\u3092\u8ffd\u8a18\u3002\u73fe\u884cBUY\u306b\u306f\u5f71\u97ff\u3057\u306a\u3044\u3002",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "*/5 8-21 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "v7_buy_shadow_trial",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "record_v7_buy_trial": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v7BuyShadowTrial",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "V7 BUY\u5019\u88dc\u524d\u5411\u304d\u8a18\u9332",
+            "description": "\u73fe\u884cBUY\u3092\u5909\u3048\u305a\u3001\u7de0\u5207\u524d\u306eV7 FINAL\u3068\u5c01\u5370\u30aa\u30c3\u30ba\u3092\u72ec\u7acb\u53f0\u5e33\u306b\u8ffd\u8a18"
+          }
+        }
+      }
+    ]
+  }
+}
