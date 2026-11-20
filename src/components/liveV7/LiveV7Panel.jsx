@@ -37,12 +37,16 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  const officialResolution=evidenceData?.resultResolution;
  const official=officialResolution?.status==='ready'?officialResolution.result:null;
  const officialCombo=isValidTrifecta(official?.result_trifecta)?String(official.result_trifecta):null;
+ const candidate=savedState.resultConflict?null:savedState.resultCandidate;
+ const resultCombo=officialResolution?.status==='conflict'||savedState.resultConflict?null:(officialCombo||(isValidTrifecta(candidate?.result_trifecta)?String(candidate.result_trifecta):null));
  const officialPayoutValue=Number(official?.payout??official?.payouts?.trifecta?.payout);
  const officialPayout=Number.isFinite(officialPayoutValue)&&officialPayoutValue>0?officialPayoutValue:null;
+ const candidatePayoutValue=Number(candidate?.payout??candidate?.payouts?.trifecta?.payout);
+ const resultPayout=officialPayout??(Number.isFinite(candidatePayoutValue)&&candidatePayoutValue>0?candidatePayoutValue:null);
  const evidence=official&&officialCombo?resolveEvidence(evidenceData?.rows||[],{
   combination:officialCombo,source:official.source,resultId:official.id,raceId:String(race.id)
  }):null;
- const verifiedResult=!!officialCombo&&officialPayout!=null&&evidenceData?.complete===true&&evidence?.status==='ok';
+ const verifiedResult=!!officialCombo&&officialPayout!=null&&evidenceData?.complete===true&&evidence?.status==='ok'&&!savedState.resultConflict;
  const plan=(mode==='hit'?o?.ticketPlans:o?.recoveryPlans)?.[count];
  const oddsFailed=!usingSaved&&state.quality?.rows?.find(row=>row.key==='odds')?.failed;
  const firstId=p?liveV7.first.get(JSON.stringify([p.race_key,selected])):null;
@@ -78,7 +82,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
   <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-black text-slate-900">統合V7 <span className="text-sm font-medium text-slate-500">{o?.model==='WOMENS'?'女子戦':'通常戦'}・{selected}</span></h3><p className="text-xs text-slate-600">試験予想・確率未校正。購入推奨ではありません。</p></div><span className={'rounded-full px-3 py-1.5 text-sm font-bold '+(closed?'bg-slate-100 text-slate-700':'bg-blue-50 text-blue-800')}>{closed?'締切済み':('締切まで '+(remaining==null?'—':remaining+'分'))}</span></div>
   {!finalOnly&&<div className="flex gap-2">{['AUTO','PRE','FINAL'].map(s=><button type="button" key={s} onClick={()=>setStage(s)} aria-pressed={stage===s} className={'rounded-lg px-3 py-2 text-sm font-bold '+(stage===s?'bg-indigo-700 text-white':'bg-slate-100 text-slate-700')}>{s==='AUTO'?'自動切替':s}</button>)}</div>}
   {(state.error||liveV7.storageError)&&<p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{state.error||liveV7.storageError}</p>}
-  {!officialCombo&&settled&&<p data-testid="trial-v7-result" className="rounded-lg bg-slate-100 p-3 text-sm font-bold">取得結果 三連単 {settled.combination} / 払戻 {payout==null?'未取得':payout.toLocaleString('ja-JP')+'円'}（公式照合待ち）</p>}
+  {!resultCombo&&settled&&!savedState.resultConflict&&<p data-testid="trial-v7-result" className="rounded-lg bg-slate-100 p-3 text-sm font-bold">取得結果 三連単 {settled.combination} / 払戻 {payout==null?'未取得':payout.toLocaleString('ja-JP')+'円'}（公式照合待ち）</p>}
   {!o?<p data-testid="live-v7-waiting" className="rounded-lg border border-amber-200 bg-amber-50 p-4 font-semibold">{savedState.loading?'保存済みV7予想を確認中…':savedState.error?'保存済みデータの取得に失敗しました：'+savedState.error:(result?.reason||(closed?'締切前に保存されたV7予想はありません':'V7予想を準備中です'))}</p>:<>
    <div className="space-y-3 rounded-xl border border-blue-200 bg-blue-50 p-3 sm:p-4">
     <div className="flex flex-wrap items-center gap-2"><strong className="text-base">着順予想</strong><span className="rounded-md bg-white px-2 py-1 text-xs font-bold text-blue-900">{o.model==='WOMENS'?'女子戦モデル':'通常戦モデル'}</span><span className="text-xs text-slate-600">{exhibitionComplete?('展示反映 '+activeBoatCount+'艇'):('展示一部反映 '+exhibitionCount+'/'+activeBoatCount+'艇')}</span></div>
@@ -88,13 +92,14 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
    </div>
    {closed&&<div data-testid="v7-stable-result" className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4 space-y-3">
       <h4 className="font-black text-base text-slate-900">レース結果・的中判定</h4>
-      {officialCombo?<>
-        <div className="grid grid-cols-3 gap-2">{officialCombo.split('-').map((n,i)=><div key={i} className="flex flex-col items-center gap-1 rounded-lg bg-slate-50 p-2"><span className="text-xs font-bold text-slate-600">実際の{i+1}着</span><Boat n={n}/></div>)}</div>
-        <p className="text-sm font-bold">確定三連単 {officialCombo} ／ 払戻 {officialPayout==null?'未確認':officialPayout.toLocaleString('ja-JP')+'円'}</p>
-        <p className={'rounded-lg p-3 text-sm font-bold '+(verifiedResult?(plan?.tickets?.includes(officialCombo)?'bg-emerald-50 text-emerald-800':'bg-slate-100 text-slate-800'):'bg-amber-50 text-amber-900')}>
-          {verifiedResult?(plan?.tickets?.includes(officialCombo)?'この買い目は的中！':'この買い目は不的中'):'的中・不的中の正式判定は保留（取得証跡・払戻を照合中）'}
+      {resultCombo?<>
+        <div className="grid grid-cols-3 gap-2">{resultCombo.split('-').map((n,i)=><div key={i} className="flex flex-col items-center gap-1 rounded-lg bg-slate-50 p-2"><span className="text-xs font-bold text-slate-600">実際の{i+1}着</span><Boat n={n}/></div>)}</div>
+        <p className="text-sm font-bold">{verifiedResult?'公式照合済み':'結果取得済み・照合待ち'} 三連単 {resultCombo} ／ 払戻 {resultPayout==null?'未確認':resultPayout.toLocaleString('ja-JP')+'円'}</p>
+        <p className={'rounded-lg p-3 text-sm font-bold '+(verifiedResult?(plan?.tickets?.includes(resultCombo)?'bg-emerald-50 text-emerald-800':'bg-slate-100 text-slate-800'):'bg-amber-50 text-amber-900')}>
+          {verifiedResult?(plan?.tickets?.includes(resultCombo)?'この買い目は的中！':'この買い目は不的中'):
+            '暫定照合：'+(plan?.tickets?.includes(resultCombo)?'組番一致':'組番不一致')+'（正式判定は証跡・払戻の確認待ち）'}
         </p>
-      </>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{officialResolution?.status==='conflict'?'確定結果に矛盾があるため判定保留':officialResolution?.status==='incomplete'?'公式結果の取得が未完了のため判定保留':'結果取得待ち。予想と買い目はこのまま残します。'}</p>}
+      </>:<p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">{savedState.resultConflict||officialResolution?.status==='conflict'?'確定結果に矛盾があるため判定保留':officialResolution?.status==='incomplete'?'公式結果の取得が未完了のため判定保留':'結果取得待ち。予想と買い目はこのまま残します。'}</p>}
     </div>}
    <div className="space-y-3"><div className="flex items-center justify-between gap-2"><h4 className="text-lg font-black">三連単・買い目候補</h4><span className={'shrink-0 rounded-lg px-3 py-1.5 text-sm font-bold '+(plan?.judgment==='BUY'?'bg-emerald-100 text-emerald-900':'bg-amber-100 text-amber-900')}>{plan?.judgment==='BUY'?'研究用BUY':plan?.judgment||'判定保留'}</span></div>
     <div className="flex flex-wrap gap-3 rounded-lg bg-slate-50 p-3"><div><p className="mb-1 text-xs font-bold text-slate-600">方式</p><div className="flex gap-1">{[{key:'hit',label:'的中率'},{key:'value',label:'回収率'}].map(x=><button type="button" key={x.key} aria-pressed={mode===x.key} onClick={()=>setMode(x.key)} className={'min-h-10 rounded-lg px-3 text-sm font-bold '+(mode===x.key?'bg-indigo-700 text-white':'border border-slate-300 bg-white')}>{x.label}</button>)}</div></div><div><p className="mb-1 text-xs font-bold text-slate-600">点数</p><div className="flex flex-wrap gap-1">{[4,6,8,12].map(n=><button type="button" key={n} aria-pressed={count===n} onClick={()=>setCount(n)} className={'min-h-10 rounded-lg px-3 text-sm font-bold '+(count===n?'bg-indigo-700 text-white':'border border-slate-300 bg-white')}>{n}点</button>)}</div></div></div>
