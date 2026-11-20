@@ -138,7 +138,7 @@ export default function V7ServerVerification() {
 
   return <section data-testid="v7-server-verification">
     {error && <p role="alert" className="mb-3 text-sm text-rose-700">{error}</p>}
-    <V7DetailedReport groups={groups} fetchedAt={fetchedAt} onReload={load} loading={loading} />
     <V7BuyShadowProgress groups={groups} />
+    <V7DetailedReport groups={groups} fetchedAt={fetchedAt} onReload={load} loading={loading} />
   </section>;
 }
