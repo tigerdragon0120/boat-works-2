@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import LiveV7Panel from "@/components/liveV7/LiveV7Panel";
-import V7SavedServerView from "@/components/liveV7/V7SavedServerView";
+// V7は開始前・開始後で同じ画面を保持し、結果だけを追記する。
 import { liveV7 } from "@/liveV7/runtime";
 import { useParams, Link } from "react-router-dom";
 import { base44 } from "@/api/base44Client";
@@ -356,7 +356,7 @@ export default function RaceDetail() {
 
       {/* 統合V7試験予想：既存データ読取のみ、購入判定・旧エンジン・履歴を変更しない
           終了後は締切前に保存された予想（判定・買い目）と結果を表示する */}
-      {raceClosed || !isAuthenticated ? <V7SavedServerView race={race} /> : <LiveV7Panel race={race} />}
+      <LiveV7Panel race={race} readOnly={!isAuthenticated || raceClosed} />
 
       {/* スプリットレイアウト: 左=予想サマリー / 右=出走表 */}
       <div className="grid lg:grid-cols-[minmax(0,380px)_1fr] gap-3 sm:gap-4">
