@@ -31,6 +31,7 @@ export function adaptSavedStage(row, oddsRows = []) {
   const eligibleOdds = (oddsRows || []).filter((s) => s?.race_id === row.race_id
     && s.stage === 'FINAL' && ms(s.captured_at) != null
     && predictedAt != null && ms(s.captured_at) <= predictedAt
+    && predictedAt - ms(s.captured_at) <= 10 * 60 * 1000
     && deadline != null && ms(s.captured_at) < deadline
   ).sort((a,b) => ms(b.captured_at) - ms(a.captured_at));
   const odds = eligibleOdds[0] || null;
