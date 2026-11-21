@@ -1,0 +1,45 @@
+{
+  "name": "V8 Pattern Capture",
+  "description": "\u516c\u5f0f\u7d50\u679c\u3092\u78ba\u5b9a\u5f8c\u306b\u8aad\u307f\u53d6\u308a\u3001\u67a0\u756a\u30fb\u7740\u9806\u30fb\u6c7a\u307e\u308a\u624b\u30fb\u98a8\u5411\u30fb\u98a8\u901f\u3092\u72ec\u7acb\u306eV8\u7814\u7a76\u53f0\u5e33\u3078\u8ffd\u8a18\u3002\u65e2\u5b58BUY\u3092\u5909\u66f4\u3057\u306a\u3044\u3002",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "7,17,27,37,47,57 8-22 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "v8_pattern_capture",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "capture_v8_patterns": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v8CapturePatternEvidence",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "V8 \u52dd\u3061\u30d1\u30bf\u30fc\u30f3\u78ba\u5b9a\u8a18\u9332",
+            "description": "\u7d50\u679c\u30fb\u6c7a\u307e\u308a\u624b\u30fb\u67a0\u756a\u3068\u6c17\u8c61\u3092\u72ec\u7acb\u53f0\u5e33\u306b\u8ffd\u8a18\u3002\u73fe\u884cV7\u306b\u306f\u5f71\u97ff\u3057\u306a\u3044"
+          }
+        }
+      }
+    ]
+  }
+}
