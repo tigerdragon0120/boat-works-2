@@ -35,7 +35,7 @@ function readStats(candidates,groupByKey,phase){
 export default function V7FactorCandidates({groups=[]}){
   const {user}=useAuth();
   const admin=user?.role==='admin';
-  const [data,setData]=useState(null),[error,setError]=useState(null),[loading,setLoading]=useState(false);
+  const [data,setData]=useState(null),[verifications,setVerifications]=useState(null),[error,setError]=useState(null),[loading,setLoading]=useState(false);
   const [model,setModel]=useState('OPEN'),[phase,setPhase]=useState('ALL'),[predictionStage,setPredictionStage]=useState('FINAL');
   const reload=async()=>{
     if(!admin)return;
@@ -43,10 +43,11 @@ export default function V7FactorCandidates({groups=[]}){
     try{
       // 1日ごとに読むことで500件制限による欠落を防ぐ。
       const dates=Array.from({length:7},(_,i)=>jstDate(-i));
-      const pages=await Promise.all(dates.map(date=>base44.entities.V7FactorCandidate.filter(
-        {race_date:date},'-created_date',500
-      )));
-      if(pages.some(page=>!Array.isArray(page)||page.length>=500)){
+      const [pages,verificationPages]=await Promise.all([
+        Promise.all(dates.map(date=>base44.entities.V7FactorCandidate.filter({race_date:date},'-created_date',500))),
+        Promise.all(dates.map(date=>base44.entities.PredictionV7Verification.filter({race_date:date,stage:'FINAL'},'-created_date',500)))
+      ]);
+      if([...pages,...verificationPages].some(page=>!Array.isArray(page)||page.length>=500)){
         throw new Error('一部の日付の候補を全件取得できず、集計を停止しました');
       }
       const ids=new Set();const rows=[];
@@ -55,19 +56,33 @@ export default function V7FactorCandidates({groups=[]}){
         ids.add(row.id);rows.push(row);
       }
       setData(rows);
-    }catch(e){setData(null);setError(e?.message||'候補を取得できませんでした')}
+      setVerifications(verificationPages.flat());
+    }catch(e){setData(null);setVerifications(null);setError(e?.message||'候補を取得できませんでした')}
     finally{setLoading(false)}
   };
   useEffect(()=>{if(admin)void reload()},[admin]);
   const verifiedByKey=useMemo(()=>{
     const map=new Map();
-    for(const g of groups){
-      if(g.stage==='FINAL'&&g.status==='VERIFIED'&&g.verification){
-        if(!map.has(g.raceKey))map.set(g.raceKey,g);
-      }
+    const byHash=new Map();
+    for(const v of verifications||[]){
+      if(!v?.record_hash)continue;
+      const old=byHash.get(v.record_hash);
+      if(!old||String(v.created_date||'')>String(old.created_date||''))byHash.set(v.record_hash,v);
+    }
+    const ambiguous=new Set();
+    for(const v of byHash.values()){
+      if(v.stage!=='FINAL'||v.verification_version!=='v2'||v.verification_status!=='VERIFIED')continue;
+      if(!v.race_key)continue;
+      const old=map.get(v.race_key);
+      if(old&&old.verification?.actual_result!==v.actual_result)ambiguous.add(v.race_key);
+      else map.set(v.race_key,{status:'VERIFIED',verification:v});
+    }
+    for(const key of ambiguous)map.delete(key);
+    if(!verifications)for(const g of groups){
+      if(g.stage==='FINAL'&&g.status==='VERIFIED'&&g.verification&&!map.has(g.raceKey))map.set(g.raceKey,g);
     }
     return map;
-  },[groups]);
+  },[groups,verifications]);
   const filtered=useMemo(()=>{
     const records=(data||[]).filter(c=>c.model===model);
     const first=new Map();
