@@ -24,17 +24,23 @@ export function selectSavedStage(rows, stage, race) {
   return eligible.length === 1 ? eligible[0] : null;
 }
 
-export function adaptSavedStage(row, oddsRows = []) {
+// 画面に出すオッズは「いま取得できている直近の実オッズ」。予想時点のオッズとは別物。
+// 締切後は締切前に取得された最後のオッズだけを表示し、結果確定後の数字を遡及させない。
+export function latestDisplayOddsSnapshot(oddsRows = [], raceId, deadlineValue, now = Date.now()) {
+  const deadline = ms(deadlineValue);
+  if (!raceId || deadline == null) return null;
+  const maxTime = Math.min(now, deadline);
+  return (oddsRows || []).filter((s) => s?.race_id === raceId
+    && s.stage === 'FINAL' && ms(s.captured_at) != null
+    && ms(s.captured_at) <= now && ms(s.captured_at) < maxTime
+    && s.odds_map && typeof s.odds_map === 'object'
+  ).sort((a, b) => ms(b.captured_at) - ms(a.captured_at))[0] || null;
+}
+
+export function adaptSavedStage(row, oddsRows = [], now = Date.now()) {
   if (!row) return null;
   const predictedAt = ms(row.generated_at);
-  const deadline = ms(row.deadline);
-  const eligibleOdds = (oddsRows || []).filter((s) => s?.race_id === row.race_id
-    && s.stage === 'FINAL' && ms(s.captured_at) != null
-    && predictedAt != null && ms(s.captured_at) <= predictedAt
-    && predictedAt - ms(s.captured_at) <= 10 * 60 * 1000
-    && deadline != null && ms(s.captured_at) < deadline
-  ).sort((a,b) => ms(b.captured_at) - ms(a.captured_at));
-  const odds = eligibleOdds[0] || null;
+  const odds = latestDisplayOddsSnapshot(oddsRows, row.race_id, row.deadline, now);
   const oddsMap = odds?.odds_map || {};
   const plans = { hit: {}, value: {} };
   const combinations = new Map();
@@ -70,7 +76,9 @@ export function adaptSavedStage(row, oddsRows = []) {
   return { status: 'READY', record: { id: row.id,
     payload: { race_key: row.race_key, deadline: row.deadline, generated_at: row.generated_at,
       input_hash: row.input_hash || null, stage: row.stage,
-      output, snapshot: {oddsMap, provenance: {odds_captured_at: odds?.captured_at || null} }
+      output, snapshot: {oddsMap, provenance: {odds_captured_at: odds?.captured_at || null,
+        display_odds_after_prediction: odds && predictedAt != null ? ms(odds.captured_at) > predictedAt : false,
+        display_odds_only: true} }
     }
   }, fromServer: true };
 }
