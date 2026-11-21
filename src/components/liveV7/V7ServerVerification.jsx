@@ -6,6 +6,7 @@ import { groupPredictions, latestPerRecord, rowOrder, jstDate } from '@/lib/v7Ve
 import V7DetailedReport from '@/components/liveV7/V7DetailedReport';
 import V7BuyShadowProgress from '@/components/liveV7/V7BuyShadowProgress';
 import V7FeatureLab from '@/components/liveV7/V7FeatureLab';
+import V7FactorCandidates from '@/components/liveV7/V7FactorCandidates';
 
 const PAGE_SIZE = 200;
 const MAX_PAGES = 100;
@@ -141,6 +142,7 @@ export default function V7ServerVerification() {
     {error && <p role="alert" className="mb-3 text-sm text-rose-700">{error}</p>}
     <V7BuyShadowProgress groups={groups} />
     <V7FeatureLab groups={groups} />
+    <V7FactorCandidates groups={groups} />
     <V7DetailedReport groups={groups} fetchedAt={fetchedAt} onReload={load} loading={loading} />
   </section>;
 }
