@@ -54,7 +54,14 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  const firstId=p?liveV7.first.get(JSON.stringify([p.race_key,selected])):null;
  const firstRecord=firstId?liveV7.records.get(firstId):null;
  const revisionCount=p?[...liveV7.records.values()].filter(r=>r.payload?.race_key===p.race_key&&r.payload?.stage===selected).length:0;
- const oddsCaptured=p?.snapshot?.provenance?.odds_captured_at??null;
+ // 最新の締切前オッズを表示専用に使う。固定済みの予想やBUY判定には反映しない。
+ const displayOddsSnapshot=savedState.displayOdds;
+ const originalOddsAt=p?.snapshot?.provenance?.odds_captured_at??null;
+ const usingDisplayOdds=!!displayOddsSnapshot && (
+  !originalOddsAt || Date.parse(displayOddsSnapshot.captured_at)>=Date.parse(originalOddsAt));
+ const displayOddsMap=usingDisplayOdds?displayOddsSnapshot.odds_map:(p?.snapshot?.oddsMap||{});
+ const oddsCaptured=usingDisplayOdds?displayOddsSnapshot.captured_at:originalOddsAt;
+ const oddsAgeMs=oddsCaptured?Date.now()-Date.parse(oddsCaptured):null;
  const deadline=Date.parse(race.deadline||'');
  const closed=state.closed||pageClosed;
  const remaining=Number.isFinite(deadline)?Math.max(0,Math.ceil((deadline-Date.now())/60000)):null;
@@ -63,10 +70,12 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  // Synthetic/composite odds (dutching) = 1 / sum(1 / decimal_odds).
  // Show only when every selected ticket has a valid odds quote.
  // This assumes payouts are balanced across bets, unlike current 100-yen-per-ticket display.
- const selectedOdds=(plan?.tickets||[]).map(key=>Number(p?.snapshot?.oddsMap?.[key]));
+ const selectedOdds=(plan?.tickets||[]).map(key=>Number(displayOddsMap?.[key]));
+ const displayOddsCoverage=plan?.tickets?.length
+  ?plan.tickets.filter(k=>Number.isFinite(Number(displayOddsMap?.[k]))&&Number(displayOddsMap[k])>0).length/plan.tickets.length:null;
  const allOddsAvailable=selectedOdds.length>0 && selectedOdds.length===plan?.tickets?.length &&
    selectedOdds.every(value=>Number.isFinite(value) && value>0);
- const compositeOdds=selected==='FINAL' && !oddsFailed && allOddsAvailable
+ const compositeOdds=selected==='FINAL' && allOddsAvailable
    ?1/selectedOdds.reduce((total,value)=>total+1/value,0):null;
  const balanced=compositeOdds!=null?minimumBalancedStakes(selectedOdds):null;
  // Display one physically possible ordered finish. Marginal leaders at
@@ -117,10 +126,10 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
      </div>
      <div className="overflow-hidden rounded-lg border border-slate-200">
       <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_3rem_3.5rem_4rem] items-center gap-1 bg-slate-100 px-2 py-2 text-xs font-bold text-slate-600 sm:grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_6rem]"><span>順</span><span>組番</span><span className="text-right">確率</span><span className="text-right">オッズ</span><span className="text-right">配分額</span></div>
-      {ordered.map((t,i)=><div key={t.combination} className={'grid grid-cols-[1.5rem_minmax(0,1fr)_3rem_3.5rem_4rem] items-center gap-1 border-t border-slate-200 px-2 py-2 sm:grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_6rem] '+(verifiedResult&&t.combination===officialCombo?'bg-emerald-100 ring-1 ring-inset ring-emerald-400':i%2?'bg-slate-50':'bg-white')}><span className="text-sm font-semibold text-slate-500">{i+1}</span><span className="flex flex-wrap items-center gap-1"><Combination value={t.combination}/>{verifiedResult&&t.combination===officialCombo&&<span className="text-xs font-black text-emerald-800">的中</span>}</span><strong className="text-right text-sm text-indigo-900">{pct(t.probability)}</strong><strong className="text-right text-sm">{oddsFailed?'—':p.snapshot.oddsMap?.[t.combination]??'—'}</strong><strong className="text-right text-sm text-blue-900">{balanced?balanced.stakes[plan.tickets.indexOf(t.combination)].toLocaleString('ja-JP')+'円':'—'}</strong></div>)}
+      {ordered.map((t,i)=><div key={t.combination} className={'grid grid-cols-[1.5rem_minmax(0,1fr)_3rem_3.5rem_4rem] items-center gap-1 border-t border-slate-200 px-2 py-2 sm:grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_6rem] '+(verifiedResult&&t.combination===officialCombo?'bg-emerald-100 ring-1 ring-inset ring-emerald-400':i%2?'bg-slate-50':'bg-white')}><span className="text-sm font-semibold text-slate-500">{i+1}</span><span className="flex flex-wrap items-center gap-1"><Combination value={t.combination}/>{verifiedResult&&t.combination===officialCombo&&<span className="text-xs font-black text-emerald-800">的中</span>}</span><strong className="text-right text-sm text-indigo-900">{pct(t.probability)}</strong><strong className="text-right text-sm">{displayOddsMap?.[t.combination]??'—'}</strong><strong className="text-right text-sm text-blue-900">{balanced?balanced.stakes[plan.tickets.indexOf(t.combination)].toLocaleString('ja-JP')+'円':'—'}</strong></div>)}
      </div>
-     <p className="text-xs text-slate-600">使用オッズ {fmt(oddsCaptured)} / オッズ充足 {pct(plan.oddsCoverage)}。オッズは締切まで変動します。</p>
-     <p className="text-xs text-slate-600">概算合成オッズは選択した全買い目のオッズから算出し、払戻がほぼ等しくなる資金配分を仮定した参考倍率です。表示中の「100円ずつ購入」とは異なります。オッズ不足・取得失敗時は表示しません。</p></>:<p className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">この方式では有効な買い目が不足しています。的中率方式で候補を確認できます。</p>}
+     <p className="text-xs text-slate-600">表示オッズ {fmt(oddsCaptured)} / オッズ充足 {pct(displayOddsCoverage)}。{usingDisplayOdds?'サーバー取得の実オッズを表示（予想時点より後の更新を含みます）。':'予想時点に取得したオッズを表示。'}{oddsAgeMs!=null&&oddsAgeMs>10*60*1000&&!closed?' 最終取得から10分以上経過しています。':''}オッズは締切まで変動します。</p>
+     <p className="text-xs text-slate-600">概算合成オッズと配分額は表示用の取得オッズによる参考計算で、保存済みの予想・BUY/WATCH・検証成績を再判定しません。表示中の「100円ずつ購入」とは異なります。オッズ不足時は表示しません。</p></>:<p className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">この方式では有効な買い目が不足しています。的中率方式で候補を確認できます。</p>}
    </div>
   </>}
   <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-slate-50 p-3"><span className="text-xs text-slate-600">{usingSaved?'サーバー保存済みV7':'読込 '+fmt(state.lastRead)+' / 更新 '+(revisionCount?revisionCount-1:0)+'件（端末内）'} / 使用オッズ {fmt(oddsCaptured)}</span><button type="button" onClick={refreshNow} disabled={refreshing||closed||readOnly} className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-bold text-blue-800 disabled:opacity-50">{refreshing?'更新中…':'予想・オッズを再確認'}</button></div>
