@@ -5,6 +5,7 @@ import { base44 } from '@/api/base44Client';
 import { groupPredictions, latestPerRecord, rowOrder, jstDate } from '@/lib/v7Verification';
 import V7DetailedReport from '@/components/liveV7/V7DetailedReport';
 import V7BuyShadowProgress from '@/components/liveV7/V7BuyShadowProgress';
+import V7FeatureLab from '@/components/liveV7/V7FeatureLab';
 
 const PAGE_SIZE = 200;
 const MAX_PAGES = 100;
@@ -139,6 +140,7 @@ export default function V7ServerVerification() {
   return <section data-testid="v7-server-verification">
     {error && <p role="alert" className="mb-3 text-sm text-rose-700">{error}</p>}
     <V7BuyShadowProgress groups={groups} />
+    <V7FeatureLab groups={groups} />
     <V7DetailedReport groups={groups} fetchedAt={fetchedAt} onReload={load} loading={loading} />
   </section>;
 }
