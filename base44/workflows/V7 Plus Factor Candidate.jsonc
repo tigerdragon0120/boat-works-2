@@ -1,0 +1,45 @@
+{
+  "name": "V7 Plus Factor Candidate",
+  "description": "V7FeatureSnapshot\u306e\u7de0\u5207\u524d\u30c7\u30fc\u30bf\u3092\u4f7f\u3044\u3001\u4e00\u822c/\u5973\u5b50\u30fb\u4e88\u9078/\u6e96\u512a/\u512a\u52dd\u3054\u3068\u306b\u5225\u306e\u672a\u6821\u6b638\u70b9\u5019\u88dc\u3092\u4fdd\u5b58\u3002\u65e2\u5b58V7 BUY\u306b\u306f\u53cd\u6620\u3057\u306a\u3044\u3002",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "4,9,14,19,24,29,34,39,44,49,54,59 8-21 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "v7_factor_candidate_capture",
+      "version": "1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "capture_v7_factor": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v7GenerateFactorCandidates",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "V7\uff0b\u7814\u7a76\u5019\u88dc\u3092\u8a18\u9332",
+            "description": "6\u8247\u306e\u56e0\u5b50\u304b\u3089\u7814\u7a76\u75288\u70b9\u5019\u88dc\u3092\u72ec\u7acb\u4fdd\u5b58\u3057\u3001\u65e2\u5b58V7\u3092\u5909\u66f4\u3057\u306a\u3044"
+          }
+        }
+      }
+    ]
+  }
+}
