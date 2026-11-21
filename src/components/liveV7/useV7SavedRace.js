@@ -38,6 +38,7 @@ async function loadSavedPredictions(race) {
 
 export default function useV7SavedRace(race) {
   const [data, setData] = useState(EMPTY);
+  const [reloadToken, setReloadToken] = useState(0);
   useEffect(() => {
     if (!race?.id || !race?.race_key) return;
     let active = true;
@@ -101,6 +102,6 @@ export default function useV7SavedRace(race) {
       if (!document.hidden) void load();
     }, 45000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [race?.id, race?.race_key, race?.deadline]);
-  return data;
+  }, [race?.id, race?.race_key, race?.deadline, reloadToken]);
+  return { ...data, reload: () => setReloadToken(n => n + 1) };
 }
