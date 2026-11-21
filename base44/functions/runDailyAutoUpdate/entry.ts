@@ -1006,6 +1006,8 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
     // 10分前から対象にして、遅くとも5分前には表示し、次の実行で直前オッズへ更新する。
     const inFinalWindow = nowMs >= deadlineMs - 10 * 60 * 1000 && nowMs <= deadlineMs + 3 * 60 * 1000;
     if (!inDisplayOddsWindow) continue;
+    // 展示未取得レースのオッズは締切前のみ採用。後出し値で事前予想を飾らない。
+    if (race.exhibition_ready !== true && nowMs >= deadlineMs) continue;
 
     const venueCode = race.venue_code;
     const raceNumber = race.race_number;
