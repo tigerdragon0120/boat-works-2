@@ -1,0 +1,180 @@
+{
+  "name": "V7FactorCandidate",
+  "type": "object",
+  "description": "\u7814\u7a76\u7528V7+\u591a\u56e0\u5b50\u9806\u4f4d\u4e88\u60f3\u3002V7FeatureSnapshot\u306e\u7de0\u5207\u524d\u56fa\u5b9a\u5024\u304b\u3089\u751f\u6210\u3002\u65e2\u5b58\u306ePredictionV7\u3084BUY\u306f\u5909\u66f4\u3057\u306a\u3044\u3002\u30b9\u30b3\u30a2\u306f\u672a\u6821\u6b63\u3002",
+  "properties": {
+    "candidate_key": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "string"
+    },
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "PRE",
+        "FINAL",
+        "LOCK"
+      ]
+    },
+    "model": {
+      "type": "string",
+      "enum": [
+        "OPEN",
+        "WOMENS",
+        "UNKNOWN"
+      ]
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "QUALIFYING",
+        "SEMIFINAL",
+        "FINAL",
+        "OTHER",
+        "UNKNOWN"
+      ]
+    },
+    "source_snapshot_id": {
+      "type": "string"
+    },
+    "source_snapshot_key": {
+      "type": "string"
+    },
+    "source_observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "decided_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "baseline_prediction_hash": {
+      "type": "string"
+    },
+    "baseline_top": {
+      "type": "string"
+    },
+    "factor_top": {
+      "type": "string"
+    },
+    "baseline_tickets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "factor_tickets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rankings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "boat_factors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "weights": {
+      "type": "object"
+    },
+    "observed_features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "diff_from_baseline": {
+      "type": "boolean"
+    },
+    "confidence_label": {
+      "type": "string"
+    },
+    "buy_judgment": {
+      "type": "string",
+      "enum": [
+        "RESEARCH_ONLY"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "CANDIDATE",
+        "INSUFFICIENT"
+      ]
+    },
+    "provenance": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "candidate_key",
+    "revision",
+    "race_id",
+    "race_key",
+    "race_date",
+    "stage",
+    "model",
+    "phase",
+    "source_snapshot_key",
+    "deadline",
+    "decided_at",
+    "status",
+    "buy_judgment"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "none"
+      }
+    }
+  }
+}
