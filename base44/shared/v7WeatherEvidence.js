@@ -8,6 +8,13 @@ const textFromHtml=html=>String(html||"")
 export function parseWeatherEvidence(html,kind,raceDate){
   if(!["PRE_REFERENCE","RESULT_ACTUAL"].includes(kind))return {ok:false,reason:"BAD_KIND"};
   const raw=textFromHtml(html);
+  // Official page uses icon CSS classes instead of written compass directions.
+  // Keep the raw code; do not assign an unverified compass bearing.
+  const weatherBlock=String(html||'').match(/<div\s+class=["']weather1["'][\s\S]{0,3500}/i)?.[0]||'';
+  const iconRaw=weatherBlock.match(/is-windDirection[\s\S]{0,220}?is-wind(\d{1,2})\b/i)?.[1]||null;
+  const iconValue=iconRaw!=null?Number(iconRaw):null;
+  const windIconCode=Number.isInteger(iconValue)&&iconValue>=1&&iconValue<=16?iconValue:null;
+  const refRace=raw.match(/水面気象情報\s*(\d{1,2})\s*R時点/)?.[1]||null;
   // Weather is read only from the explicit weather block, not unrelated weather text in ads.
   const head=raw.indexOf("水面気象情報");
   let text=head>=0?raw.slice(head,head+750):"";
@@ -37,7 +44,8 @@ export function parseWeatherEvidence(html,kind,raceDate){
   if(!windDir)missing.push("WIND_DIRECTION_MISSING");
   if(!displayedAt&&kind==="PRE_REFERENCE")missing.push("DISPLAYED_TIME_MISSING");
   if(!weather)missing.push("WEATHER_MISSING");
-  return {ok:true,wind_speed:speed,wind_dir:windDir,weather,wave_height:wave,
+  return {ok:true,wind_speed:speed,wind_dir:windDir,wind_icon_code:windIconCode,
+    reference_race_number:refRace!=null?Number(refRace):null,weather,wave_height:wave,
     water_temp:water,air_temp:air,source_display_time:displayedAt,missing};
 }
 export function weatherBucket(speed){
@@ -54,7 +62,7 @@ export function weatherObservation({race,kind,parsed,observedAt,resultTrifecta=n
   const display=parsed.source_display_time?Date.parse(parsed.source_display_time):null;
   const age=display!=null?Math.round((observed-display)/60000):null;
   const stale=before&&(age==null||age<0||age>60);
-  const hasWind=parsed.wind_speed!=null&&parsed.wind_dir!=null;
+  const hasWind=parsed.wind_speed!=null&&(parsed.wind_dir!=null||parsed.wind_icon_code!=null);
   const quality=hasWind&&!stale?"COMPLETE":"PARTIAL";
   const result= !before&&/^[1-6]-[1-6]-[1-6]$/.test(String(resultTrifecta||""))?resultTrifecta:null;
   return {
@@ -64,6 +72,8 @@ export function weatherObservation({race,kind,parsed,observedAt,resultTrifecta=n
     kind,source_page:sourceUrl,observed_at:observedAt,
     ...(parsed.source_display_time?{source_display_time:parsed.source_display_time}:{}),
     deadline:race.deadline,weather:parsed.weather||undefined,wind_dir:parsed.wind_dir||undefined,
+    wind_icon_code:parsed.wind_icon_code??undefined,
+    reference_race_number:parsed.reference_race_number??undefined,
     wind_speed:parsed.wind_speed??undefined,wave_height:parsed.wave_height??undefined,
     water_temp:parsed.water_temp??undefined,air_temp:parsed.air_temp??undefined,
     source_scope:before?"LATEST_AVAILABLE_RACE_REFERENCE":"RESULT_PAGE_OWN_RACE",
@@ -71,6 +81,7 @@ export function weatherObservation({race,kind,parsed,observedAt,resultTrifecta=n
     missing:[...parsed.missing,...(stale?["REFERENCE_TIMESTAMP_UNVERIFIED_OR_STALE"]:[])],
     ...(result?{first_boat_win:result.startsWith("1-"),result_trifecta:result}:{}),
     provenance:{read_time:observedAt,official_url:sourceUrl,kind,
-      result_attested:!!result,estimates_used:false,wind_class:"NOT_MAPPED"}
+      result_attested:!!result,estimates_used:false,wind_class:"NOT_MAPPED",
+      wind_raw_icon:parsed.wind_icon_code??null,reference_race_number:parsed.reference_race_number??null}
   };
 }
