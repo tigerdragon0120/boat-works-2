@@ -168,7 +168,7 @@ export default function V7FeatureLab({groups=[]}) {
         <Metric label="保存済みレース" value={number(data.total)+'R'} sub={'時点記録 '+number(data.rawCount)+'件'} />
         <Metric label="結果照合済み" value={number(data.withResults)+'R'} sub="V7 VERIFIEDと一致したもののみ" />
         <Metric label="オッズ変動を比較" value={number(data.movement)+'R'} sub={data.oddsDelta!=null?'平均変化の絶対値 '+data.oddsDelta.toFixed(1)+'%':'まだ不足'} />
-        <Metric label="予想の本命変更" value={number(data.changedCount)+'R'} sub={data.changed.length+'レースでPREとFINALの比較可能'} />
+        <Metric label="予想の本命変更" value={number(data.changedCount)+'R'} sub={data.changed+'レースでPREとFINALの比較可能'} />
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         <Metric label="気象・風の取得" value={pct(data.weather,data.total)} sub={data.weather+'/'+data.total+'R'} />
