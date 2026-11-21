@@ -1,0 +1,134 @@
+{
+  "name": "V8PatternEvidence",
+  "type": "object",
+  "description": "V8\u30ec\u30fc\u30b9\u5b9f\u7e3e\u56fa\u5b9a\u53f0\u5e33\u3002\u78ba\u5b9a\u30ec\u30fc\u30b9\u30fb\u9078\u624b\u5225\u7740\u9806/\u6c7a\u307e\u308a\u624b\u30fb\u5834\u5225\u98a8\u5411\u98a8\u901f\u3092\u7167\u5408\u3057\u3066\u8a18\u9332\u3002\u67a0\u756a\u3068\u672a\u78ba\u8a8d\u306e\u5b9f\u9032\u5165\u306f\u660e\u78ba\u306b\u533a\u5225\u3002",
+  "properties": {
+    "evidence_key": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_id": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "model": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "result_trifecta": {
+      "type": "string"
+    },
+    "winner_boat": {
+      "type": "number"
+    },
+    "winner_register": {
+      "type": "string"
+    },
+    "winning_method": {
+      "type": "string"
+    },
+    "result_finished_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "weather_observation_id": {
+      "type": "string"
+    },
+    "weather_quality": {
+      "type": "string"
+    },
+    "wind_icon_code": {
+      "type": "number"
+    },
+    "wind_dir": {
+      "type": "string"
+    },
+    "wind_speed": {
+      "type": "number"
+    },
+    "weather": {
+      "type": "string"
+    },
+    "wave_height": {
+      "type": "number"
+    },
+    "tide_level": {
+      "type": "number"
+    },
+    "tide_state": {
+      "type": "string"
+    },
+    "tide_source": {
+      "type": "string"
+    },
+    "boat_results": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "data_quality": {
+      "type": "string"
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "source": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "evidence_key",
+    "race_key",
+    "race_id",
+    "race_date",
+    "venue_code",
+    "race_number",
+    "result_trifecta",
+    "winner_boat",
+    "captured_at",
+    "data_quality"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "none"
+      }
+    }
+  }
+}
