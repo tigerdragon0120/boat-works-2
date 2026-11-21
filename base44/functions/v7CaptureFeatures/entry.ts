@@ -36,9 +36,10 @@ export default async function(req:Request):Promise<Response>{
   const day=DAY();
   const summary:any={ok:true,day,dry_run,revision:FEATURE_REVISION,races:0,candidates:0,created:0,
     partial:0,skipped_existing:0,skipped_source:0,errors:0,late_saves:0,model_changes:0};
-  const lockId=dryRun?null:await acquireLock(client,"V7_FEATURE_CAPTURE_"+day,"v7CaptureFeatures",3*60*1000);
-  if(!dryRun&&!lockId)return Response.json({...summary,skipped:"locked"});
+  let lockId:any=null;
   try{
+    lockId=dryRun?null:await acquireLock(client,"V7_FEATURE_CAPTURE_"+day,"v7CaptureFeatures",3*60*1000);
+    if(!dryRun&&!lockId)return Response.json({...summary,skipped:"locked"});
     const budget=Date.now()+35000;
     const [racePage,predPage,savedPage]=await Promise.all([
       fetchAllPaged((q:any,o:any)=>sr.Race.filter(q,o),{race_date:day},{pageSize:200,maxPages:3,deadlineMs:budget}),
@@ -116,7 +117,7 @@ export default async function(req:Request):Promise<Response>{
     return Response.json({...summary,completed_at:new Date().toISOString()});
   }catch(error:any){
     console.error("[V7_FEATURES] top_level_error",String(error?.message||error).slice(0,220));
-    return Response.json({ok:false,error:"V7_FEATURE_CAPTURE_FAILED"},{status:503});
+    return Response.json({ok:false,error:"V7_FEATURE_CAPTURE_FAILED",detail:String(error?.message||error).slice(0,140)},{status:503});
   }finally{
     if(lockId)await releaseLock(client,lockId).catch(()=>{});
   }
