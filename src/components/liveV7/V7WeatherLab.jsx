@@ -11,7 +11,7 @@ const time=x=>{
   const d=new Date(x);return Number.isNaN(d.getTime())?'未取得':d.toLocaleString('ja-JP',{timeZone:'Asia/Tokyo',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
 };
 const validSample=row=>row.kind==='RESULT_ACTUAL'&&row.quality==='COMPLETE'&&
-  !!row.wind_dir&&row.wind_speed!=null&&typeof row.first_boat_win==='boolean';
+  (row.wind_dir||row.wind_icon_code!=null)&&row.wind_speed!=null&&typeof row.first_boat_win==='boolean';
 
 export default function V7WeatherLab(){
   const {user}=useAuth();
@@ -41,14 +41,15 @@ export default function V7WeatherLab(){
     const complete=actual.filter(validSample);
     const map=new Map();
     for(const row of complete){
-      const key=(VENUES[row.venue_code]||row.venue_code)+'／'+row.wind_dir+'／'+bucket(row.wind_speed);
-      const v=map.get(key)||{n:0,wins:0,venue:row.venue_code,dir:row.wind_dir,speed:bucket(row.wind_speed)};
+      const dir=row.wind_dir||'風向コード'+row.wind_icon_code;
+    const key=(VENUES[row.venue_code]||row.venue_code)+'／'+dir+'／'+bucket(row.wind_speed);
+      const v=map.get(key)||{n:0,wins:0,venue:row.venue_code,dir,speed:bucket(row.wind_speed)};
       v.n++;if(row.first_boat_win)v.wins++;
       map.set(key,v);
     }
     const groups=[...map.values()].sort((a,b)=>b.n-a.n);
     return {pre,actual,complete,groups,partial:items.filter(z=>z.quality==='PARTIAL').length,
-      missingDir:items.filter(z=>!z.wind_dir).length,
+      missingDir:items.filter(z=>!z.wind_dir&&z.wind_icon_code==null).length,
       recent:[...items].sort((a,b)=>String(b.created_date).localeCompare(String(a.created_date))).slice(0,20)};
   },[rows,venue]);
   if(!admin)return null;
@@ -88,9 +89,9 @@ export default function V7WeatherLab(){
       <h3 className="text-sm font-black">最近の収集状況</h3>
       <div className="space-y-2">{summary.recent.map(z=><div key={z.id} className="rounded-lg border p-3 text-xs">
         <div className="flex flex-wrap justify-between gap-2 font-semibold"><span>{z.race_date} {VENUES[z.venue_code]||z.venue_code} {z.race_number}R</span><span>{z.kind==='PRE_REFERENCE'?'締切前・参照気象':'レース後・結果気象'}</span></div>
-        <div className="mt-1 text-slate-600">観測取得 {time(z.observed_at)} ／ 公式表示時刻 {time(z.source_display_time)} ／ 風向 {z.wind_dir||'未取得'}・風速 {z.wind_speed==null?'未取得':z.wind_speed+'m'} ／ {z.quality}</div>
+        <div className="mt-1 text-slate-600">観測取得 {time(z.observed_at)} ／ 公式表示時刻 {z.reference_race_number?'前'+z.reference_race_number+'R時点':time(z.source_display_time)} ／ 風向 {z.wind_dir||(z.wind_icon_code!=null?'コード'+z.wind_icon_code+'（方位照合待ち）':'未取得')}・風速 {z.wind_speed==null?'未取得':z.wind_speed+'m'} ／ {z.quality}</div>
       </div>)}</div>
-      <p className="text-xs leading-5 text-slate-500">公式の直前気象は直近レースの値である場合があります。締切前の参照値を当該レースの実測として勝率の分母に加えません。30件未満の細分類は標本不足。過去データや未来の気象を予想時点へ流用しません。</p>
+      <p className="text-xs leading-5 text-slate-500">公式の直前気象は直近レースの値である場合があります。締切前の参照値を当該レースの実測として勝率の分母に加えません。風向コードは公式HTML表記を保存し、東西南北への変換は確認後に行います。30件未満の細分類は標本不足。過去データや未来の気象を予想時点へ流用しません。</p>
     </>}
   </section>;
 }
