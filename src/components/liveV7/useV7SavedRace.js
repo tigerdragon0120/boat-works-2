@@ -11,13 +11,19 @@ const EMPTY = {
 
 async function loadSavedPredictions(race) {
   // race_key はV7台帳の固定識別子。Race.idで読めない場合にもこのキーから復旧する。
-  const byKey = await base44.entities.PredictionV7.filter(
-    { race_key: race.race_key }, '-created_date', 30,
-  );
-  if (!Array.isArray(byKey) || byKey.length >= 30) {
+  let byKey = null;
+  try {
+    byKey = await base44.entities.PredictionV7.filter(
+      { race_key: race.race_key }, '-created_date', 30,
+    );
+  } catch {
+    // 一時的なrace_key検索失敗時だけ、固定race_idによる取得を試す。
+  }
+  if (Array.isArray(byKey) && byKey.length >= 30) {
     throw new Error('V7予想の取得結果が不完全です');
   }
-  const matching = byKey.filter((p) => p?.race_id === race.id);
+  const matching = Array.isArray(byKey)
+    ? byKey.filter((p) => p?.race_id === race.id) : [];
   if (matching.length) return matching;
 
   // 同期遅延などによるrace_key検索0件のときだけ、race_idで再確認する。
