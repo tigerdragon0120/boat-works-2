@@ -83,16 +83,17 @@ export default function useV7SavedRace(race) {
       const combinations = new Set(completed.map((r) => String(r.result_trifecta)));
       const resultConflict = combinations.size > 1;
       const resultCandidate = combinations.size === 1 ? completed[0] : null;
-      let evidence = null;
-      const deadline = Date.parse(race.deadline || '');
-      if (race.status === 'finished' || (Number.isFinite(deadline) && now >= deadline)) {
-        evidence = await loadRaceEvidence(race.id);
-      }
-      if (active) setData({
-        stages, displayOdds, evidence, resultCandidate, resultConflict,
+      // V7の予想を先に表示。結果証跡の取得完了を待って画面を空白にしない。
+      if (active) setData((prev) => ({
+        stages, displayOdds, evidence: prev.evidence, resultCandidate, resultConflict,
         error: errors.length ? errors.join('／') : null,
         loading: false,
-      });
+      }));
+      const deadline = Date.parse(race.deadline || '');
+      if (race.status === 'finished' || (Number.isFinite(deadline) && now >= deadline)) {
+        const evidence = await loadRaceEvidence(race.id);
+        if (active) setData((prev) => ({ ...prev, evidence }));
+      }
     };
     setData(EMPTY);
     void load();
