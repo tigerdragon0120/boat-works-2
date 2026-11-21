@@ -990,7 +990,7 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
   for (const race of races) {
     if (Date.now() - startTime > timeBudgetMs) break;
     if (race.status === 'finished' || race.status === 'cancelled') continue;
-    if (!race.exhibition_ready) continue; // 展示未取得はスキップ
+    // 実オッズは展示未取得でも保存する。予想FINAL生成は後段で展示を必須とする。
 
     // 表示用オッズは公式に出たら早めに取り込み、FINAL判定は締切5分前付近だけ行う。
     // これにより「公式にはオッズが出ているのにアプリは—」を防ぎつつ、
@@ -1079,8 +1079,8 @@ async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudge
 
     // FINAL予想は締切10〜1分前に再計算する（5分周期でも5分前表示を保証）。
     // オッズも展示も変化していない再実行では作り直さない（同じ結果を書き直さない）。
-    let needsFinal = inFinalWindow && (forceFinalRefresh || oddsChanged || !race.has_final);
-    if (inFinalWindow && !needsFinal) {
+    let needsFinal = race.exhibition_ready === true && inFinalWindow && (forceFinalRefresh || oddsChanged || !race.has_final);
+    if (race.exhibition_ready === true && inFinalWindow && !needsFinal) {
       // V6.1/V6.2は画面の「直前予想」そのもの。どちらか欠けていれば作り直す。
       const [v61Fin, v62Fin, v63Fin, v64Fin, v65Fin, ensembleFin] = await Promise.all([
         sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.1' }, '-computed_at', 1).catch(() => []),
