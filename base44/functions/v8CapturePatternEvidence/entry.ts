@@ -3,8 +3,9 @@ import {createClientFromRequest} from "npm:@base44/sdk@0.8.60";
 import {fetchAllPaged} from "../../shared/pagedFetch.js";
 import {acquireLock,releaseLock} from "../../shared/concurrencyLock.js";
 import {buildV8Evidence,V8_EVIDENCE_VERSION} from "../../shared/v8PatternEvidence.js";
+import {fetchHtml,buildUrl,parseResult} from "../../shared/boatraceOfficialParser.js";
 const day=()=>new Date().toLocaleDateString("sv-SE",{timeZone:"Asia/Tokyo"});
-const MAX_PER_RUN=15;
+const MAX_PER_RUN=6;
 export default async function(req:Request):Promise<Response>{
  const client=createClientFromRequest(req);
  let user:any=null;try{user=await client.auth.me()}catch{user=null}
@@ -45,8 +46,24 @@ export default async function(req:Request):Promise<Response>{
     if(!Array.isArray(results)||results.length>=15||!results.length||!Array.isArray(entries)||!Array.isArray(histories)||entries.length>=40||histories.length>=20){
      counts.rejected++;continue;
     }
+    let officialResult=null;
+    const validResult=results.find(r=>(r.result_status==="RESULT_FINAL"||r.is_finished===true)&&/^[1-6]-[1-6]-[1-6]$/.test(String(r.result_trifecta||"")));
+    if(validResult){
+      try{
+        const url=buildUrl("raceresult",race.race_date,String(race.venue_code).padStart(2,"0"),race.race_number);
+        const response=await fetchHtml(url,0);
+        if(response?.ok){
+          const parsed=parseResult(response.html,race.race_date,String(race.venue_code).padStart(2,"0"),race.venue_name||"");
+          const record=parsed?.data?.venues?.[0]?.results?.[0];
+          if(parsed?.ok&&record?.result_trifecta===validResult.result_trifecta){
+            officialResult={result_trifecta:record.result_trifecta,entries:record.entries||[],
+              winning_method:record.entries?.find(e=>e.finish_order===1)?.winning_method||null};
+          }
+        }
+      }catch(e:any){console.error("[V8_PATTERN] official_read_unavailable",race.race_key,String(e?.message||e).slice(0,100));}
+    }
     const built=buildV8Evidence({race,resultRows:results,
-      entries,histories,weatherRows:weatherByRace.get(race.id)||[],now:new Date().toISOString()});
+      entries,histories,weatherRows:weatherByRace.get(race.id)||[],officialResult,now:new Date().toISOString()});
     if(!built.ok){counts.rejected++;continue}
     const created=await sr.V8PatternEvidence.create(built.record);
     if(!created?.id){counts.errors++;continue}
