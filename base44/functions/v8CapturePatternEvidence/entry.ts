@@ -33,7 +33,7 @@ export default async function(req:Request):Promise<Response>{
   const existing=new Set(existingPage.rows.map(x=>x.evidence_key));
   const now=Date.now();
   const ready=races.filter(r=>Date.parse(r.deadline)<now-5*60000&&!existing.has(V8_EVIDENCE_VERSION+":"+r.race_key))
-    .sort((a,b)=>Date.parse(a.deadline)-Date.parse(b.deadline));
+    .sort((a,b)=>Date.parse(b.deadline)-Date.parse(a.deadline));
   counts.attempted=Math.min(MAX_PER_RUN,ready.length);
   for(const race of ready.slice(0,MAX_PER_RUN)){
    try{
