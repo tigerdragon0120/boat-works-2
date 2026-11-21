@@ -93,6 +93,14 @@
     },
     "provenance": {
       "type": "object"
+    },
+    "wind_icon_code": {
+      "type": "number",
+      "description": "\u516c\u5f0fHTML\u306e is-windXX \u30b3\u30fc\u30c9\u3002\u65b9\u4f4d\u3078\u306e\u5909\u63db\u306f\u672a\u691c\u8a3c\u3002"
+    },
+    "reference_race_number": {
+      "type": "number",
+      "description": "\u76f4\u524d\u6c17\u8c61\u304c\u76f4\u8fd1\u4f55R\u306e\u89b3\u6e2c\u5024\u304b\u3092\u793a\u3059\u516c\u5f0f\u8868\u793a\uff08\u4f8b:9R\u6642\u70b9\uff09"
     }
   },
   "required": [
