@@ -3,6 +3,7 @@
 import React,{useEffect,useMemo,useState} from 'react';
 import {base44} from '@/api/base44Client';
 import {useAuth} from '@/lib/AuthContext';
+import {jstDate} from '@/lib/v7Verification';
 
 const PHASE={QUALIFYING:'予選',SEMIFINAL:'準優勝戦',FINAL:'優勝戦',OTHER:'その他',UNKNOWN:'区分不明'};
 const fmt=n=>Number(n||0).toLocaleString('ja-JP');
@@ -35,13 +36,24 @@ export default function V7FactorCandidates({groups=[]}){
   const {user}=useAuth();
   const admin=user?.role==='admin';
   const [data,setData]=useState(null),[error,setError]=useState(null),[loading,setLoading]=useState(false);
-  const [model,setModel]=useState('OPEN'),[phase,setPhase]=useState('ALL');
+  const [model,setModel]=useState('OPEN'),[phase,setPhase]=useState('ALL'),[predictionStage,setPredictionStage]=useState('FINAL');
   const reload=async()=>{
     if(!admin)return;
     setLoading(true);setError(null);
     try{
-      const rows=await base44.entities.V7FactorCandidate.filter({},'-created_date',200);
-      if(!Array.isArray(rows)||rows.length>=200)throw new Error('記録の読み取り上限に達しました。件数を絞った集計が必要です');
+      // 1日ごとに読むことで500件制限による欠落を防ぐ。
+      const dates=Array.from({length:7},(_,i)=>jstDate(-i));
+      const pages=await Promise.all(dates.map(date=>base44.entities.V7FactorCandidate.filter(
+        {race_date:date},'-created_date',500
+      )));
+      if(pages.some(page=>!Array.isArray(page)||page.length>=500)){
+        throw new Error('一部の日付の候補を全件取得できず、集計を停止しました');
+      }
+      const ids=new Set();const rows=[];
+      for(const page of pages)for(const row of page){
+        if(!row?.id||ids.has(row.id))throw new Error('候補台帳に重複または欠落があります');
+        ids.add(row.id);rows.push(row);
+      }
       setData(rows);
     }catch(e){setData(null);setError(e?.message||'候補を取得できませんでした')}
     finally{setLoading(false)}
@@ -61,13 +73,13 @@ export default function V7FactorCandidates({groups=[]}){
     const first=new Map();
     // A single record per race; stage priority LOCK > FINAL > PRE.
     for(const c of records){
-      if(!['FINAL','LOCK'].includes(c.stage))continue;
+      if(predictionStage==='PRE' ? c.stage!=='PRE' : !['FINAL','LOCK'].includes(c.stage))continue;
       const prev=first.get(c.race_key);
-      const rank={FINAL:1,LOCK:2};
+      const rank={PRE:1,FINAL:2,LOCK:3};
       if(!prev||rank[c.stage]>rank[prev.stage])first.set(c.race_key,c);
     }
     return readStats([...first.values()],verifiedByKey,phase);
-  },[data,model,phase,verifiedByKey]);
+  },[data,model,phase,predictionStage,verifiedByKey]);
   if(!admin)return null;
   const s=filtered;
   return <section data-testid="v7-factor-candidates" className="space-y-3 rounded-xl border border-sky-200 bg-white p-3 sm:p-5">
@@ -84,6 +96,11 @@ export default function V7FactorCandidates({groups=[]}){
           <option value="OPEN">一般戦</option><option value="WOMENS">女子戦</option>
         </select>
       </label>
+      <label className="text-xs font-semibold text-slate-700">予想段階
+        <select className="ml-2 rounded-lg border bg-white p-2" value={predictionStage} onChange={e=>setPredictionStage(e.target.value)}>
+          <option value="FINAL">直前（FINAL／LOCK）</option><option value="PRE">事前（PRE）</option>
+        </select>
+      </label>
       <label className="text-xs font-semibold text-slate-700">開催段階
         <select className="ml-2 rounded-lg border bg-white p-2" value={phase} onChange={e=>setPhase(e.target.value)}>
           <option value="ALL">すべて</option>{Object.entries(PHASE).map(([k,v])=><option key={k} value={k}>{v}</option>)}
@@ -95,7 +112,7 @@ export default function V7FactorCandidates({groups=[]}){
     {data&&<>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {[
-          ['前向き候補',fmt(s.all.length)+'R','PREを除く・1レース1回'],
+          ['前向き候補',fmt(s.all.length)+'R',predictionStage==='PRE'?'事前予想の記録':'直前予想の記録・1レース1回'],
           ['結果照合済み',fmt(s.n)+'R','V7有効FINALと照合できたレース'],
           ['V7＋ 8点的中率',pct(s.hitNew,s.n),fmt(s.hitNew)+'的中'],
           ['従来V7 8点的中率',pct(s.hitOld,s.n),fmt(s.hitOld)+'的中']
