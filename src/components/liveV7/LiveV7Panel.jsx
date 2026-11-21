@@ -26,12 +26,14 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
   return()=>{off();stop();};
  },[race.id,readOnly,pageClosed]);
  const state=liveV7.get(race.id);
- const finalAvailable=state.stages.FINAL?.status==='READY'||!!savedState.stages.FINAL;
- // FINALが取得できないときは締切前に保存済みのPREを参考予想として表示する。
+ // 締切後はサーバー保存記録だけで表示段階を決める。端末に残るFINAL状態でPREを隠さない。
+ const finalAvailable=pageClosed ? !!savedState.stages.FINAL
+  : (state.stages.FINAL?.status==='READY'||!!savedState.stages.FINAL);
  const selected=finalOnly?(finalAvailable?'FINAL':'PRE'):stage==='AUTO'?(finalAvailable?'FINAL':'PRE'):stage;
  const local=state.stages[selected];
- // 締切後は固定のサーバー保存予想を優先。端末内のみの参考予想を正式結果として扱わない。
- const result=(pageClosed&&savedState.stages[selected])|| (local?.status==='READY'?local:(savedState.stages[selected]||local));
+ // 終了後に端末ローカル予想へフォールバックすると未保存予想を正式記録と誤認するため禁止。
+ const result=pageClosed ? savedState.stages[selected]
+  : (local?.status==='READY'?local:(savedState.stages[selected]||local));
  const p=result?.record?.payload,o=p?.output;
  const usingSaved=result?.fromServer===true;
  const settlement=p&&!liveV7.conflicts.has(p.race_key)?liveV7.resultHistory.get(p.race_key):null;
@@ -94,7 +96,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  return <section data-testid="live-v7-panel" className="min-w-0 space-y-4 rounded-xl border-2 border-indigo-200 bg-white p-3 sm:p-5">
   <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="text-lg font-black text-slate-900">統合V7 <span className="text-sm font-medium text-slate-500">{o?.model==='WOMENS'?'女子戦':'通常戦'}・{selected}</span></h3><p className="text-xs text-slate-600">試験予想・確率未校正。購入推奨ではありません。</p></div><span className={'rounded-full px-3 py-1.5 text-sm font-bold '+(closed?'bg-slate-100 text-slate-700':'bg-blue-50 text-blue-800')}>{closed?'締切済み':('締切まで '+(remaining==null?'—':remaining+'分'))}</span></div>
   {!finalOnly&&<div className="flex gap-2">{['AUTO','PRE','FINAL'].map(s=><button type="button" key={s} onClick={()=>setStage(s)} aria-pressed={stage===s} className={'rounded-lg px-3 py-2 text-sm font-bold '+(stage===s?'bg-indigo-700 text-white':'bg-slate-100 text-slate-700')}>{s==='AUTO'?'自動切替':s}</button>)}</div>}
-  {selected==='PRE'&&finalOnly&&<p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">FINAL予想はまだありません。締切前に保存されたPRE（事前予想）を参考表示しています。展示データが不足したレースではFINALを後から生成しません。</p>}
+  {selected==='PRE'&&finalOnly&&savedState.stages.PRE&&<p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900">FINAL予想はありません。締切前に保存されたPRE（事前予想）を参考表示しています。展示データが不足したレースではFINALを後から生成しません。</p>}
   {(state.error||liveV7.storageError)&&<p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{state.error||liveV7.storageError}</p>}
   {!resultCombo&&settled&&!savedState.resultConflict&&<p data-testid="trial-v7-result" className="rounded-lg bg-slate-100 p-3 text-sm font-bold">取得結果 三連単 {settled.combination} / 払戻 {payout==null?'未取得':payout.toLocaleString('ja-JP')+'円'}（公式照合待ち）</p>}
   {!o?<p data-testid="live-v7-waiting" className="rounded-lg border border-amber-200 bg-amber-50 p-4 font-semibold">{savedState.loading?'保存済みV7予想を確認中…':savedState.error?'保存済みデータの取得に失敗しました：'+savedState.error:(result?.reason||(closed?'締切前に保存されたV7予想はありません':'V7予想を準備中です'))}</p>:<>
