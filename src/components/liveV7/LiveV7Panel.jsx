@@ -69,7 +69,9 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
  const deadline=Date.parse(race.deadline||'');
  const closed=state.closed||pageClosed;
  const remaining=Number.isFinite(deadline)?Math.max(0,Math.ceil((deadline-Date.now())/60000)):null;
- const refreshNow=async()=>{if(refreshing||closed||readOnly)return;setRefreshing(true);try{await liveV7.refresh(race.id);}finally{setRefreshing(false);}};
+ const refreshNow=async()=>{if(refreshing)return;
+  if(closed||readOnly){savedState.reload();return;}
+  setRefreshing(true);try{await liveV7.refresh(race.id);}finally{setRefreshing(false);}};
  const ordered=(plan?.tickets||[]).map(key=>o?.combinations?.find(row=>row.combination===key)).filter(Boolean);
  // Synthetic/composite odds (dutching) = 1 / sum(1 / decimal_odds).
  // Show only when every selected ticket has a valid odds quote.
@@ -137,7 +139,7 @@ export default function LiveV7Panel({race,finalOnly=false,exhibitionComplete=tru
      <p className="text-xs text-slate-600">概算合成オッズと配分額は表示用の取得オッズによる参考計算で、保存済みの予想・BUY/WATCH・検証成績を再判定しません。表示中の「100円ずつ購入」とは異なります。オッズ不足時は表示しません。</p></>:<p className="rounded-lg bg-amber-50 p-4 text-sm font-semibold text-amber-900">この方式では有効な買い目が不足しています。的中率方式で候補を確認できます。</p>}
    </div>
   </>}
-  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-slate-50 p-3"><span className="text-xs text-slate-600">{usingSaved?'サーバー保存済みV7':'読込 '+fmt(state.lastRead)+' / 更新 '+(revisionCount?revisionCount-1:0)+'件（端末内）'} / 使用オッズ {fmt(oddsCaptured)}</span><button type="button" onClick={refreshNow} disabled={refreshing||closed||readOnly} className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-bold text-blue-800 disabled:opacity-50">{refreshing?'更新中…':'予想・オッズを再確認'}</button></div>
+  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-slate-50 p-3"><span className="text-xs text-slate-600">{usingSaved?'サーバー保存済みV7':'読込 '+fmt(state.lastRead)+' / 更新 '+(revisionCount?revisionCount-1:0)+'件（端末内）'} / 使用オッズ {fmt(oddsCaptured)}</span><button type="button" onClick={refreshNow} disabled={refreshing||savedState.loading} className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-bold text-blue-800 disabled:opacity-50">{refreshing||savedState.loading?'更新中…':closed||readOnly?'保存済み予想を再取得':'予想・オッズを再確認'}</button></div>
   <details className="rounded-lg border border-slate-200 p-3 text-sm"><summary className="cursor-pointer font-bold">詳細・警告・予想の保存記録</summary><div className="mt-3 space-y-2 text-xs text-slate-700"><p>未学習・未校正の試算です。既存BUYは置き換えず、正式検証対象外です。</p><p>初回記録 {fmt(firstRecord?.payload?.generated_at)} / 締切 {race.deadline||'不明'}</p><p>入力充足率 {pct(o?.coverage)} / 進入 {o?.course_basis||'未確認'}</p>{state.quality?.rows?.some(r=>r.failed)&&<p className="font-bold text-red-700">取得失敗・未完了ログがあります。最新取得済みではありません。</p>}{o&&<><p>{o.judgment_reason}</p><p>不足・警告：{[...(o.missing||[]),...(o.warnings||[]),...(p?.snapshot?.adapter_warnings||[])].join(' / ')||'なし'}</p><p className="break-all">入力hash {p.input_hash} / 記録ID {result?.record?.id}</p></>}<p>ブラウザー観測のため独立時点証明はありません。</p></div></details>
   {o&&<details className="rounded-lg border border-slate-200 p-3 text-sm"><summary className="cursor-pointer font-bold">三連単{o.combinations.length}通りの全確率</summary><div className="mt-3 max-h-72 overflow-auto"><table className="w-full text-xs"><thead><tr><th scope="col">組番</th><th scope="col">確率</th></tr></thead><tbody>{o.combinations.map(t=><tr key={t.combination}><td>{t.combination}</td><td>{pct(t.probability)}</td></tr>)}</tbody></table></div></details>}
  </section>;
