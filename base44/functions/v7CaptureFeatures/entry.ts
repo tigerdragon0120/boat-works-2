@@ -34,7 +34,7 @@ export default async function(req:Request):Promise<Response>{
   const dryRun=body?.dry_run===true;
   const sr=client.asServiceRole.entities;
   const day=DAY();
-  const summary:any={ok:true,day,dry_run,revision:FEATURE_REVISION,races:0,candidates:0,created:0,
+  const summary:any={ok:true,day,dry_run:dryRun,revision:FEATURE_REVISION,races:0,candidates:0,created:0,
     partial:0,skipped_existing:0,skipped_source:0,errors:0,late_saves:0,model_changes:0};
   let lockId:any=null;
   try{
