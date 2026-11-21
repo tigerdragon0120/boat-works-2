@@ -1,5 +1,6 @@
 import React from 'react';
 import V7ServerVerification from '@/components/liveV7/V7ServerVerification';
+import V7FactorCandidates from '@/components/liveV7/V7FactorCandidates';
 
 // 検証ページはV7専用。旧V1〜V6.5の履歴・エンジンは削除せず、
 // この画面での表示と旧集計の読込だけを外す。
@@ -15,6 +16,7 @@ export default function Verification() {
           BUY判定、4・6・8・12点の的中率・回収率を表示します。
         </p>
       </header>
+      <V7FactorCandidates />
       <V7ServerVerification />
     </main>
   );
