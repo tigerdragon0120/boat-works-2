@@ -82,6 +82,9 @@ export function canonicalForecasts(rows,now=Date.now()){
   }
   return {rows:valid,conflicts};
 }
+// A saved partial hypothesis is history, not a completed exhibition stage.
+export const isCompleteFinalForecast=row=>row?.stage==='FINAL'&&row.exhibition_complete===true
+  &&Array.isArray(row.research_tickets)&&row.research_tickets.length>0;
 export function latestForecasts(rows){
   const out=new Map();
   for(const row of [...rows].sort(chronological))out.set(row.race_key+':'+row.stage,row);
@@ -115,7 +118,8 @@ export function canonicalReplayForecasts(rows,now=Date.now()){
 // Consumers choose the live stage when present and a replay only as its fallback.
 export function buildRaceProgress({races,forecasts=[],replayForecasts=[],verifications=[],replayVerifications=[],results=[],now=Date.now()}){
   const liveAll=canonicalForecasts(forecasts,now).rows,replayAll=canonicalReplayForecasts(replayForecasts,now).rows;
-  const live=latestForecasts(liveAll),replay=latestForecasts(replayAll),byId=new Map([...liveAll,...replayAll].map(row=>[row.id,row]));
+  const completedStages=rows=>rows.filter(row=>row.stage!=='FINAL'||isCompleteFinalForecast(row));
+  const live=latestForecasts(completedStages(liveAll)),replay=latestForecasts(completedStages(replayAll)),byId=new Map([...liveAll,...replayAll].map(row=>[row.id,row]));
   const liveByRace=groupBy(live,'race_id'),replayByRace=groupBy(replay,'race_id'),resultsByRace=groupBy(results,'race_id');
   const verified=new Map();
   const uniqueVerifications=[...groupBy([...verifications,...replayVerifications],'verification_key').values()].filter(group=>group.length===1).map(group=>group[0]);
