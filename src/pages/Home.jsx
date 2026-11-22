@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { RefreshCw, Clock } from "lucide-react";
 import { listTodayRaces } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
+import V8DailyBoard from "@/components/liveV8/V8DailyBoard";
 
 const VENUES = [
   ["01","桐生"],["02","戸田"],["03","江戸川"],["04","平和島"],["05","多摩川"],["06","浜名湖"],["07","蒲郡"],["08","常滑"],
@@ -78,6 +79,8 @@ export default function Home() {
         <div className="ml-auto text-right shrink-0"><div className="text-[10px] text-slate-400">本日全{chronological.length}R</div><div className="text-sm font-black text-slate-900">{currentIndex+1} / {chronological.length}</div></div>
       </div>}
 
+      <V8DailyBoard />
+
       <section className="rounded-xl border border-[#d4dde9] bg-[#f7f9fc] p-1.5 sm:p-2 shadow-sm">
         <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
           {VENUES.map(([code,name]) => {
@@ -113,3 +116,4 @@ export default function Home() {
 function venueName(code){ const c=String(code||'').padStart(2,'0'); return VENUES.find(v=>v[0]===c)?.[1] || c; }
 function displayGrade(v){ const g=String(v||'').toUpperCase(); return !g||g==='GENERAL'?'一般':g; }
 function fmtTime(v){ return v ? new Date(v).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}) : '--:--'; }
+
