@@ -77,10 +77,16 @@ export async function runV8VerifyForecasts(client    ,options    ={}){
           if(!saved?.id)throw new Error('SAVE_NOT_CONFIRMED');
           keys.add(record.verification_key);summary.created++;summary[record.source_kind==='REPLAY'?'replay':'live']++;
           if(record.status==='EXCLUDED_REFUND')summary.excluded++;
-        }catch{summary.errors++;}
+        }catch(error){
+          summary.errors++;
+          const rateLimited=Number(error?.response?.status||error?.status)===429||/rate.?limit|too many requests/i.test(String(error?.message||''));
+          const reason=rateLimited?'SAVE_RATE_LIMIT':'VERIFICATION_SAVE_FAILED';
+          summary.reasons[reason]=(summary.reasons[reason]||0)+1;
+          if(rateLimited)break;
+        }
       }
     }
-    return {...summary,remaining_sources:Math.max(0,waiting.length-summary.created-summary.existing),completed_at:new Date().toISOString(),duration_ms:Date.now()-started};
+    return {...summary,ok:summary.errors===0,remaining_sources:Math.max(0,waiting.length-summary.created-summary.existing),completed_at:new Date().toISOString(),duration_ms:Date.now()-started};
   }finally{if(lock)await releaseLock(client,lock).catch(()=>{});}
 }
 
