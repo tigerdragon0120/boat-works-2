@@ -56,8 +56,21 @@ export default async function(req: Request): Promise<Response> {
     }
     for (const {input, context} of checked) {
       if (Date.now() >= budgetDeadline) return Response.json({...summary, ok: false, error: 'IMPORT_TIME_BUDGET_RETRY_SAFE'}, {status: 503});
-      // Re-evaluate the time gate immediately before persistence; never back-date a late input.
-      const output = await buildExternalPrediction({input, ...context, now: new Date().toISOString(), recordedBy: user.id});
+      // A batch may span an exhibition arrival or a cancellation. Refresh the actual
+      // race (and PRE entries) before every save; the preflight cache is not evidence.
+      const freshRace = await sr.Race.get(input.race_id);
+      if (!freshRace?.id || freshRace.id !== context.race.id || freshRace.race_key !== context.race.race_key || freshRace.race_date !== context.race.race_date)
+        return Response.json({...summary, ok: false, error: 'RACE_IDENTITY_CHANGED'}, {status: 409});
+      let freshEntries: any[] = [];
+      if (input.stage === 'PRE') {
+        const response = await sr.RaceEntry.filter({race_id: freshRace.id}, '-updated_date', 40);
+        const rows = rowsOf(response);
+        if (!Array.isArray(rows) || rows.length >= 40 || response?.has_more === true)
+          return Response.json({...summary, ok: false, error: 'ENTRY_READ_INCOMPLETE'}, {status: 503});
+        freshEntries = rows;
+      }
+      // Re-evaluate the time gate at the refreshed observation, never back-date it.
+      const output = await buildExternalPrediction({input, race: freshRace, entries: freshEntries, now: new Date().toISOString(), recordedBy: user.id});
       if (!output.ok) return Response.json({...summary, ok: false, error: output.reason}, {status: 400});
       const existingResponse = await sr.V8ExternalPrediction.filter({record_key: output.record.record_key}, '-created_date', 2);
       const existing = rowsOf(existingResponse);
