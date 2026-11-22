@@ -22,6 +22,7 @@ import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 // V7: 定期更新で展示を保存したレースも、FINAL予想の生成につなぐ
 import { runV7AutoGeneration } from '../../shared/v7AutoGeneration.js';
+import { selectLiveInputRaces, isSavedExhibitionComplete } from '../../shared/liveInputPriority.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -844,11 +845,12 @@ async function generatePrePredictions(base44: any, raceDate: string, timeBudgetM
 // =====================================================
 // STEP 2: 展示データ取得(FINAL生成はしない・オッズ取得後に生成)
 // =====================================================
-async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
+async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[], options: any = {}) {
   const sr = base44.asServiceRole.entities;
   const startTime = Date.now();
 
-  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
+  const allRaces = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000));
+  const races = options.liveOnly ? selectLiveInputRaces(allRaces, startTime) : allRaces;
   let fetched = 0;
   // 展示が揃ったレースは、この回の最後にV7のFINAL判定へ回す
   const v7ReadyKeys = new Set<string>();
@@ -864,6 +866,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const deadlineMs = new Date(race.deadline).getTime();
     if (!Number.isFinite(deadlineMs)) continue;
     const nowMs = Date.now();
+    if (options.liveOnly && deadlineMs <= nowMs + 90000) continue;
     if (nowMs < deadlineMs - 60 * 60 * 1000 || nowMs > deadlineMs + 30 * 60 * 1000) continue;
     const inFinalRefreshWindow = nowMs >= deadlineMs - 12 * 60 * 1000 && nowMs <= deadlineMs - 1 * 60 * 1000;
     if (race.exhibition_ready && !inFinalRefreshWindow) continue;
@@ -873,7 +876,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const venueName = race.venue_name || race.venue || VENUE_MAP[venueCode] || venueCode;
 
     const url = buildUrl('beforeinfo', raceDate, venueCode, raceNumber);
-    const res = await fetchHtml(url);
+    const res = await fetchHtml(url, 0, { timeoutMs: 6000, deadlineMs: startTime + timeBudgetMs });
     if (!res.ok) continue;
 
     const parsed = parseBeforeInfo(res.html);
@@ -902,6 +905,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
         update.exhibition_st = pe.exhibition_st;
         update.exhibition_st_raw = pe.exhibition_st;
       }
+      if (changed(existing.exhibition_st_raw, pe.exhibition_st)) update.exhibition_st_raw = pe.exhibition_st;
       if (changed(existing.exhibition_course, pe.exhibition_course)) update.exhibition_course = pe.exhibition_course;
       if (changed(existing.tilt, pe.tilt)) update.tilt = pe.tilt;
       if (pe.is_absent && (!existing.is_absent || !existing.is_scratched)) {
@@ -911,12 +915,14 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
 
       if (Object.keys(update).length) {
         const courseChanged = Object.prototype.hasOwnProperty.call(update, 'exhibition_course');
+        const previousCourse = existing.exhibition_course;
         try {
           await sr.RaceEntry.update(existing.id, update);
+          Object.assign(existing, update); // Only confirmed writes count as saved evidence.
           updated++;
           criticalChanged = true;
           if (courseChanged) {
-            logs.push(`${venueName} R${raceNumber}: ${bn}号艇の進入変更を検知 ${existing.exhibition_course ?? '未取得'}→${pe.exhibition_course}`);
+            logs.push(`${venueName} R${raceNumber}: ${bn}号艇の進入変更を検知 ${previousCourse ?? '未取得'}→${pe.exhibition_course}`);
           }
         } catch (e: any) {
           errors.push(`${venueName} R${raceNumber}: ${bn}号艇の展示更新失敗 ${e.message}`);
@@ -932,28 +938,34 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const storedScratched = Array.isArray(race.scratched_boats) ? race.scratched_boats.map(Number) : [];
     const scratchedBoats = [...new Set([...storedScratched, ...parsedScratched])].filter((n: any) => n >= 1 && n <= 6).sort((a: any,b: any) => a-b);
     const activeBoatCount = parsed.data.active_boat_count || Math.max(1, 6 - scratchedBoats.length);
-    if (updated > 0) {
-      const raceUpdate: any = {};
-      if (scratchedBoats.length) raceUpdate.scratched_boats = scratchedBoats;
-      if (realCount >= activeBoatCount) raceUpdate.exhibition_ready = true;
-      if (parsed.data.weather) raceUpdate.weather = parsed.data.weather;
-      if (parsed.data.wind_speed != null) raceUpdate.wind_speed = parsed.data.wind_speed;
-      if (parsed.data.water_temp != null) raceUpdate.water_temp = parsed.data.water_temp;
-      if (parsed.data.air_temp != null) raceUpdate.air_temp = parsed.data.air_temp;
-      if (parsed.data.wave_height != null) raceUpdate.wave_height = parsed.data.wave_height;
-      if (criticalChanged && race.has_final) {
-        raceUpdate.final_refresh_required = true;
-        raceUpdate.final_refresh_reason = 'EXHIBITION_CHANGED';
-        raceUpdate.final_refresh_requested_at = new Date().toISOString();
+    const complete = isSavedExhibitionComplete(entries, scratchedBoats);
+    const raceUpdate: any = {};
+    if (JSON.stringify(storedScratched) !== JSON.stringify(scratchedBoats)) raceUpdate.scratched_boats = scratchedBoats;
+    if (race.exhibition_ready !== complete) raceUpdate.exhibition_ready = complete;
+    for (const field of ['weather','wind_speed','water_temp','air_temp','wave_height']) {
+      const value = parsed.data[field];
+      if (value != null && value !== '' && race[field] !== value) raceUpdate[field] = value;
+    }
+    if (criticalChanged && race.has_final) {
+      raceUpdate.final_refresh_required = true;
+      raceUpdate.final_refresh_reason = 'EXHIBITION_CHANGED';
+      raceUpdate.final_refresh_requested_at = new Date().toISOString();
+    }
+    let raceSaved = true;
+    if (Object.keys(raceUpdate).length) {
+      try {
+        await withRateLimitRetry(() => sr.Race.update(race.id, raceUpdate), 1);
+        Object.assign(race, raceUpdate);
+      } catch (e: any) {
+        raceSaved = false;
+        errors.push(`${venueName} R${raceNumber}: 展示保存 ${e.message}`);
       }
-      await withRateLimitRetry(() => sr.Race.update(race.id, raceUpdate), 4)
-        .catch((e: any) => errors.push(`${venueName} R${raceNumber}: 展示保存 ${e.message}`));
+    }
+    // Recheck complete saved values even when the source has not changed.
+    if (complete && raceSaved && deadlineMs > Date.now() + 90000) v7ReadyKeys.add(race.race_key);
+    if (updated > 0 || complete) {
       fetched++;
-      if (raceUpdate.exhibition_ready) v7ReadyKeys.add(race.race_key);
-      if (raceUpdate.final_refresh_required) {
-        logs.push(`${venueName} R${raceNumber}: 展示変更のため全FINAL予想の再計算を予約`);
-      }
-      logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新(実展示${realCount}/${activeBoatCount})`);
+      logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新 / 保存済み${complete?'全艇確認':'一部不足'} (取得${realCount}/${activeBoatCount})`);
     }
 
     await sleep(300);
@@ -962,7 +974,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
   // 展示保存を起点に、V7のFINAL予想を生成する。
   // 締切・開催状態の再確認と同一レース×段階の登録制御は共通保存処理(v7PredictionStore)が保存の瞬間に行う。
   let v7Saved = 0;
-  if (v7ReadyKeys.size) {
+  if (v7ReadyKeys.size && !options.deferV7) {
     try {
       const v7 = await runV7AutoGeneration(base44, { race_date: raceDate, race_keys: [...v7ReadyKeys] });
       v7Saved = Number(v7?.saved_final || 0);
@@ -972,7 +984,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     }
   }
 
-  return { total: races.length, fetched, v7_saved: v7Saved, errors };
+  return { total: races.length, fetched, ready_keys: [...v7ReadyKeys], v7_saved: v7Saved, errors };
 }
 
 // =====================================================
@@ -1410,164 +1422,90 @@ async function precomputeLanePast10(base44: any, raceDate: string, timeBudgetMs:
 // =====================================================
 // メイン: Autoモード
 // =====================================================
+// Live V7/V8 pricing only. Legacy prediction expansion is not part of this path.
+async function fetchLiveOdds(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
+  const sr = base44.asServiceRole.entities, started = Date.now();
+  const races = selectLiveInputRaces(uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 500)), started, { horizonMinutes: 25 });
+  const ready = new Set<string>();
+  let saved = 0;
+  for (const race of races) {
+    if (Date.now() >= started + timeBudgetMs) break;
+    if (new Date(race.deadline).getTime() <= Date.now() + 90000) continue;
+    try {
+      const res = await fetchHtml(buildUrl('odds3t', raceDate, race.venue_code, race.race_number), 0, { timeoutMs: 6000, deadlineMs: started + timeBudgetMs });
+      if (!res.ok) { errors.push(`${race.race_key}: オッズ取得 ${res.status || res.error}`); continue; }
+      const oddsMap = parseOdds3t(res.html);
+      const active = 6 - new Set((race.scratched_boats || []).map(Number).filter((n: number) => n >= 1 && n <= 6)).size;
+      if (active < 3) continue;
+      if (Object.keys(oddsMap).length < Math.min(100, active * (active - 1) * (active - 2))) continue;
+      const capturedAt = new Date().toISOString();
+      if (new Date(race.deadline).getTime() <= Date.now() + 60000) continue;
+      const previous = await sr.OddsSnapshot.filter({ race_id: race.id, stage: 'FINAL' }, '-captured_at', 1);
+      const prior = previous?.[0];
+      const changed = !prior || Object.entries(oddsMap).some(([key,value]) => Number(prior.odds_map?.[key]) !== Number(value));
+      const age = prior ? Date.now() - new Date(prior.captured_at).getTime() : Infinity;
+      // A fresh observation with identical prices must not retain an expired timestamp.
+      if (changed || !Number.isFinite(age) || age >= 180000) {
+        if (!prior) {
+          const early = await sr.OddsSnapshot.filter({ race_id: race.id, stage: 'EARLY' }, '-captured_at', 1);
+          if (!early.length) await sr.OddsSnapshot.create({race_id:race.id,stage:'EARLY',odds_map:oddsMap,captured_at:capturedAt,source:'LOCAL'});
+        }
+        await sr.OddsSnapshot.create({race_id:race.id,stage:'FINAL',odds_map:oddsMap,captured_at:capturedAt,source:'LOCAL'});
+        saved++;
+      }
+      if (race.exhibition_ready === true) ready.add(race.race_key);
+    } catch (e: any) { errors.push(`${race.race_key}: V7/V8オッズ保存 ${e?.message || e}`); }
+  }
+  logs.push(`V7/V8: 締切前オッズ ${saved}R保存`);
+  return { saved, ready_keys: [...ready] };
+}
+
 async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudgetMs: number, logs: string[], errors: string[]) {
-  const sr = base44.asServiceRole.entities;
-  const startTime = Date.now();
-  const jstHour = parseInt(nowJSTTime().split(':')[0], 10);
+  const sr = base44.asServiceRole.entities, started = Date.now();
+  const remaining = () => Math.max(0, timeBudgetMs - (Date.now() - started));
+  const jstHour = parseInt(nowJSTTime().split(':')[0], 10), steps: string[] = [];
+  const todayRaces = await sr.Race.filter({race_date:today}, 'deadline', 300);
 
-  // 過去の同時実行で生じたRaceResult重複を先に解消する。
-  const dedupe = await collapseDuplicateRaceResults(base44, 5000).catch(() => ({ removed: 0 }));
-  if (dedupe.removed > 0) logs.push(`RaceResult重複を${dedupe.removed}件削除`);
-
-  // 現在のDB状態を確認
-  const todayRaces = await sr.Race.filter({ race_date: today }, 'race_number', 300).catch(() => []);
-  const tomorrowRaces = await sr.Race.filter({ race_date: tomorrow }, 'race_number', 300).catch(() => []);
-  const dateScope = { $regex: `^(${today}|${tomorrow})` };
-  const [existingResults, existingPrePreds, existingV61PrePreds] = await Promise.all([
-    sr.RaceResult.filter({ race_id: { $in: [...todayRaces, ...tomorrowRaces].map((r: any) => r.id) } }, '-finished_at', 600).catch(() => []),
-    sr.RacePrediction.filter({ stage: 'PRE', race_key: dateScope }, '-computed_at', 600).catch(() => []),
-    sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: dateScope }, '-computed_at', 600).catch(() => []),
-  ]);
-  const raceIdsWithResult = new Set(existingResults.filter((r: any) => r.result_trifecta && (r.is_finished || r.result_status === 'RESULT_FINAL')).map((r: any) => r.race_id));
-  const completePreKeys = new Set(
-    existingPrePreds.filter((p: any) => isCompletePrePrediction(p)).map((p: any) => String(p.race_key || ''))
-  );
-
-  const todayRaceCount = todayRaces.length;
-  const tomorrowRaceCount = tomorrowRaces.length;
-  const todayResultCount = todayRaces.filter((r: any) => raceIdsWithResult.has(r.id)).length;
-  // メインエンジンの事前予想はV6.1。従来は旧V4予想の有無だけで判定していたため、
-  // 全レースでV6.1 PREが未生成のまま補完処理が動かなかった。
-  const v61PreKeys = new Set(
-    (existingV61PrePreds || [])
-      .filter((p: any) => p.status === 'COMPLETED' || !p.status)
-      .map((p: any) => String(p.race_key || ''))
-  );
-  const todayPreCount = todayRaces.filter((r: any) => completePreKeys.has(String(r.race_key || ''))).length;
-  const tomorrowPreCount = tomorrowRaces.filter((r: any) => completePreKeys.has(String(r.race_key || ''))).length;
-  const todayV61PreCount = todayRaces.filter((r: any) => v61PreKeys.has(String(r.race_key || ''))).length;
-  const tomorrowV61PreCount = tomorrowRaces.filter((r: any) => v61PreKeys.has(String(r.race_key || ''))).length;
-
-  const steps: string[] = [];
-  let remaining = timeBudgetMs;
-  // 展示・オッズ・FINALは締切前後の短い窓しか取れないリアルタイム処理。
-  // 事前予想生成が時間予算を使い切ると展示・オッズが1件も処理されず、
-  // 「直前予想が未生成」のまま締切を迎える。予想生成には残り時間の一部だけを使わせ、
-  // リアルタイム処理のための時間を必ず残す。
-  const PRE_BUDGET_RESERVE = 40000;
-  const preBudget = () => Math.min(remaining, Math.max(8000, remaining - PRE_BUDGET_RESERVE));
-
-  // 優先順位:
-  // 1. 当日展示データ（締切が近いレースを最優先）
-  // 2. 当日オッズ + FINAL予想
-  // 3. 当日結果
-  // 4. 当日番組表の不足補完
-  // 5. 翌日番組表/PRE
-  //
-  // 重要: 展示・FINALは取得可能時間が短いリアルタイム処理。
-  // 番組表補完や結果回収を先に実行して時間予算を使い切ると、
-  // 場によって展示が入る/入らない状態になるため、必ず最優先にする。
-
-  // 結果回収の時間を先に確保。PRE生成や展示処理で結果が永遠に後回しにならない。
-  if (todayRaceCount > todayResultCount && jstHour >= 8) {
-    logs.push('AUTO: 当日結果回収（専用時間枠）');
-    const before = Date.now();
-    const r = await fetchAndSaveResults(base44, today, Math.min(15000, remaining), logs, errors);
-    steps.push(`today_results: ${r.fetched}R`);
-    remaining -= Date.now() - before;
-  }
-
-  if (tomorrowRaceCount === 0 && jstHour >= 16) {
-    logs.push(`AUTO: 翌日番組表取得開始`);
-    const before = Date.now();
-    const r = await fetchAndSaveRaceCards(base44, tomorrow, remaining, logs, errors);
-    steps.push(`tomorrow_card: ${r.races}R/${r.entries}艇`);
-    remaining -= (Date.now() - before);
-    // 翌日番組表取込後: 枠番過去10走事前計算をバックグラウンド起動
-    if (r.races > 0) {
-      waitUntil(base44.functions.invoke('precomputeLanePast10Stats', { mode: 'tomorrow' }).catch(() => {}));
-      logs.push(`AUTO: 枠番過去10走事前計算をバックグラウンド起動(翌日)`);
+  // Time-sensitive inputs come first. V1-V6 PRE/FINAL expansion is retired from AUTO.
+  if (todayRaces.length && jstHour >= 8 && jstHour <= 22) {
+    logs.push('AUTO: 締切前の展示・オッズを最優先で取得（V7/V8）');
+    const exhibition = await fetchAndSaveExhibition(base44, today, Math.min(30000, remaining()), logs, errors, {liveOnly:true,deferV7:true});
+    steps.push(`exhibition: ${exhibition.fetched}R`);
+    const odds = remaining() > 3000
+      ? await fetchLiveOdds(base44, today, Math.min(18000, remaining()), logs, errors)
+      : {saved:0,ready_keys:[]};
+    steps.push(`live_odds: ${odds.saved}R`);
+    const keys = [...new Set([...exhibition.ready_keys, ...odds.ready_keys])];
+    if (keys.length) {
+      try {
+        const v7 = await runV7AutoGeneration(base44, {race_date:today,race_keys:keys});
+        steps.push(`v7_final: ${Number(v7?.saved_final || 0)}R`);
+      } catch (e: any) { errors.push(`V7 FINAL生成: ${e?.message || e}`); }
+      // Capture the observed exhibition now; do not wait for the next five-minute job.
+      // The V8 writer still rechecks its own deadline and immutable-history guards.
+      try {
+        const response = await base44.functions.invoke('v8CaptureForecasts', {});
+        const v8 = response?.data;
+        if (!v8?.ok) throw new Error(v8?.error || 'V8保存応答を確認できません');
+        steps.push(`v8_final: ${Number(v8.final || 0)}R`);
+      } catch (e: any) { errors.push(`V8 展示後予想保存: ${e?.message || e}`); }
     }
   }
 
-  // メインエンジン(V6.1/V6.2)の事前予想は画面表示に直結するため、旧エンジンより先に埋める。
-  if (remaining > 10000 && tomorrowRaceCount > 0 && tomorrowV61PreCount < tomorrowRaceCount) {
-    logs.push(`AUTO: 翌日メインPRE予想生成開始(V6.1 ${tomorrowV61PreCount}/${tomorrowRaceCount})`);
-    const before = Date.now();
-    const r = await generateMainPrePredictions(base44, tomorrow, preBudget(), logs, errors);
-    steps.push(`main_pre_predictions: ${r.v61_generated}R`);
-    remaining -= (Date.now() - before);
-  }
-
-  if (remaining > 10000 && tomorrowRaceCount > 0 &&
-      (tomorrowPreCount < tomorrowRaceCount || tomorrowV61PreCount < tomorrowRaceCount)) {
-    logs.push(`AUTO: 翌日PRE予想生成開始(旧${tomorrowPreCount}/${tomorrowRaceCount}・V6.1 ${tomorrowV61PreCount}/${tomorrowRaceCount})`);
-    const before = Date.now();
-    const r = await generatePrePredictions(base44, tomorrow, preBudget(), logs, errors);
-    steps.push(`pre_predictions: ${r.generated}R`);
-    remaining -= (Date.now() - before);
-  }
-
-  // リアルタイム系を最優先。ここを番組表/結果より後ろに置かない。
-  if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
-    logs.push(`AUTO: 展示データ取得開始（最優先）`);
-    const before = Date.now();
-    const r = await fetchAndSaveExhibition(base44, today, remaining, logs, errors);
-    steps.push(`exhibition: ${r.fetched}R / V7 ${r.v7_saved}FINAL`);
-    remaining -= (Date.now() - before);
-  }
-
-  if (remaining > 10000 && todayRaceCount > 0 && jstHour >= 8 && jstHour <= 22) {
-    logs.push(`AUTO: オッズ取得+FINAL予想生成開始（最優先）`);
-    const before = Date.now();
-    const r = await fetchAndSaveOddsAndFinal(base44, today, remaining, logs, errors);
-    steps.push(`odds_final: ${r.odds_fetched}R/${r.final_generated}FINAL`);
-    remaining -= (Date.now() - before);
-  }
-
-  // 当日のメイン(V6.1/V6.2)事前予想を、旧エンジンより先に埋める。
-  if (remaining > 10000 && todayRaceCount > 0 && todayV61PreCount < todayRaceCount) {
-    logs.push(`AUTO: 当日メインPRE予想生成開始(V6.1 ${todayV61PreCount}/${todayRaceCount})`);
-    const before = Date.now();
-    const r = await generateMainPrePredictions(base44, today, preBudget(), logs, errors);
-    steps.push(`main_pre_predictions_today: ${r.v61_generated}R`);
-    remaining -= (Date.now() - before);
-  }
-
-  // 朝に追加されたナイター場など、当日分の不足PREも5分周期で差分補完する。
-  if (remaining > 10000 && todayRaceCount > 0 &&
-      (todayPreCount < todayRaceCount || todayV61PreCount < todayRaceCount)) {
-    logs.push(`AUTO: 当日不足PRE予想生成開始（旧${todayPreCount}/${todayRaceCount}・V6.1 ${todayV61PreCount}/${todayRaceCount}）`);
-    const before = Date.now();
-    const r = await generatePrePredictions(base44, today, preBudget(), logs, errors);
-    steps.push(`today_pre_predictions: ${r.generated}R`);
-    remaining -= (Date.now() - before);
-  }
-
-  if (remaining > 10000 && todayRaceCount > 0 && todayResultCount < todayRaceCount && jstHour >= 8) {
-    logs.push(`AUTO: 当日結果取得開始`);
-    const before = Date.now();
-    const r = await fetchAndSaveResults(base44, today, remaining, logs, errors);
+  // Maintenance only uses time left after live inputs and current forecasts.
+  if (remaining() > 8000 && todayRaces.length && jstHour >= 8) {
+    const r = await fetchAndSaveResults(base44, today, Math.min(15000, remaining()), logs, errors);
     steps.push(`today_results: ${r.fetched}R`);
-    remaining -= (Date.now() - before);
   }
-
-  // 当日Raceが0件かどうかではなく、毎回完全性を見ながら不足だけ補完する。
-  // リアルタイム取得を終えて余った時間だけ使う。
-  if (remaining > 10000) {
-    logs.push(`AUTO: 当日番組表の完全性確認・不足補完開始`);
-    const before = Date.now();
-    const r = await fetchAndSaveRaceCards(base44, today, remaining, logs, errors);
+  if (remaining() > 8000) {
+    const r = await fetchAndSaveRaceCards(base44, today, Math.min(20000, remaining()), logs, errors);
     steps.push(`today_card: +${r.races}R/+${r.entries}艇`);
-    remaining -= (Date.now() - before);
-    // 当日番組表補完後: 枠番過去10走事前計算をバックグラウンド起動
-    if (r.entries > 0) {
-      waitUntil(base44.functions.invoke('precomputeLanePast10Stats', { mode: 'today' }).catch(() => {}));
-      logs.push(`AUTO: 枠番過去10走事前計算をバックグラウンド起動(当日)`);
-    }
   }
-
-  return { steps, logs, errors };
+  if (remaining() > 8000 && jstHour >= 16) {
+    const r = await fetchAndSaveRaceCards(base44, tomorrow, remaining(), logs, errors);
+    steps.push(`tomorrow_card: +${r.races}R/+${r.entries}艇`);
+  }
+  return {steps,logs,errors};
 }
 
 // =====================================================
