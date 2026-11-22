@@ -219,12 +219,18 @@ function candidateTickets(boats, scenarios) {
   }
   return rows.sort((a, b) => b.score - a.score || a.ticket.localeCompare(b.ticket)).slice(0, 8).map(row => row.ticket);
 }
-function useBaseline(baseline, race, now) {
+function useBaseline(baseline, race, now, replay = false) {
   if (!baseline?.id || !['DAY_BEFORE', 'PRE'].includes(baseline.stage) || baseline.race_key !== race.race_key
     || baseline.race_id !== race.id || baseline.race_date !== race.race_date) return null;
   const generated = forecastTime(baseline.generated_at), created = forecastTime(baseline.created_date);
-  if (generated == null || created == null || generated > now || created > now
-    || generated >= forecastTime(race.deadline) - CUTOFF_MS || created >= forecastTime(race.deadline) - CUTOFF_MS) return null;
+  if (generated == null || created == null || generated > now || created > now) return null;
+  if (replay && baseline.record_mode === 'REPLAY') {
+    return baseline.stage === 'PRE' && baseline.provenance?.reconstruction === true
+      && baseline.provenance?.result_excluded === true && Array.isArray(baseline.boats)
+      && baseline.boats.length === 6 ? baseline : null;
+  }
+  if (baseline.record_mode === 'REPLAY' || generated >= forecastTime(race.deadline) - CUTOFF_MS
+    || created >= forecastTime(race.deadline) - CUTOFF_MS) return null;
   // Baselines have to have been genuinely observed in their declared period.
   if (baseline.stage === 'DAY_BEFORE' && (dateJst(generated + 86400000) !== race.race_date || dateJst(created + 86400000) !== race.race_date)) return null;
   if (baseline.stage === 'PRE' && (dateJst(generated) !== race.race_date || dateJst(created) !== race.race_date)) return null;
@@ -352,16 +358,17 @@ function fingerprint(value) {
   for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
-export function buildRaceForecast({ race, entries = [], stage, now: nowText, baseline = null, prediction = null, odds = null, weather = null }) {
+function buildForecast({ race, entries = [], stage, now: nowText, baseline = null, prediction = null, odds = null, weather = null }, replay = false) {
   const now = forecastTime(nowText), deadline = forecastTime(race?.deadline);
   if (!STAGES.includes(stage)) return { ok: false, reason: 'INVALID_STAGE' };
   if (!race?.id || !/^\d{4}-\d{2}-\d{2}_\d{2}_\d{2}$/.test(race?.race_key || '')
     || !/^\d{4}-\d{2}-\d{2}$/.test(race?.race_date || '') || now == null || deadline == null
-    || now >= deadline - CUTOFF_MS || ['finished', 'cancelled'].includes(race.status)) return { ok: false, reason: 'INVALID_OR_CLOSED_RACE' };
+    || race.status === 'cancelled' || (!replay && (now >= deadline - CUTOFF_MS || race.status === 'finished'))) return { ok: false, reason: 'INVALID_OR_CLOSED_RACE' };
+  if (replay && !['PRE', 'FINAL'].includes(stage)) return { ok: false, reason: 'REPLAY_STAGE_INVALID' };
   const expectedKey = race.race_date + '_' + String(race.venue_code).padStart(2, '0') + '_' + String(race.race_number).padStart(2, '0');
   if (expectedKey !== race.race_key || dateJst(deadline) !== race.race_date) return { ok: false, reason: 'RACE_IDENTITY_MISMATCH' };
   if (sourceTime(race) == null || sourceTime(race) > now) return { ok: false, reason: 'RACE_SOURCE_TIME_INVALID' };
-  if (stage === 'DAY_BEFORE' ? dateJst(now + 86400000) !== race.race_date : dateJst(now) !== race.race_date) {
+  if (!replay && (stage === 'DAY_BEFORE' ? dateJst(now + 86400000) !== race.race_date : dateJst(now) !== race.race_date)) {
     return { ok: false, reason: 'STAGE_DATE_MISMATCH' };
   }
   if (!Array.isArray(entries) || entries.length !== 6
@@ -378,28 +385,38 @@ export function buildRaceForecast({ race, entries = [], stage, now: nowText, bas
   const rawBoats = sorted.map(entry => normalizeBoat(entry, race, stage));
   if (new Set(rawBoats.map(boat => boat.expected_course)).size !== 6) return { ok: false, reason: 'EXPECTED_COURSE_CONFLICT' };
   const missing = [];
-  const complete = stage === 'FINAL' && rawBoats.every(boat => boat.active && boat.exhibition_time != null
-    && boat.exhibition_st != null && boat.observed_course != null && !boat.exhibition_late)
-    && new Set(rawBoats.map(boat => boat.observed_course)).size === 6;
-  if (stage === 'FINAL' && !complete) missing.push('EXHIBITION_INCOMPLETE_OR_CONFLICTED');
   const active = rawBoats.filter(boat => boat.active);
-  if (active.length !== 6) missing.push('ACTIVE_BOATS_NOT_SIX');
+  const participating = replay ? active : rawBoats;
+  const complete = stage === 'FINAL' && participating.length >= 3
+    && participating.every(boat => boat.active && boat.exhibition_time != null
+      && (boat.exhibition_st != null || (replay && boat.exhibition_late))
+      && boat.observed_course != null && (replay || !boat.exhibition_late))
+    && new Set(participating.map(boat => boat.observed_course)).size === participating.length;
+  if (stage === 'FINAL' && !complete) missing.push('EXHIBITION_INCOMPLETE_OR_CONFLICTED');
+  if (active.length !== 6) missing.push(replay ? 'SCRATCHED_BOATS_EXCLUDED' : 'ACTIVE_BOATS_NOT_SIX');
   for (const key of ['national_win_rate', 'motor_2rate', 'avg_st', 'course_win_percent']) {
     if (rawBoats.some(boat => boat[key] == null)) missing.push(key.toUpperCase() + '_INCOMPLETE');
   }
-  const evaluated = scoreBoats(rawBoats, stage);
+  const evaluated = scoreBoats(replay ? active : rawBoats, stage);
+  const allEvaluated = replay ? rawBoats.map(boat => evaluated.boats.find(row => row.boat_number === boat.boat_number)
+    || { ...boat, base_score: null, score: null, exhibition_speed_score: null, exhibition_start_score: null }) : evaluated.boats;
   if (!evaluated.meaningful) missing.push('SCORING_INPUTS_INSUFFICIENT');
-  const scenarios = evaluated.meaningful && active.length === 6 ? buildScenarios(evaluated.boats, complete) : [];
-  const savedBaseline = useBaseline(baseline, race, now);
-  const comparison = compare(savedBaseline, evaluated.boats, scenarios, complete, stage);
-  const decision = decide({ race, stage, now, baseline: savedBaseline, comparison, complete, prediction, odds, scenarios, meaningful: evaluated.meaningful });
+  const enoughBoats = replay ? active.length >= 3 : active.length === 6;
+  const scenarios = evaluated.meaningful && enoughBoats ? buildScenarios(evaluated.boats, complete) : [];
+  const savedBaseline = useBaseline(baseline, race, now, replay);
+  const comparison = compare(savedBaseline, allEvaluated, scenarios, complete, stage);
+  const decision = replay ? {
+    status: 'REPLAY', reasons: ['取得済み入力から再構成した事後検証用の展開予想'],
+    tickets: [], odds: {}, price_checked: false, valid_until: null, research_only: true,
+    strategy: 'REPLAY_RESEARCH_ONLY', source_prediction_id: null,
+  } : decide({ race, stage, now, baseline: savedBaseline, comparison, complete, prediction, odds, scenarios, meaningful: evaluated.meaningful });
   const conditions = conditionsSnapshot(race, weather, stage, now, missing);
   const maxSourceAt = Math.max(sourceTime(race), ...sorted.map(sourceTime),
     forecastTime(decision.odds_captured_at) || 0,
     forecastTime(conditions.observed_at) || 0,
     decision.source_prediction_id ? forecastTime(prediction.generated_at) || 0 : 0);
   const priorIdentity = stage === 'FINAL' ? savedBaseline?.id || null : null;
-  const contentHash = fingerprint({ boats: evaluated.boats, baseline_id: priorIdentity,
+  const contentHash = fingerprint({ boats: allEvaluated, baseline_id: priorIdentity,
     prediction_id: stage === 'FINAL' ? prediction?.id || null : null, odds_id: stage === 'FINAL' ? odds?.id || null : null,
     odds: decision.odds, decision, conditions });
   return { ok: true, record: {
@@ -407,10 +424,10 @@ export function buildRaceForecast({ race, entries = [], stage, now: nowText, bas
     revision: FORECAST_REVISION, race_id: race.id, race_key: race.race_key, race_date: race.race_date,
     venue_code: String(race.venue_code).padStart(2, '0'), venue_name: race.venue_name || '',
     race_number: Number(race.race_number), deadline: race.deadline, stage, generated_at: new Date(now).toISOString(),
-    input_as_of: new Date(maxSourceAt).toISOString(), boats: evaluated.boats,
+    input_as_of: new Date(maxSourceAt).toISOString(), boats: allEvaluated,
     scenarios, top_scenario_key: scenarios[0]?.key || null, research_tickets: candidateTickets(evaluated.boats, scenarios),
     comparison, decision, priority_score: round(scenarios[0]?.score ?? 0),
-    quality: !evaluated.meaningful || (stage === 'FINAL' && !complete) || active.length !== 6 ? 'PARTIAL' : 'CAPTURED',
+    quality: !evaluated.meaningful || (stage === 'FINAL' && !complete) || !enoughBoats ? 'PARTIAL' : 'CAPTURED',
     missing: [...new Set(missing)], conditions, exhibition_complete: complete,
     score_type: 'UNCALIBRATED_RESEARCH_SCORE', model_label: '展開仮説 V8',
     gender_model: race.is_womens === true ? 'WOMENS' : race.is_womens === false ? 'OPEN' : 'UNKNOWN',
@@ -428,3 +445,8 @@ export function buildRaceForecast({ race, entries = [], stage, now: nowText, bas
   } };
 }
 
+
+// The prospective entry point keeps its cutoff and original source-time checks.
+export const buildRaceForecast = input => buildForecast(input, false);
+// Only the whitelisting replay adapter uses this entry point. It never supplies odds or V7 BUY.
+export const buildReplayHypothesis = input => buildForecast(input, true);
