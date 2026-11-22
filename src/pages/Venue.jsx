@@ -28,6 +28,7 @@ export default function Venue() {
   const [races, setRaces] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [listNotice, setListNotice] = useState(null);
 
   // 選択中レースの詳細データ
   const [race, setRace] = useState(null);
@@ -53,13 +54,30 @@ export default function Venue() {
   // 重複した読み込みを抑えてAPIレート制限に達しないようにする
   const detailSeq = useRef(0);
   const refreshBusy = useRef(false);
+  const listSeq = useRef(0);
+
+  // Initial load and background refresh must read the same selected JST date.
+  const readVenueRaces = async () => {
+    const currentDay = selectedDate === todayJst;
+    const all = currentDay ? await listTodayRaces({ includeFinished: true })
+      : await base44.entities.Race.filter({race_date:selectedDate,venue_code:{$in:[String(code).padStart(2,'0'),String(Number(code))]}},'race_number',100);
+    if (!Array.isArray(all) || (!currentDay && all.length >= 100)) throw new Error('レース情報を最後まで確認できませんでした');
+    return all.filter((r) => r.race_date === selectedDate && String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
+      .sort((a, b) => a.race_number - b.race_number);
+  };
 
   const loadList = async () => {
+    const request = ++listSeq.current;
     setLoading(true);
-    const all = selectedDate === todayJst ? await listTodayRaces({ includeFinished: true }) : await base44.entities.Race.filter({race_date:selectedDate,venue_code:{$in:[String(code).padStart(2,'0'),String(Number(code))]}},'race_number',100);
-    const list = (all || []).filter((r) => String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
-      .sort((a, b) => a.race_number - b.race_number);
+    try {
+    const list = await readVenueRaces();
+    if (request !== listSeq.current) return;
+    if (!list.length) {
+      setListNotice(`${selectedDate} のレース情報はまだ確認できません。番組の取得待ち、または非開催の可能性があります。`);
+      return;
+    }
     setRaces(list);
+    setListNotice(null);
     setSelectedId((prev) => {
       // ホーム画面で表示していた「現在○R」をURLで明示的に受け取る。
       // これによりiPad/iPhoneやRace.status更新タイミングの差で1Rへ戻らない。
@@ -78,19 +96,28 @@ export default function Venue() {
       );
       return (nextByDeadline || list[list.length - 1] || list[0])?.id;
     });
-    setLoading(false);
+    } catch (error) {
+      if (request === listSeq.current) setListNotice('選択日のレース情報を読み込めませんでした。取得済みの表示を保ったまま、再読込をお待ちしています。');
+      console.warn('[Venue] race list load failed:', error?.message || error);
+    } finally {
+      if (request === listSeq.current) setLoading(false);
+    }
   };
-  useEffect(() => { loadList(); }, [code,selectedDate,requestedRace]);
+  useEffect(() => {
+    detailSeq.current++; void loadList();
+    return () => { listSeq.current++; detailSeq.current++; };
+  }, [code,selectedDate,requestedRace]);
 
-  const raceList = useMemo(() => races, [races]);
+  const raceList = useMemo(() => races.filter(r=>r.race_date===selectedDate && String(r.venue_code).padStart(2,'0')===String(code).padStart(2,'0')), [races,selectedDate,code]);
+  const visibleRace = race?.race_date===selectedDate && String(race?.venue_code).padStart(2,'0')===String(code).padStart(2,'0');
   // A closed race must not trap users on an empty V7 view when a future race is available.
   const nextOpenRace = useMemo(() => {
     const now = Date.now();
-    return races.find(r => r.id !== selectedId && !['finished','cancelled'].includes(r.status) &&
+    return raceList.find(r => r.id !== selectedId && !['finished','cancelled'].includes(r.status) &&
       r.deadline && Number.isFinite(Date.parse(r.deadline)) && Date.parse(r.deadline) > now);
-  }, [races, selectedId]);
+  }, [raceList, selectedId]);
 
-  const venueName = races[0]?.venue || races[0]?.venue_name || `場コード ${code}`;
+  const venueName = raceList[0]?.venue || raceList[0]?.venue_name || `場コード ${code}`;
 
   // 選択中レースの詳細読み込み
   const loadDetail = async () => {
@@ -248,12 +275,13 @@ export default function Venue() {
   // 締切直前にバックエンドで生成されたFINAL予想を、ページを開いたままでも反映する。
   // loadDetailのように表示を一度クリアせず、予想部分だけを静かに更新する。
   const refreshPredictions = async () => {
-    if (!selectedId) return;
+    if (!selectedId || !visibleRace) return;
     // 15秒周期の更新が重なったり、非表示タブで走り続けると
     // APIレート制限に達するため、実行中と非表示中はスキップする。
     if (refreshBusy.current) return;
     if (typeof document !== "undefined" && document.hidden) return;
     refreshBusy.current = true;
+    const refreshSeq = detailSeq.current;
     try {
 
     // 展示・オッズは締切直前にバックエンドで更新されるため、
@@ -271,19 +299,26 @@ export default function Venue() {
       }
     }
 
-    const latestAll = await listTodayRaces({ includeFinished: true });
-    const latestList = (latestAll || [])
-      .filter((r) => String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
-      .sort((a, b) => a.race_number - b.race_number);
+    const latestList = await readVenueRaces();
+    if (refreshSeq !== detailSeq.current) return;
+    if (!latestList.length) {
+      setListNotice('選択日の最新番組が未取得のため、直前に確認できた内容を表示しています。');
+      return;
+    }
     const selectedRace = latestList.find((x) => x.id === selectedId)
       || latestList.find((x) => x.race_key === race?.race_key);
-    if (!selectedRace) return;
+    if (!selectedRace) {
+      setListNotice('選択中のレースを最新番組で確認できないため、取得済みの表示を保持しています。');
+      return;
+    }
 
     setRaces(latestList);
     setRace(selectedRace);
+    setListNotice(null);
 
     const freshEntries = await getRaceEntries(selectedRace.id, selectedRace.race_key);
-    setEntries(freshEntries || []);
+    if (refreshSeq !== detailSeq.current) return;
+    if (Array.isArray(freshEntries) && freshEntries.length) setEntries(freshEntries);
 
     // レース終了後にRaceResultが後から入っても、開いたまま結果・払戻を反映する。
     // 取得できなかったときは既存の正常な表示を消さない。
@@ -331,13 +366,19 @@ export default function Venue() {
       await ensureV65Final(selectedRace);
       setV65Stages(await getV65Stages(selectedRace.id, selectedRace.race_key));
     }
+    } catch (error) {
+      if (refreshSeq === detailSeq.current) setListNotice('最新情報を更新できませんでした。取得済みの表示を保持しています。');
+      throw error;
     } finally {
       refreshBusy.current = false;
     }
   };
 
   useEffect(() => {
-    if (!selectedId) return undefined;
+    if (!selectedId || !visibleRace) {
+      const waitingTimer = window.setInterval(() => { if (!document.hidden) void loadList(); }, 90000);
+      return () => window.clearInterval(waitingTimer);
+    }
     // 締切前後30分は20秒、それ以外は90秒で静かに更新する。
     // 15秒間隔ではエンティティ一覧のレート制限(429)に達し、更新が失敗していた。
     const deadlineMs = race?.deadline ? new Date(race.deadline).getTime() : NaN;
@@ -346,7 +387,7 @@ export default function Venue() {
       refreshPredictions().catch((e) => console.warn("[Venue] prediction refresh failed:", e?.message || e));
     }, nearDeadline ? 20000 : 90000);
     return () => window.clearInterval(intervalId);
-  }, [selectedId, races, race?.deadline, predictionVersion]);
+  }, [selectedId, races, race?.deadline, predictionVersion, selectedDate, code]);
 
   const refreshAll = async () => {
     await loadList();
@@ -417,8 +458,8 @@ export default function Venue() {
     setBusy(false);
   };
 
-  if (loading) return <div className="py-24 text-center text-slate-500">読み込み中…</div>;
-  if (!raceList.length) return <div className="space-y-4"><Link to="/" className="text-blue-400 text-sm">← レース場一覧へ</Link><div className="py-24 text-center text-slate-500">本日のレースはありません</div></div>;
+  if (loading && !raceList.length) return <div className="py-24 text-center text-slate-500">{selectedDate} のレースを読み込み中…</div>;
+  if (!raceList.length) return <div className="space-y-4"><Link to="/" className="text-blue-400 text-sm">← レース場一覧へ</Link><div className="space-y-4 py-16 text-center text-sm text-slate-500"><p>{listNotice || `${selectedDate} のレース情報をまだ取得できていません`}</p><button type="button" onClick={()=>void loadList()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700">再読込</button></div></div>;
 
   // 合成(V6.1)をメイン予想にし、事前予想(PRE)/直前予想(FINAL)をタブで切り替える。
   // V5は同じ合成予想の評価を参照する展開シナリオ。
@@ -465,13 +506,15 @@ export default function Venue() {
           </div>
           <div className="min-w-0">
             <div className="font-black text-lg sm:text-xl truncate">{venueName}</div>
-            <div className="text-[9px] sm:text-[10px] tracking-widest text-slate-500">VENUE {String(code).padStart(2, "0")}</div>
+            <div className="text-[9px] sm:text-[10px] tracking-widest text-slate-500">VENUE {String(code).padStart(2, "0")} · {selectedDate}</div>
           </div>
         </div>
         <button onClick={refreshAll} className="ml-auto h-9 min-w-9 px-3 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 flex items-center justify-center gap-2 text-xs font-semibold">
           <RefreshCw className="w-4 h-4" /><span className="hidden sm:inline">更新</span>
         </button>
       </div>
+
+      {listNotice && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-6 text-amber-900">{listNotice}</p>}
 
       {/* 1R-12R タブ */}
       <div className="flex gap-1.5 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] pb-1">
@@ -487,12 +530,12 @@ export default function Venue() {
         ))}
       </div>
 
-      {race && <RaceResultCard race={race} entries={entries} raceResult={raceResult} />}
+      {visibleRace && <RaceResultCard race={race} entries={entries} raceResult={raceResult} />}
 
       {/* 表示は一つ。展示前は展開、展示後はV7 FINAL。 */}
-      {race && <UnifiedRaceView key={race.id} race={race} entries={entries} nextOpenRace={nextOpenRace} onSelectNextRace={() => nextOpenRace && setSelectedId(nextOpenRace.id)} />}
+      {visibleRace && <UnifiedRaceView key={race.id} race={race} entries={entries} nextOpenRace={nextOpenRace} onSelectNextRace={() => nextOpenRace && setSelectedId(nextOpenRace.id)} />}
 
-      {race && <section className="rounded-xl border border-slate-200 bg-white p-3">
+      {visibleRace && <section className="rounded-xl border border-slate-200 bg-white p-3">
         <h2 className="font-bold mb-3 text-slate-900">出走表・展示・選手情報</h2>
         <EntryTable
           race={race} entries={entries}
