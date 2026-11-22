@@ -4,6 +4,7 @@ import {readV8Rows,groupBy} from './v8Repository.js';
 import {utcMs} from './v7FeatureObservation.js';
 import {isSavedExhibitionComplete} from './liveInputPriority.js';
 import {buildProvenanceDoc,isValidTrifecta} from './resultProvenance.js';
+import {hasCompleteResultDetails} from './v8ResultDetails.js';
 
 const finalResult=row=>row&&(row.result_status==='RESULT_FINAL'||row.is_finished===true)&&isValidTrifecta(row.result_trifecta)&&Number(row.payout)>0;
 const hasProof=(row,proof)=>proof.some(p=>p.evidence_type==='LIVE'&&p.result_id===row.id&&p.result_trifecta===row.result_trifecta&&p.source===row.source&&utcMs(p.fetched_at)!=null);
@@ -18,14 +19,14 @@ export function selectResearchRecoveryWork({races,entriesByRace,resultsByRace,pr
     if(deadline==null||deadline>now||race.status==='cancelled')continue;
     const entries=entriesByRace.get(race.id)||[],results=resultsByRace.get(race.id)||[],proof=proofByRace.get(race.id)||[];
     const exhibition=!isSavedExhibitionComplete(entries,race.scratched_boats||[]);
-    const result=now>=deadline+300000&&!results.some(r=>finalResult(r)&&hasProof(r,proof));
+    const result=now>=deadline+300000&&!results.some(r=>finalResult(r)&&hasProof(r,proof)&&hasCompleteResultDetails(r,race));
     if(exhibition||result)candidates.push({race,exhibition,result});
   }
   candidates.sort((a,b)=>(utcMs(a.race.deadline)||0)-(utcMs(b.race.deadline)||0)||String(a.race.id).localeCompare(String(b.race.id)));
   if(!candidates.length)return {work:[],nextCursor:0,total:0};
   const start=Math.max(0,Number(cursor)||0)%candidates.length;
   const rotated=[...candidates.slice(start),...candidates.slice(0,start)];
-  const work=rotated.slice(0,Math.max(1,Math.min(20,maxRaces)));
+  const work=rotated.slice(0,Math.max(1,Math.min(48,maxRaces)));
   return {work,nextCursor:(start+work.length)%candidates.length,total:candidates.length};
 }
 
@@ -89,17 +90,26 @@ export async function recoverRaceResearchInputs(client,{date,budgetMs=18000,max_
         const fetchedAt=new Date().toISOString(),parsed=parseResult(response.html,date,race.venue_code,race.venue_name);
         const input=parsed.data?.venues?.[0]?.results?.[0];
         if(!parsed.ok||!isValidTrifecta(input?.result_trifecta)||!(Number(input.payout)>0))throw new Error('RESULT_NOT_PUBLISHED_OR_PARSE_FAILED');
-        const fresh=await readV8Rows(sr.RaceResult,{race_id:race.id},{budget,maxPages:2});
+        const known=(resultsByRace.get(race.id)||[]).find(row=>finalResult(row)&&row.source==='LOCAL');
+        const fresh=known?[await sr.RaceResult.get(known.id)]:await readV8Rows(sr.RaceResult,{race_id:race.id},{budget,maxPages:2});
         const existingFinal=fresh.filter(finalResult);
         if(existingFinal.some(row=>row.result_trifecta!==input.result_trifecta||Number(row.payout)!==Number(input.payout)))throw new Error('OFFICIAL_RESULT_CONFLICT');
         let result=existingFinal.find(row=>row.source==='LOCAL');
+        const winner=(input.entries||[]).find(row=>Number(row.finish_order)===1);
+        const details={finish_order:input.finish_order||[],boats:input.entries||[],winning_method:input.winning_method||winner?.winning_method||null,details_fetched_at:fetchedAt,details_revision:'OFFICIAL_RESULT_TABLE_V1'};
+        if(!hasCompleteResultDetails({...input,...details},race))throw new Error('OFFICIAL_RESULT_DETAILS_INCOMPLETE');
+        details.details_complete=true;
         if(!result){
-          const winner=(input.entries||[]).find(row=>Number(row.finish_order)===1);
-          const document={race_id:race.id,result_trifecta:input.result_trifecta,payout:Number(input.payout),finish_order:input.finish_order||[],payouts:input.payouts||{},boats:input.entries||[],winning_method:input.winning_method||winner?.winning_method||null,is_finished:true,result_status:'RESULT_FINAL',finished_at:fetchedAt,source:'LOCAL'};
+          const document={race_id:race.id,result_trifecta:input.result_trifecta,payout:Number(input.payout),payouts:input.payouts||{},...details,is_finished:true,result_status:'RESULT_FINAL',finished_at:fetchedAt,source:'LOCAL'};
           result=await sr.RaceResult.create(document);
           if(!result?.id)throw new Error('RESULT_WRITE_NOT_CONFIRMED');
+        }else{
+          const saved=await sr.RaceResult.update(result.id,details);
+          if(!saved?.id)throw new Error('RESULT_DETAILS_WRITE_NOT_CONFIRMED');
+          result={...result,...details};
         }
-        const existingProof=await readV8Rows(sr.ResultProvenance,{race_id:race.id,evidence_type:'LIVE'},{budget,maxPages:2});
+        const cachedProof=proofByRace.get(race.id)||[];
+        const existingProof=hasProof(result,cachedProof)?cachedProof:await readV8Rows(sr.ResultProvenance,{race_id:race.id,evidence_type:'LIVE'},{budget,maxPages:2});
         if(!hasProof(result,existingProof)){
           const document=buildProvenanceDoc(race,result,'boatrace.jp:result-html','LIVE',fetchedAt);
           if(!document)throw new Error('RESULT_PROVENANCE_INVALID');
