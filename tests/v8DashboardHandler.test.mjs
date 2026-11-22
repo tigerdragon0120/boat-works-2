@@ -5,12 +5,13 @@ import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
 import * as repository from '../base44/shared/v8Repository.js';
 import {utcMs} from '../base44/shared/v7FeatureObservation.js';
+import {SETTLEMENT_REVISION} from '../base44/shared/v8Settlement.js';
 import {isReplay} from '../src/components/liveV8/v8StudyView.js';
 
 const handlerSource=readFileSync(new URL('../base44/functions/v8ReadDashboard/entry.ts',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
 const executable=stripTypeScriptTypes(handlerSource).replace('export default async function','return async function');
 const names=['jstDate','dateValid','readV8Rows','canonicalForecasts','canonicalReplayForecasts','latestForecasts','firstBuyForecasts','currentDecision','groupBy','publicRow','buildRaceProgress'];
-const factory=new Function('createClientFromRequest',...names,'utcMs',executable);
+const factory=new Function('createClientFromRequest',...names,'utcMs','SETTLEMENT_REVISION',executable);
 const clientSource=readFileSync(new URL('../src/components/liveV8/v8Client.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
 const displayDecision=new Function('isReplay',clientSource+'\nreturn displayDecision;')(isReplay);
 const NOW=Date.parse('2026-11-23T05:30:00.000Z');
@@ -46,7 +47,7 @@ async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],fo
     };
   }
   const client={auth:{me:async()=>null},asServiceRole:{entities:sr}};
-  const handler=factory(()=>client,...names.map(name=>repository[name]),utcMs);
+  const handler=factory(()=>client,...names.map(name=>repository[name]),utcMs,SETTLEMENT_REVISION);
   const response=await handler(new Request('https://test.invalid/dashboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
   return {response,body:await response.json(),calls};
 }
@@ -154,11 +155,17 @@ test('public day view exposes replay progress separately while private external 
   const closed={...race,deadline:'2026-11-23T05:00:00Z',status:'finished',exhibition_ready:true};
   const pre={...forecast('PRE'),deadline:closed.deadline,generated_at:'2026-11-23T04:00:00Z',created_date:'2026-11-23T04:00:00.100Z'};
   const replay={...forecast('FINAL'),id:'replay-final',forecast_key:'replay-final',record_mode:'REPLAY',deadline:closed.deadline,generated_at:'2026-11-23T05:20:00Z',created_date:'2026-11-23T05:20:00.100Z',exhibition_complete:true,decision:{status:'REPLAY'},provenance:{result_excluded:true,reconstruction:true,input_fields_whitelisted:true},created_by:'private@example.test'};
-  const verified=(source,kind)=>({id:'verification-'+source.id,verification_key:'key-'+source.id,source_kind:kind,forecast_id:source.id,race_id:race.id,race_key:race.race_key,race_date:race.race_date,status:'SETTLED',research_hit:true,result_trifecta:'1-2-3'});
+  const verified=(source,kind)=>({id:'verification-'+source.id,verification_key:'key-'+source.id,revision:SETTLEMENT_REVISION,source_kind:kind,forecast_id:source.id,race_id:race.id,race_key:race.race_key,race_date:race.race_date,status:'SETTLED',research_hit:true,result_trifecta:'1-2-3'});
   const out=await exercise(t,{body:{mode:'day',race_date:race.race_date},raceRows:[closed],forecasts:[pre,replay],verifications:[verified(pre,'FORECAST'),verified(replay,'REPLAY'),{...verified(pre,'EXTERNAL'),id:'secret',verification_key:'secret',external_id:'private'}]});
   assert.equal(out.response.status,200);assert.equal(out.body.forecasts.length,1);assert.equal(out.body.replay_forecasts.length,1);
   assert.equal(out.body.replay_forecasts[0].effective_status,'REPLAY');assert.equal(Object.hasOwn(out.body.replay_forecasts[0],'created_by'),false);
   assert.equal(out.body.verifications.length,1);assert.equal(out.body.replay_verifications.length,1);assert.deepEqual(out.body.external,[]);
   assert.equal(out.body.race_progress[0].status,'VERIFIED');assert.equal(out.body.coverage.verified_races,1);assert.equal(out.body.coverage.pre_available_count,1);assert.equal(out.body.coverage.final_available_count,1);
   assert.equal(out.body.coverage.active_buy_count,0);assert.deepEqual(out.body.buy_forecasts,[]);
+});
+
+test('dashboard omits obsolete result ledgers until current-revision verification completes',async(t)=>{
+ const f=forecast(),old={id:'old-check',verification_key:'old-key',revision:'V8_SETTLEMENT_1',source_kind:'FORECAST',forecast_id:f.id,race_id:race.id,race_key:race.race_key,race_date:race.race_date,status:'SETTLED',research_hit:true,result_trifecta:'1-2-3'};
+ const out=await exercise(t,{forecasts:[f],verifications:[old]});
+ assert.equal(out.response.status,200);assert.deepEqual(out.body.verifications,[]);assert.deepEqual(out.body.buy_verifications,[]);assert.deepEqual(out.body.replay_verifications,[]);
 });
