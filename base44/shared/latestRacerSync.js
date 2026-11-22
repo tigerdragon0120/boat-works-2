@@ -20,7 +20,7 @@ async function lockSync(sr,budget){
 
 export async function runLatestRacerSync(client,{force=false,scheduled=false,budgetMs=75000,fetchDataset=fetchLatestRacerDataset}={}){
   const sr=client.asServiceRole.entities,started=Date.now(),budget=started+Math.min(85000,Math.max(1000,budgetMs));
-  let lock=null,state=null;
+  let lock=null,state=null,initialActiveKey='';
   const persist=async patch=>{const saved=await sr.RacerStatsSync.update(state.id,patch);if(!saved?.id)throw new Error('RACER_SYNC_SAVE_UNCONFIRMED');state={...state,...patch,...saved};};
   try{
     lock=await lockSync(sr,budget);
@@ -32,6 +32,7 @@ export async function runLatestRacerSync(client,{force=false,scheduled=false,bud
       state=await readLatestRacerState(sr,{budget});
       if(!state?.id)throw new Error('RACER_SYNC_STATE_MISSING');
     }
+    initialActiveKey=state.active_dataset_key||'';
     if(!force&&!scheduled&&state.status==='ready'&&Date.parse(state.next_check_at)>started)return {ok:true,skipped:'not_due',latest_racer_sync:latestRacerSyncView(state)};
     await persist({status:'checking',last_checked_at:iso(),error_message:'',...(scheduled?{enabled:true}:{})});
     const payload=await fetchDataset({budget:Math.min(budget-12000,Date.now()+30000),previousChecksum:state.active_metadata?.checksum});
@@ -79,6 +80,15 @@ export async function runLatestRacerSync(client,{force=false,scheduled=false,bud
     const ready=await sr.RacerStatsDataset.update(dataset.id,{status:'ready',activated_at:activated});
     if(!ready?.id)throw new Error('RACER_DATASET_ACTIVATION_UNCONFIRMED');
     dataset={...dataset,...ready,status:'ready',activated_at:activated};
+    // A delayed worker may have outlived its lease while awaiting an SDK write.
+    // It must not roll back a snapshot already installed by a newer worker.
+    const [leases,currentState]=await Promise.all([
+      readV8Rows(sr.ProcessLock,{lock_key:'OFFICIAL_LATEST_RACER_STATS',status:'active'},{budget,maxPages:3}),
+      readLatestRacerState(sr,{budget}),
+    ]);
+    const owner=ordered(leases.filter(r=>Date.parse(r.expires_at)>Date.now()))[0];
+    if(owner?.id!==lock||Date.now()>=budget)throw new Error('RACER_SYNC_LEASE_EXPIRED');
+    if(currentState?.id!==state.id||!['',initialActiveKey,datasetKey].includes(currentState.active_dataset_key||'')||termOrder(currentState.active_metadata?.term_key)>termOrder(dataset.term_key))throw new Error('RACER_SYNC_NEWER_DATASET_ACTIVE');
     // The active pointer is the last write, after all persisted pages pass integrity checks.
     await persist({status:'ready',active_dataset_key:datasetKey,active_metadata:racerDatasetMetadata(dataset),last_success_at:iso(),next_check_at:nextRacerCheck(),pending_count:0,imported_count:records.length,pending_dataset_key:'',error_message:'',unchanged:false});
     return {ok:true,complete:true,unchanged:false,latest_racer_sync:latestRacerSyncView(state),duration_ms:Date.now()-started};
