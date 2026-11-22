@@ -2,8 +2,9 @@
 export const isReplay = row => row?.record_mode === 'REPLAY';
 const at = row => Date.parse(row?.generated_at || row?.created_date || '') || 0;
 const raceKey = row => row?.race_key || row?.race_id || row?.id;
+export const completeStudyFinal = row => row?.stage === 'FINAL' && row.exhibition_complete === true && Array.isArray(row.research_tickets) && row.research_tickets.length > 0;
 export function latestStudyStage(rows, stage) {
-  return (rows || []).filter(row => row?.stage === stage).sort((a,b) => at(b)-at(a) || String(b.id).localeCompare(String(a.id)))[0] || null;
+  return (rows || []).filter(row => row?.stage === stage && (stage !== 'FINAL' || completeStudyFinal(row))).sort((a,b) => at(b)-at(a) || String(b.id).localeCompare(String(a.id)))[0] || null;
 }
 export function studyStageLabel(row) {
   if (!row) return '未保存';
