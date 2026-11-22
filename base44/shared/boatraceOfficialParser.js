@@ -416,31 +416,30 @@ export function parseResult(html, raceDate, venueCode, venueName) {
   const warnings = [];
   const text = normalizeWidth(stripTags(html));
 
-  // 着順表抽出: 着順(1-6) + 枠 + 登録番号+氏名 + タイム
-  // normalizeWidth後のため半角数字でマッチ。テキスト: "1 4 4992廣瀬　　篤哉 1'50"1"
-  const finishPattern = /([1-6])\s+(\d)\s+(\d{4})\s*(\S+)\s+(\d['"]?\d+["']?\d*)/g;
+  // Identify the result table before parsing cells: racer names contain spaces,
+  // while explicit F/L rows have no numeric finishing position or race time.
+  const cellText = value => normalizeWidth(stripTags(value)).normalize('NFKC').trim();
+  const tables = [...String(html || '').matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/gi)].map(match => match[0]);
+  const headerCells = table => [...(table.match(/<thead\b[^>]*>[\s\S]*?<\/thead>/i)?.[0] || '').matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/gi)].map(match => cellText(match[1]));
+  const finishTables = tables.filter(table => {const headers=headerCells(table);return headers[0]==='着'&&headers[1]==='枠'&&headers.includes('ボートレーサー')&&headers.includes('レースタイム');});
   const entries = [];
-  let fm;
-  while ((fm = finishPattern.exec(text)) !== null) {
-    const finishOrder = parseInt(fm[1], 10);
-    const boatNumber = num(fm[2]);
-    const regNum = fm[3];
-    const playerName = fm[4].trim().replace(/\s+/g, "");
-    const raceTime = fm[5];
-    if (finishOrder >= 1 && finishOrder <= 6 && boatNumber >= 1 && boatNumber <= 6) {
-      entries.push({ finish_order: finishOrder, boat_number: boatNumber, registration_number: regNum, player_name: playerName, race_time: raceTime });
+  let invalidFinishRows = 0;
+  if(finishTables.length===1){
+    for(const match of finishTables[0].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)){
+      const cells=[...match[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(item=>item[1]);
+      if(!cells.length)continue;
+      const finish=cellText(cells[0]).replace(/\s/g,'').toUpperCase(),boat=cellText(cells[1]),racer=cellText(cells[2]);
+      const racerMatch=/^(\d{4})\s*(.+)$/.exec(racer);
+      if(cells.length!==4||!/[1-6]/.test(boat)||boat.length!==1||!racerMatch||!finish){invalidFinishRows++;continue;}
+      const numeric=/^[1-6]$/.test(finish),playerName=racerMatch[2].replace(/\s/g,'');
+      entries.push({boat_number:Number(boat),registration_number:racerMatch[1],player_name:playerName,racer_name:playerName,race_time:cellText(cells[3]),
+        ...(numeric?{finish_order:Number(finish)}:{result_status:finish,...(/^[FL]$/.test(finish)?{f_flag:finish}:{})})});
     }
   }
 
-  // 重複除去(着順順)
-  const seenFin = new Set();
-  const uniqueEntries = [];
-  for (const e of entries) {
-    if (!seenFin.has(e.finish_order)) {
-      seenFin.add(e.finish_order);
-      uniqueEntries.push(e);
-    }
-  }
+  // Repeated boat rows are ambiguous, not evidence of six distinct finishes.
+  const repeatedBoats = new Set(entries.map(entry=>entry.boat_number)).size!==entries.length;
+  const uniqueEntries = repeatedBoats ? [] : entries;
 
   // 3連単結果・払戻抽出(テキストから)
   let resultTrifecta = null;
@@ -500,17 +499,23 @@ export function parseResult(html, raceDate, venueCode, venueName) {
   if (win) payouts.win = win;
   if (place.length) payouts.place = place;
 
-  // ST情報抽出: img_boat2_X.png の後にST値(.19やF.05形式に対応)
-  const stPattern = /img_boat2_(\d)\.png[\s\S]*?(-?\d*\.\d+|F\.\d+)/g;
-  const stMap = {};
-  let sm;
-  while ((sm = stPattern.exec(html)) !== null) {
-    const bn = num(sm[1]);
-    let stVal = sm[2];
-    if (stVal.startsWith("F")) stVal = -Math.abs(num(stVal.slice(1)) || 0);
-    else stVal = num(stVal);
-    if (bn >= 1 && bn <= 6) stMap[bn] = stVal;
+  // ST is bound to the same observed start-information row as the boat.
+  // Course is the observed row order only when six unique identities exist.
+  const startTables=tables.filter(table=>headerCells(table).includes('スタート情報'));
+  const observedStarts=[];
+  if(startTables.length===1){
+    for(const match of startTables[0].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)){
+      const boatMatch=match[1].match(/<span\b[^>]*class=["'][^"']*\btable1_boatImage1Number\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
+      if(!boatMatch)continue;
+      const boat=cellText(boatMatch[1]);
+      if(!/^[1-6]$/.test(boat))continue;
+      const timeMatch=match[1].match(/<span\b[^>]*class=["'][^"']*\btable1_boatImage1TimeInner\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
+      const token=cellText(timeMatch?.[1]).match(/^(F\d*\.\d+|L(?:\d*\.\d+)?|\d*\.\d+)(?=\s|$)/i)?.[1]?.toUpperCase();
+      observedStarts.push({boat_number:Number(boat),...(token?{st:token.startsWith('L')?null:token.startsWith('F')?-Math.abs(Number(token.slice(1))):Number(token),...(/^[FL]/.test(token)?{f_flag:token[0]}:{})}:{})});
+    }
   }
+  const uniqueStarts=new Set(observedStarts.map(row=>row.boat_number)).size===observedStarts.length;
+  const stMap=new Map(uniqueStarts?observedStarts.map((row,index)=>[row.boat_number,{...row,...(observedStarts.length===6?{course:index+1}:{})}]):[]);
 
   // 決まり手抽出
   let winningMethod = null;
@@ -532,7 +537,10 @@ export function parseResult(html, raceDate, venueCode, venueName) {
 
   // 結果のentriesにSTと決まり手を付与
   for (const e of uniqueEntries) {
-    e.st = stMap[e.boat_number] ?? null;
+    const start=stMap.get(e.boat_number);
+    e.st = start?.st ?? null;
+    if(start?.course!=null)e.course=start.course;
+    if(start?.f_flag)e.f_flag=start.f_flag;
     e.winning_method = e.finish_order === 1 ? winningMethod : null;
   }
 
@@ -541,7 +549,15 @@ export function parseResult(html, raceDate, venueCode, venueName) {
     return { ok: false, errors, warnings, data: null };
   }
 
-  const finishOrder = uniqueEntries.sort((a, b) => a.finish_order - b.finish_order).map((e) => e.boat_number);
+  const numericEntries=uniqueEntries.filter(entry=>Number.isInteger(entry.finish_order)).sort((a,b)=>a.finish_order-b.finish_order);
+  const finishOrder = numericEntries.map(entry=>entry.boat_number);
+  const detailsMissing=[];
+  if(finishTables.length!==1)detailsMissing.push(finishTables.length?'FINISH_TABLE_AMBIGUOUS':'FINISH_TABLE_MISSING');
+  if(invalidFinishRows||repeatedBoats)detailsMissing.push('FINISH_ROWS_INVALID_OR_REPEATED');
+  if(uniqueEntries.length!==6)detailsMissing.push('SIX_BOAT_FINISH_DETAILS_MISSING');
+  if(numericEntries.some((entry,index)=>entry.finish_order!==index+1))detailsMissing.push('FINISH_PLACES_INVALID');
+  if(numericEntries.slice(0,3).map(entry=>entry.boat_number).join('-')!==resultTrifecta)detailsMissing.push('FINISH_TRIFECTA_MISMATCH');
+  if(uniqueEntries.some(entry=>entry.finish_order==null&&!/^(F|L|欠|欠場|失|失格|転|転覆|落|落水|沈|沈没|妨|妨害|エ|不|不完)$/.test(entry.result_status||'')))detailsMissing.push('FINISH_STATUS_UNKNOWN');
 
   const data = {
     type: "K",
@@ -556,6 +572,9 @@ export function parseResult(html, raceDate, venueCode, venueName) {
         payout: payout || 0,
         payouts: Object.keys(payouts).length ? payouts : null,
         entries: uniqueEntries,
+        details_complete:detailsMissing.length===0,
+        details_revision:'OFFICIAL_RESULT_TABLE_V1',
+        details_missing:detailsMissing,
         weather,
         wind_speed: windSpeed,
         water_temp: waterTemp,
