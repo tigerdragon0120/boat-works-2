@@ -3,6 +3,7 @@ import V7ServerVerification from '@/components/liveV7/V7ServerVerification';
 import V7FactorCandidates from '@/components/liveV7/V7FactorCandidates';
 import V7WeatherLab from '@/components/liveV7/V7WeatherLab';
 import V8PatternLab from '@/components/liveV7/V8PatternLab';
+import V8TheoryLab from '@/components/liveV7/V8TheoryLab';
 
 // 検証ページはV7専用。旧V1〜V6.5の履歴・エンジンは削除せず、
 // この画面での表示と旧集計の読込だけを外す。
@@ -18,6 +19,7 @@ export default function Verification() {
           BUY判定、4・6・8・12点の的中率・回収率を表示します。
         </p>
       </header>
+      <V8TheoryLab />
       <V8PatternLab />
       <V7WeatherLab />
       <V7FactorCandidates />
