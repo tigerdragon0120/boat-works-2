@@ -37,7 +37,7 @@ export async function runV8CompleteRaceResearch(client:any,options:any={}){
       catch(error:any){summary.errors.push({phase:'FORECASTS',reason:String(error?.message||'FORECAST_RECOVERY_FAILED').slice(0,120)});}
     }
     if(remaining()>10000){
-      try{summary.verification=await runV8VerifyForecasts(client,{dates:[day.race_date],max_created:120,budgetMs:Math.min(30000,remaining()-7000)});}
+      try{summary.verification=await runV8VerifyForecasts(client,{dates:[day.race_date],max_created:Math.max(20,120-Number(summary.forecasts?.created||0)),budgetMs:Math.min(30000,remaining()-7000)});}
       catch(error:any){summary.errors.push({phase:'VERIFICATION',reason:String(error?.message||'VERIFICATION_FAILED').slice(0,120)});}
     }
     const readBudget=Date.now()+Math.max(1000,Math.min(15000,remaining()));
