@@ -1,0 +1,47 @@
+{
+  "name": "Latest Official Racer Stats",
+  "description": "\u516c\u5f0f\u306e\u6700\u65b0\u516c\u958b\u671f\u306e\u307f\u3092\u53d6\u5f97\u30fb\u691c\u8a3c\u3057\u3066\u4fdd\u5b58\u3057\u3001V7/V8\u306e\u30b3\u30fc\u30b9\u5225\u6210\u7e3e\u3068DB\u8868\u793a\u3078\u63a5\u7d9a\u3002\u65e5\u672c\u6642\u95936:20\u30fb12:20\u30fb18:20\u306b\u78ba\u8a8d\u3002",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "20 6,12,18 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "latest_official_racer_stats",
+      "version": "1.0.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "sync_latest": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "syncLatestRacerStats",
+            "args": {
+              "scheduled": true
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "\u6700\u65b0\u306e\u516c\u5f0f\u9078\u624b\u6210\u7e3e\u3092\u540c\u671f",
+            "description": "\u6700\u65b0\u516c\u958b\u671f\u306e1\u30d5\u30a1\u30a4\u30eb\u3092\u691c\u8a3c\u3057\u3001\u5168\u4ef6\u4fdd\u5b58\u5f8c\u306b\u4e88\u60f3\u7528\u30c7\u30fc\u30bf\u3092\u5207\u66ff"
+          }
+        }
+      }
+    ]
+  }
+}
