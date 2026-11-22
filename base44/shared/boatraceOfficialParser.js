@@ -514,7 +514,7 @@ export function parseResult(html, raceDate, venueCode, venueName) {
 
   // 決まり手抽出
   let winningMethod = null;
-  const methodMatch = text.match(/決まり手\s*(逃げ|まくり|差し|まくり差し|抜き|恵まれ|その他)/);
+  const methodMatch = text.match(/決まり手\s*(まくり差し|逃げ|まくり|差し|抜き|恵まれ|その他)/);
   if (methodMatch) winningMethod = methodMatch[1];
 
   // 天候情報抽出(テキストから)
@@ -552,6 +552,7 @@ export function parseResult(html, raceDate, venueCode, venueName) {
       results: [{
         race_number: null,
         result_trifecta: resultTrifecta,
+        winning_method: winningMethod,
         payout: payout || 0,
         payouts: Object.keys(payouts).length ? payouts : null,
         entries: uniqueEntries,
