@@ -2,7 +2,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 import {useAuth} from '@/lib/AuthContext';
 import RaceScenarioDiagram from './RaceScenarioDiagram';
 import V8ExternalPanel from './V8ExternalPanel';
-import {isReplay, studyStageLabel, studySettlementIndex, studyProgressLabel} from './v8StudyView';
+import {isReplay, latestStudyStage, studyStageLabel, studySettlementIndex, studyProgressLabel} from './v8StudyView';
 import {BUTTON_CLASS, displayDecision, formatTime, latestStage, timeMs, useClock, useV8Dashboard} from './v8Client';
 
 const TONES={emerald:'border-emerald-200 bg-emerald-50 text-emerald-800',amber:'border-amber-200 bg-amber-50 text-amber-900',sky:'border-sky-200 bg-sky-50 text-sky-800',slate:'border-slate-200 bg-slate-50 text-slate-600'};
@@ -78,7 +78,7 @@ export default function V8RaceJourney({race}) {
   const [tab,setTab]=useState('JOURNEY'),[baseMode,setBaseMode]=useState('AUTO');
   useEffect(()=>{setTab('JOURNEY');setBaseMode('AUTO');},[race?.id]);
   const liveRecords=data?.forecasts || [], replayRecords=data?.replay_forecasts || [], records=[...liveRecords,...replayRecords];
-  const dayBefore=latestStage(liveRecords,'DAY_BEFORE'), pre=latestStage(liveRecords,'PRE') || latestStage(replayRecords,'PRE'), final=latestStage(liveRecords,'FINAL') || latestStage(replayRecords,'FINAL');
+  const dayBefore=latestStage(liveRecords,'DAY_BEFORE'), pre=latestStage(liveRecords,'PRE') || latestStage(replayRecords,'PRE'), final=latestStudyStage(liveRecords,'FINAL') || latestStudyStage(replayRecords,'FINAL');
   const referenceId=final?.comparison?.baseline_id || final?.baseline_id;
   const linked=records.find(row=>row.id===referenceId) || null;
   const baseline=baseMode==='DAY_BEFORE'?dayBefore:baseMode==='PRE'?pre:linked || dayBefore || pre;
