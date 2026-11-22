@@ -57,9 +57,10 @@ const AuthenticatedApp = () => {
       <Route path="/register" element={<Register />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
-      {/* 匿名閲覧可: レース一覧・開催場・レース詳細(保存済み予想の閲覧のみ) */}
+      {/* 匿名閲覧可: レース一覧・V8アラート・開催場・レース詳細(保存済み予想の閲覧のみ) */}
       <Route element={<Layout />}>
         <Route path="/" element={<Home />} />
+        <Route path="/alerts" element={<BuyAlerts />} />
         <Route path="/venue/:code" element={<Venue />} />
         <Route path="/race/:id" element={<RaceDetail />} />
       </Route>
@@ -67,7 +68,6 @@ const AuthenticatedApp = () => {
         <Route element={<Layout />}>
           <Route path="/verify" element={<Verification />} />
           <Route path="/racer/:reg" element={<RacerDetail />} />
-          <Route path="/alerts" element={<BuyAlerts />} />
         </Route>
       </Route>
       {/* 管理者専用: 一般ユーザー・匿名ユーザーは直接URLでも拒否 */}
