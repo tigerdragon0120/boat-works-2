@@ -16,10 +16,15 @@ import RaceResultCard from "@/components/race/RaceResultCard";
 import UnifiedRaceView from "@/components/liveV7/UnifiedRaceView";
 import { fetchOnlineData } from "@/lib/dataManagementService";
 import { getRaceResult } from "@/lib/raceResultService";
+import { base44 } from "@/api/base44Client";
 
 export default function Venue() {
   const { code } = useParams();
   const [searchParams] = useSearchParams();
+  const todayJst = new Date().toLocaleDateString('sv-SE', {timeZone:'Asia/Tokyo'});
+  const requestedDate = searchParams.get('date');
+  const selectedDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate||'') && Number.isFinite(Date.parse(requestedDate+'T00:00:00Z')) ? requestedDate : todayJst;
+  const requestedRace = searchParams.get('race');
   const [races, setRaces] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -51,7 +56,7 @@ export default function Venue() {
 
   const loadList = async () => {
     setLoading(true);
-    const all = await listTodayRaces({ includeFinished: true });
+    const all = selectedDate === todayJst ? await listTodayRaces({ includeFinished: true }) : await base44.entities.Race.filter({race_date:selectedDate,venue_code:{$in:[String(code).padStart(2,'0'),String(Number(code))]}},'race_number',100);
     const list = (all || []).filter((r) => String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
       .sort((a, b) => a.race_number - b.race_number);
     setRaces(list);
@@ -75,7 +80,7 @@ export default function Venue() {
     });
     setLoading(false);
   };
-  useEffect(() => { loadList(); }, [code]);
+  useEffect(() => { loadList(); }, [code,selectedDate,requestedRace]);
 
   const raceList = useMemo(() => races, [races]);
   // A closed race must not trap users on an empty V7 view when a future race is available.
