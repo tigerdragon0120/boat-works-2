@@ -27,7 +27,8 @@ export function parseWeatherEvidence(html,kind,raceDate){
   const wave=num(text.match(/波高\s*([\d.]+)\s*cm/i)?.[1]);
   const water=num(text.match(/水温\s*([\d.]+)\s*℃/)?.[1]);
   const air=num(text.match(/気温\s*([\d.]+)\s*℃/)?.[1]);
-  const weather=text.match(/(?:天候\s*)?(晴れ|曇り|雨|雪|霧)/)?.[1]||null;
+  const weatherRaw=text.match(/(?:天候\s*)?(晴(?:れ)?|曇(?:り)?|雨|雪|霧)/)?.[1]||null;
+  const weather=weatherRaw==="晴"?"晴れ":weatherRaw==="曇"?"曇り":weatherRaw;
   // Direction must be explicit in text. Icon image names alone are never decoded by guessing.
   const directionPattern=directions.join("|");
   const match=text.match(new RegExp("風向\\s*("+directionPattern+")(?=\\s|の風|$)"))||
