@@ -23,6 +23,8 @@ import { buildRaceKey } from '../../shared/raceKey.js';
 // V7: 定期更新で展示を保存したレースも、FINAL予想の生成につなぐ
 import { runV7AutoGeneration } from '../../shared/v7AutoGeneration.js';
 import { selectLiveInputRaces, isSavedExhibitionComplete } from '../../shared/liveInputPriority.js';
+import { readV8Rows } from '../../shared/v8Repository.js';
+import { planRaceCardEntries } from '../../shared/raceCardEntryPlan.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -137,24 +139,33 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
 
     const venueCode = venue.venue_code;
     const venueName = venue.venue_name;
-    let existingRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 500).catch(() => []);
+    let existingRaces: any[] = [], existingEntries: any[] = [];
+    try {
+      const budget = startTime + timeBudgetMs;
+      [existingRaces, existingEntries] = await Promise.all([
+        readV8Rows(sr.Race, {race_date:raceDate,venue_code:venueCode}, {budget,maxPages:3,sort:'race_number'}),
+        readV8Rows(sr.RaceEntry, {race_date:raceDate,venue_code:venueCode}, {budget,maxPages:8,sort:'boat_number'}),
+      ]);
+    } catch {
+      errors.push(venueName + ': 既存出走表を最後まで確認できないため保存を保留');
+      continue;
+    }
     const raceKeyCounts = new Map<string, number>();
     for (const race of existingRaces) {
       const key = String(race.race_key || buildRaceKey(raceDate, venueCode, race.race_number));
       raceKeyCounts.set(key, (raceKeyCounts.get(key) || 0) + 1);
     }
-    for (const [key, count] of raceKeyCounts) {
-      if (count > 1) await withRateLimitRetry(() => dedupRace(base44, key), 4).catch((e: any) => errors.push(`${venueName}: Race重複統合 ${key} ${e.message}`));
-    }
     if ([...raceKeyCounts.values()].some((count) => count > 1)) {
-      existingRaces = await sr.Race.filter({ race_date: raceDate, venue_code: venueCode }, 'race_number', 500).catch(() => existingRaces);
+      errors.push(venueName + ': レースの重複を確認したため出走表保存を保留');
+      continue;
     }
-    const existingEntries = await sr.RaceEntry.filter({ race_date: raceDate, venue_code: venueCode }, 'boat_number', 5000).catch(() => []);
-    const entryCountByRace: Record<string, number> = {};
+    const entrySlots = new Set<string>(), ambiguousRaceNos = new Set<number>();
     for (const e of existingEntries) {
-      const rn = String(e.race_number);
-      entryCountByRace[rn] = (entryCountByRace[rn] || 0) + 1;
+      const rno = Number(e.race_number), slot = rno + '_' + Number(e.boat_number);
+      if(entrySlots.has(slot))ambiguousRaceNos.add(rno);
+      entrySlots.add(slot);
     }
+    for(const rno of ambiguousRaceNos)errors.push(venueName + ' R' + rno + ': 出走表重複を保持して再保存を保留');
 
     let deadlineTimes: string[] = [];
     let seriesName = '';
@@ -207,6 +218,7 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     // 値を取得できた時点でこの条件は満たなくなるため、再取得は1回で収束する。
     const targetRaceNos = Array.from({ length: 12 }, (_, i) => i + 1).filter(
       (rno) => {
+        if(ambiguousRaceNos.has(rno))return false;
         const rows = entriesByRace[String(rno)] || [];
         return rows.length < 6 || rows.some((e: any) => e.national_win_rate == null);
       },
@@ -266,13 +278,20 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
         doc.is_womens = venueIsWomens;
       }
       // 1件の保存失敗(429等)で自動更新の実行全体を落とさない。失敗分は次回実行で補完する。
-      const saved = await withRateLimitRetry(() => upsertRace(base44, doc))
-        .catch((e: any) => { errors.push(`${venueName} R${rno}: Race保存 ${e.message}`); return null; });
+      let saved: any = null;
+      try {
+        // Recheck the exact race key; do not call the automatic deletion/merge path.
+        const current = await readV8Rows(sr.Race,{race_key:raceKey},{budget:startTime+timeBudgetMs,maxPages:3});
+        if(current.length>1)throw new Error('RACE_IDENTITY_AMBIGUOUS');
+        const old=current[0];
+        if(old&&(old.race_date!==raceDate||String(old.venue_code).padStart(2,'0')!==venueCode||Number(old.race_number)!==rno))throw new Error('RACE_IDENTITY_CONFLICT');
+        saved=old?await sr.Race.update(old.id,{...doc,status:old.status||doc.status}):await sr.Race.create(doc);
+      } catch(e: any) {
+        errors.push(venueName + ' R' + rno + ': Race保存を保留 ' + String(e?.message||'READ_OR_WRITE_FAILED').slice(0,100));
+      }
       if (saved) raceByNo.set(rno, saved);
     }
-    const existingEntryByKey = new Map(existingEntries.map((e: any) => [`${Number(e.race_number)}_${Number(e.boat_number)}`, e]));
-    const entryCreates: any[] = [];
-    const entryUpdates: any[] = [];
+    const incomingEntries: any[] = [];
 
     for (const { rno, race } of parsedCards) {
       const savedRace: any = raceByNo.get(rno);
@@ -304,39 +323,36 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
           section_momentum: e.section_momentum,
         };
         for (const [k, v] of Object.entries(optional)) if (v !== null && v !== undefined && v !== '') entryData[k] = v;
-        const old = existingEntryByKey.get(`${rno}_${Number(e.boat_number)}`);
-        if (old) {
-          // 出走表の再取得で、検知済みの欠場・欠場予定フラグを消さない。
-          entryUpdates.push({
-            id: old.id,
-            ...entryData,
-            is_absent: old.is_absent === true,
-            is_scratched: old.is_scratched === true,
-          });
-        } else entryCreates.push(entryData);
+        incomingEntries.push(entryData);
       }
     }
 
+    if(!incomingEntries.length)continue;
+    let freshEntries: any[] = [];
+    try {
+      const keys=[...new Set(incomingEntries.map(row=>row.race_key))],ids=[...new Set(incomingEntries.map(row=>row.race_id))];
+      const budget=startTime+timeBudgetMs;
+      const [byKey,byId]=await Promise.all([
+        readV8Rows(sr.RaceEntry,{race_key:{$in:keys}},{budget,maxPages:8}),
+        readV8Rows(sr.RaceEntry,{race_id:{$in:ids}},{budget,maxPages:8}),
+      ]);
+      freshEntries=[...new Map([...byKey,...byId].map(row=>[row.id,row])).values()];
+    } catch {
+      errors.push(venueName + ': 保存直前の出走表再照合に失敗したため艇の追加・更新を保留');
+      continue;
+    }
+    const entryPlan=planRaceCardEntries(freshEntries,incomingEntries);
+    for(const held of entryPlan.held)errors.push(venueName + ': ' + held.race_key + ' ' + held.reason + '（既存行を保持）');
+    const entryCreates=entryPlan.creates,entryUpdates=entryPlan.updates;
     if (entryCreates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkCreate(entryCreates))
       .catch((e: any) => errors.push(`${venueName}: RaceEntry作成 ${e.message}`));
     if (entryUpdates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkUpdate(entryUpdates))
       .catch((e: any) => errors.push(`${venueName}: RaceEntry更新 ${e.message}`));
 
-    // BOAT WORKS同期と本処理が重なって同じ艇が二重作成されても、
-    // race_key + boat_numberごとに展示値を持つ完全な行へ統合する。
-    for (const { rno } of parsedCards) {
-      const savedRace: any = raceByNo.get(rno);
-      if (!savedRace?.id) continue;
-      const raceKey = buildRaceKey(raceDate, venueCode, rno);
-      await withRateLimitRetry(
-        () => dedupEntriesForRace(base44, savedRace.id, raceKey),
-        4,
-      ).catch((e: any) => errors.push(`${venueName} R${rno}: RaceEntry重複統合 ${e.message}`));
-    }
-
-    totalRaces += parsedCards.length;
-    totalEntries += parsedCards.length * 6;
-    logs.push(`${venueName}: ${parsedCards.length}R/${parsedCards.length * 6}艇 一括保存`);
+    // Preserve raw duplicate history. Ambiguous slots are held, never deleted here.
+    totalRaces += new Set([...entryCreates,...entryUpdates].map(row=>row.race_key)).size;
+    totalEntries += entryCreates.length + entryUpdates.length;
+    logs.push(venueName + ': 出走表 新規' + entryCreates.length + '艇 / 更新' + entryUpdates.length + '艇');
   }
 
   return { venues: venues.length, races: totalRaces, entries: totalEntries, skipped_venues: skippedVenues, errors };
