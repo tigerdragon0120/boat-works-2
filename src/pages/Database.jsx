@@ -80,8 +80,8 @@ export default function Database(){
  const changePage=(nextPage,scrollToList=false)=>{
   const target=Math.min(pages,Math.max(1,nextPage));
   if(busy||target===page)return;
-  setPage(target);
-  if(scrollToList)requestAnimationFrame(()=>listTopRef.current?.scrollIntoView({block:'start',behavior:'auto'}));
+  setRowsBusy(true);setPage(target);
+  if(scrollToList)requestAnimationFrame(()=>{listTopRef.current?.focus({preventScroll:true});listTopRef.current?.scrollIntoView({block:'start',behavior:'auto'});});
  };
  return <div className="space-y-3">
   <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="flex items-center gap-2 text-xl font-black text-slate-900 sm:text-2xl"><DbIcon className="h-5 w-5 text-amber-500"/>BOAT WORKS DATABASE</h1><p className="mt-1 text-xs text-slate-500">選手プロフィールと公式の期別成績</p></div><button type="button" onClick={()=>void reload()} disabled={busy} className="flex h-10 items-center gap-2 rounded-lg bg-[#f9c836] px-4 text-sm font-black text-slate-950 disabled:opacity-50"><RefreshCw className={cn('h-4 w-4',busy&&'animate-spin')}/>{busy?'読込中':'再読込'}</button></div>
@@ -91,7 +91,7 @@ export default function Database(){
   <div className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-1">{tabs.map(([key,label,Icon])=><button type="button" key={key} onClick={()=>{setTab(key);setPage(1);}} className={cn('flex h-10 items-center justify-center gap-1.5 rounded-lg text-xs font-bold sm:text-sm',tab===key?'bg-[#f9c836] text-slate-950':'text-slate-600')}><Icon className="h-4 w-4"/>{label}</button>)}</div>
   {tab==='terms'&&<label className="block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">保存されている期を選択</span><select value={selectedTerm} onChange={event=>{setSelectedTerm(event.target.value);setPage(1);}} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900">{!termKeys.length&&<option value="">取得済みの期を確認中</option>}{termKeys.map(key=><option key={key} value={key}>{termLabel(key)}（{key}）</option>)}</select></label>}
   <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"/><input value={q} onChange={event=>setQ(event.target.value)} placeholder="選手名・登録番号・支部・級別・元ファイル名で検索" aria-label="選手データを検索" className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm text-slate-900 outline-none focus:border-blue-500"/></div>
-  <div ref={listTopRef} className="scroll-mt-28"><DatabasePagination total={total} page={page} pages={pages} busy={busy} onPageChange={changePage} label="一覧上部のページ切り替え"/></div>
+  <div ref={listTopRef} tabIndex={-1} className="scroll-mt-28 focus:outline-none"><DatabasePagination total={total} page={page} pages={pages} busy={busy} onPageChange={changePage} label="一覧上部のページ切り替え"/></div>
   {tab==='profiles'?<Profiles rows={rows} busy={rowsBusy}/>:<Terms rows={rows} busy={rowsBusy}/>}
   <div className="pb-3"><DatabasePagination total={total} page={page} pages={pages} busy={busy} onPageChange={nextPage=>changePage(nextPage,true)} label="一覧下部のページ切り替え"/></div>
  </div>;
