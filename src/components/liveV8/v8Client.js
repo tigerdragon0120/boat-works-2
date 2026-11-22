@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {base44} from '@/api/base44Client';
+import {isReplay} from './v8StudyView';
 
 export const STAGES = {DAY_BEFORE:'前日', PRE:'当日・展示前', FINAL:'展示後'};
 export const VENUES = ['','桐生','戸田','江戸川','平和島','多摩川','浜名湖','蒲郡','常滑','津','三国','びわこ','住之江','尼崎','鳴門','丸亀','児島','宮島','徳山','下関','若松','芦屋','福岡','唐津','大村'];
@@ -45,6 +46,7 @@ export function displayDecision(forecast, now=Date.now(), race=null) {
   const deadline=sourceDeadline!=null&&currentDeadline!=null?Math.min(sourceDeadline,currentDeadline):currentDeadline ?? sourceDeadline;
   const effective=forecast?.effective_status || forecast?.decision?.effective_status;
   if (race?.status==='cancelled' || effective==='CANCELLED') return {key:'CANCELLED',label:'中止',tone:'slate'};
+  if (isReplay(forecast)) return {key:'REPLAY',label:'事後検証',tone:'sky'};
   if (race?.status==='finished' || effective==='CLOSED') return {key:'CLOSED',label:'締切済',tone:'slate'};
   if (deadline!=null && deadline<=now) return {key:'CLOSED',label:'締切済',tone:'slate'};
   if (effective==='WAIT') return {key:'WAIT',label:'再確認待ち',tone:'amber'};
