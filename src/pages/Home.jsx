@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { RefreshCw, Clock } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { listTodayRaces } from "@/lib/predictionService";
 import { cn } from "@/lib/utils";
-import V8DailyBoard from "@/components/liveV8/V8DailyBoard";
 
 const VENUES = [
   ["01","桐生"],["02","戸田"],["03","江戸川"],["04","平和島"],["05","多摩川"],["06","浜名湖"],["07","蒲郡"],["08","常滑"],
@@ -49,9 +48,6 @@ export default function Home() {
     );
   }, [chronological, now]);
   const currentRace = currentIndex >= 0 ? chronological[currentIndex] : null;
-  const minutesToDeadline = currentRace
-    ? Math.max(0, Math.ceil((new Date(currentRace.deadline).getTime() - now) / 60000))
-    : null;
 
   return (
     <div className="text-[#26364d] space-y-2 pb-2">
@@ -63,25 +59,7 @@ export default function Home() {
         <button onClick={load} className="h-9 px-3 rounded-lg border border-[#e8c900] bg-[#ffe600] text-[#16254a] shadow-sm flex items-center gap-2 text-xs font-black hover:bg-[#ffeb33] active:scale-[0.98] transition"><RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />更新</button>
       </div>
 
-      {currentRace && <div className="rounded-xl border border-[#ff4d93] bg-gradient-to-r from-[#fff1f6] via-[#fff7fa] to-[#fff3f8] px-3 sm:px-4 py-2.5 flex items-center gap-3 shadow-sm">
-        <div className="flex items-center gap-2 shrink-0">
-          <Clock className="w-5 h-5 text-[#f02f7d]"/>
-          <span className="px-2 py-1 rounded-full bg-[#f02f7d] text-white text-[10px] sm:text-[11px] font-black whitespace-nowrap">締切間近</span>
-        </div>
-        <div className="font-black text-sm sm:text-base text-slate-900 whitespace-nowrap">{venueName(currentRace.venue_code)} {currentRace.race_number}R</div>
-        <div className="hidden sm:block w-px h-7 bg-[#f6b6d0]"/>
-        <div className="hidden sm:flex items-baseline gap-1 whitespace-nowrap"><span className="text-[10px] text-slate-500">締切時刻</span><span className="text-xl font-black text-[#f02f7d]">{fmtTime(currentRace.deadline)}</span></div>
-        <div className="hidden md:block w-px h-7 bg-[#f6b6d0]"/>
-        <div className="flex items-baseline gap-1 whitespace-nowrap"><span className="text-[11px] font-bold text-[#d92d72]">あと</span><span className="text-2xl font-black text-[#f02f7d]">{minutesToDeadline}</span><span className="text-sm font-black text-[#d92d72]">分</span></div>
-        <div className="hidden lg:block w-px h-7 bg-[#f6b6d0]"/>
-        <div className="hidden lg:flex items-baseline gap-1 whitespace-nowrap"><span className="text-[10px] text-slate-500">現在時刻</span><span className="text-sm font-black text-slate-700">{fmtTime(now)}</span></div>
-        <div className="hidden xl:block flex-1 text-center text-[10px] font-semibold text-[#e13a7b]">本日これから締切のレースの中で最も近いレースを表示しています</div>
-        <div className="ml-auto text-right shrink-0"><div className="text-[10px] text-slate-400">本日全{chronological.length}R</div><div className="text-sm font-black text-slate-900">{currentIndex+1} / {chronological.length}</div></div>
-      </div>}
-
-      <V8DailyBoard />
-
-      <section className="rounded-xl border border-[#d4dde9] bg-[#f7f9fc] p-1.5 sm:p-2 shadow-sm">
+      <section aria-label="各場一覧" className="rounded-xl border border-[#d4dde9] bg-[#f7f9fc] p-1.5 sm:p-2 shadow-sm">
         <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
           {VENUES.map(([code,name]) => {
             const list = venueData.get(code) || [];
@@ -113,7 +91,6 @@ export default function Home() {
   );
 }
 
-function venueName(code){ const c=String(code||'').padStart(2,'0'); return VENUES.find(v=>v[0]===c)?.[1] || c; }
 function displayGrade(v){ const g=String(v||'').toUpperCase(); return !g||g==='GENERAL'?'一般':g; }
 function fmtTime(v){ return v ? new Date(v).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}) : '--:--'; }
 
