@@ -141,7 +141,7 @@ async function fetchOfficialBytes(value, kind, budget, maxBytes) {
       }
       if (!response.ok) {
         await response.body?.cancel();
-        fail('HTTP_' + response.status);
+        fail(kind.toUpperCase() + '_HTTP_' + response.status);
       }
       if (response.url) {
         const observed = officialUrl(response.url, url.href, kind);
