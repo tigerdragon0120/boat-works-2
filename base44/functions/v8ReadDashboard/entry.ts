@@ -39,7 +39,12 @@ export default async function(req:Request):Promise<Response>{
       mode==='verification'||mode==='race'?readV8Rows(sr.V8ForecastVerification,{...query,...(!admin?{source_kind:'FORECAST'}:{})},{budget,maxPages:90}):Promise.resolve([]),
       admin&&mode==='race'?readV8Rows(sr.V8TheoryTrial,query,{budget,maxPages:6}):Promise.resolve([])
     ]);
-    const canonical=canonicalForecasts(raw),latest=latestForecasts(canonical.rows),buys=firstBuyForecasts(canonical.rows);
+    const allRaceKeys=new Set(races.map(r=>r.race_key).filter(Boolean));
+    const raceGroups=groupBy(races,'race_key');
+    const ambiguousRaces=[...raceGroups.values()].filter(g=>g.length!==1).length;
+    races=[...raceGroups.values()].filter(g=>g.length===1).map(g=>g[0]);
+    const validRaceIds=new Set(races.map(r=>r.id));
+    const canonical=canonicalForecasts(raw.filter(f=>validRaceIds.has(f.race_id)),now),latest=latestForecasts(canonical.rows),buys=firstBuyForecasts(canonical.rows);
     const byId=new Map(canonical.rows.map(r=>[r.id,r]));
     const selected=new Map(latest.map(r=>[r.id,r]));
     // Include the actual referenced baseline even when another version exists.
@@ -52,7 +57,7 @@ export default async function(req:Request):Promise<Response>{
     const verified=settlements.filter(v=>v.source_kind==='FORECAST'?ids.has(v.forecast_id):admin&&externalIds.has(v.external_id));
     const racesById=new Map(races.map(r=>[r.id,r]));
     const finals=new Map(latest.filter(r=>r.stage==='FINAL').map(r=>[r.race_id,r]));
-    const raceKeys=new Set(races.map(r=>r.race_key).filter(Boolean));
+    const raceKeys=allRaceKeys;
     const captured=new Set(latest.map(r=>r.race_key));
     const publicForecast=(f:any)=>({...publicRow(f),effective_status:currentDecision(f,racesById.get(f.race_id),now)});
     return Response.json({ok:true,mode,generated_at:new Date(now).toISOString(),race_date:dates[0]||races[0]?.race_date,
@@ -63,7 +68,7 @@ export default async function(req:Request):Promise<Response>{
       coverage:{expected_races:raceKeys.size,captured_races:captured.size,missing_races:[...raceKeys].filter(k=>!captured.has(k)).length,
         day_before_count:latest.filter(f=>f.stage==='DAY_BEFORE').length,pre_count:latest.filter(f=>f.stage==='PRE').length,final_count:finals.size,
         active_buy_count:[...finals.values()].filter(f=>currentDecision(f,racesById.get(f.race_id),now)==='BUY').length,
-        ambiguous_forecast_keys:canonical.conflicts.length,ambiguous_verification_keys:[...verificationGroups.values()].filter(g=>g.length!==1).length},
+        ambiguous_race_keys:ambiguousRaces,ambiguous_forecast_keys:canonical.conflicts.length,ambiguous_verification_keys:[...verificationGroups.values()].filter(g=>g.length!==1).length},
       errors:canonical.conflicts.length?['予想キーの重複がある記録を保留しました']:[],
       policies:{buy_evaluation:'FIRST_PUBLISHED_BUY_PER_RACE',forecast_evaluation:'LATEST_STAGE_BEFORE_DEADLINE',stake_per_ticket:100,research_only:true,external_automatic_collection:'NOT_CONNECTED',weather_forecast:'NOT_CONNECTED',tide:'NOT_CONNECTED'}
     },{headers:{'Cache-Control':'private, no-store'}});
