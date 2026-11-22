@@ -19,7 +19,12 @@ export default async function(req:Request):Promise<Response>{
       if(typeof body.race_id!=='string'||!/^[a-zA-Z0-9_-]{5,80}$/.test(body.race_id))return Response.json({ok:false,error:'INVALID_RACE'},{status:400});
       const race=await sr.Race.get(body.race_id);
       if(!race?.id)return Response.json({ok:false,error:'RACE_NOT_FOUND'},{status:404});
-      races=[race];query={race_id:race.id};
+      if(typeof race.race_key!=='string'||!race.race_key)return Response.json({ok:false,error:'RACE_IDENTITY_UNVERIFIED'},{status:409});
+      // A single ID lookup cannot establish uniqueness of the logical race.
+      // Read the whole key group so race/day views apply the same ambiguity guard.
+      races=await readV8Rows(sr.Race,{race_key:race.race_key},{budget,maxPages:16});
+      if(!races.some(r=>r.id===race.id&&r.race_key===race.race_key))return Response.json({ok:false,error:'RACE_IDENTITY_CHANGED'},{status:409});
+      dates=[race.race_date];query={race_id:race.id};
     }else{
       if(mode==='day'){
         const day=body.race_date||jstDate();
