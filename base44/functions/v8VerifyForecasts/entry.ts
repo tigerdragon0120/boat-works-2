@@ -23,6 +23,8 @@ export default async function(req:Request):Promise<Response>{
     ]);
     const source=canonicalForecasts(allForecasts);
     const selected=new Map([...latestForecasts(source.rows),...firstBuyForecasts(source.rows)].map(r=>[r.id,{kind:'FORECAST',row:r}]));
+    const sourceById=new Map(source.rows.map(row=>[row.id,row]));
+    for(const item of [...selected.values()]){const id=item.row.comparison?.baseline_id;if(id&&sourceById.has(id))selected.set(id,{kind:'FORECAST',row:sourceById.get(id)});}
     const externalGroups=groupBy(external,'record_key');
     for(const records of externalGroups.values())if(records.length===1&&records[0].verification_eligible===true)selected.set(records[0].id,{kind:'EXTERNAL',row:records[0]});
     const done=new Set(existing.map(v=>v.source_kind+':'+(v.forecast_id||v.external_id)));
