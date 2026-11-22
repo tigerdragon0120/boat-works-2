@@ -8,12 +8,14 @@ import {utcMs} from '../base44/shared/v7FeatureObservation.js';
 import {isSavedExhibitionComplete} from '../base44/shared/liveInputPriority.js';
 import {buildProvenanceDoc,isValidTrifecta} from '../base44/shared/resultProvenance.js';
 import {parseResult} from '../base44/shared/boatraceOfficialParser.js';
+import {hasCompleteResultDetails} from '../base44/shared/v8ResultDetails.js';
 
 const NOW=Date.parse('2026-11-22T11:00:00Z');
 const race=(id='r1',extra={})=>({id,race_key:'2026-11-22_07_'+id,race_date:'2026-11-22',venue_code:'07',race_number:2,deadline:'2026-11-22T06:43:00Z',status:'finished',exhibition_ready:false,...extra});
 const entries=()=>Array.from({length:6},(_,i)=>({id:'e'+(i+1),race_id:'r1',boat_number:i+1}));
 const observed=()=>entries().map((row,i)=>({...row,exhibition_time:6.71+i*.01,exhibition_st:.11,exhibition_course:i+1}));
-const result={id:'result',race_id:'r1',source:'LOCAL',result_status:'RESULT_FINAL',is_finished:true,result_trifecta:'1-2-3',payout:1200,finished_at:'2026-11-22T07:00:00Z'};
+const resultBoats=Array.from({length:6},(_,i)=>({boat_number:i+1,finish_order:i+1}));
+const result={id:'result',race_id:'r1',source:'LOCAL',result_status:'RESULT_FINAL',is_finished:true,result_trifecta:'1-2-3',payout:1200,finished_at:'2026-11-22T07:00:00Z',boats:resultBoats};
 const proof={id:'proof',race_id:'r1',evidence_type:'LIVE',result_id:'result',source:'LOCAL',result_trifecta:'1-2-3',fetched_at:'2026-11-22T07:00:00Z'};
 
 test('official result keeps the complete まくり差し winning method for scenario comparison',()=>{
@@ -50,15 +52,16 @@ test('day completion requires all actual races verified, excluded or cancelled',
 
 function bindRecovery(dependencies){
  const source=readFileSync(new URL('../base44/shared/v8ResearchRecovery.js',import.meta.url),'utf8').replace(/^import .*;$/gm,'').replace(/export /g,'');
- const all={groupBy,utcMs,isSavedExhibitionComplete,buildProvenanceDoc,isValidTrifecta,...dependencies};
+ const all={groupBy,utcMs,isSavedExhibitionComplete,buildProvenanceDoc,isValidTrifecta,hasCompleteResultDetails,...dependencies};
  return new Function(...Object.keys(all),source+'\nreturn recoverRaceResearchInputs;')(...Object.values(all));
 }
-function setup(t,{failedBoat=null,hasResult=true,parseExhibition=true}={}){
+function setup(t,{failedBoat=null,hasResult=true,parseExhibition=true,missingResultDetails=false}={}){
  t.mock.timers.enable({apis:['Date'],now:NOW});
- const row=race(),boats=entries(),raceUpdates=[],writes=[];
- const sr={Race:{kind:'Race',update:async(id,doc)=>{raceUpdates.push(doc);return {id,...doc};}},RaceEntry:{kind:'RaceEntry',update:async(id,doc)=>{if(id==='e'+failedBoat)throw new Error('write failed');writes.push({id,...doc});return {id,...doc};}},RaceResult:{kind:'RaceResult',create:async doc=>({id:'newresult',...doc})},ResultProvenance:{kind:'ResultProvenance',create:async doc=>({id:'newproof',...doc})}};
- const run=bindRecovery({readV8Rows:async entity=>({Race:[row],RaceEntry:boats,RaceResult:hasResult?[result]:[],ResultProvenance:hasResult?[proof]:[]}[entity.kind]),fetchHtml:async()=>({ok:true,html:'official fetched page'}),buildUrl:(kind)=>kind,parseBeforeInfo:()=>parseExhibition?{ok:true,data:{entries:observed(),scratched_boats:[]}}:{ok:false},parseResult:()=>({ok:true,data:{venues:[{results:[{result_trifecta:'1-2-3',payout:1200,entries:[],finish_order:[1,2,3]}]}]}})});
- return {run:()=>run({asServiceRole:{entities:sr}},{date:'2026-11-22'}),raceUpdates,writes};
+ const row=race(),boats=entries(),raceUpdates=[],writes=[],resultUpdates=[];
+ const savedResult=missingResultDetails?{...result,boats:[]}:result;
+ const sr={Race:{kind:'Race',update:async(id,doc)=>{raceUpdates.push(doc);return {id,...doc};}},RaceEntry:{kind:'RaceEntry',update:async(id,doc)=>{if(id==='e'+failedBoat)throw new Error('write failed');writes.push({id,...doc});return {id,...doc};}},RaceResult:{kind:'RaceResult',get:async()=>savedResult,update:async(id,doc)=>{resultUpdates.push(doc);return {id,...doc};},create:async doc=>({id:'newresult',...doc})},ResultProvenance:{kind:'ResultProvenance',create:async doc=>({id:'newproof',...doc})}};
+ const run=bindRecovery({readV8Rows:async entity=>({Race:[row],RaceEntry:boats,RaceResult:hasResult?[savedResult]:[],ResultProvenance:hasResult?[proof]:[]}[entity.kind]),fetchHtml:async()=>({ok:true,html:'official fetched page'}),buildUrl:(kind)=>kind,parseBeforeInfo:()=>parseExhibition?{ok:true,data:{entries:observed(),scratched_boats:[]}}:{ok:false},parseResult:()=>({ok:true,data:{venues:[{results:[{result_trifecta:'1-2-3',payout:1200,entries:resultBoats,finish_order:[1,2,3,4,5,6]}]}]}})});
+ return {run:()=>run({asServiceRole:{entities:sr}},{date:'2026-11-22'}),raceUpdates,writes,resultUpdates};
 }
 test('actual recovery saves exhibition for an already finished race',async t=>{
  const state=setup(t),out=await state.run();
@@ -75,4 +78,11 @@ test('result recovery still runs when official exhibition is not available',asyn
  assert.equal(out.exhibition_saved,0);assert.equal(out.result_saved,1);
  assert.equal(out.failures[0].phase,'EXHIBITION');
  assert.equal(state.raceUpdates.some(row=>'result_trifecta' in row||'payout' in row),false);
+});
+test('existing payout-only results are enriched from fresh official details without rewriting payout or finish timestamp',async t=>{
+ const state=setup(t,{missingResultDetails:true}),out=await state.run();
+ assert.equal(out.result_saved,1);assert.equal(state.resultUpdates.length,1);
+ assert.equal(state.resultUpdates[0].boats.length,6);
+ assert.equal(state.resultUpdates[0].details_complete,true);
+ for(const key of ['payout','result_trifecta','finished_at','source'])assert.equal(key in state.resultUpdates[0],false);
 });
