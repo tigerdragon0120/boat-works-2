@@ -1,4 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import {Clock} from 'lucide-react';
 import {BUTTON_CLASS, FIELD_CLASS, STAGES, displayDecision, formatTime, jstDate, latestRows, raceHref, timeMs, useClock, useV8Dashboard, venueName} from './v8Client';
 
 const CHIP={emerald:'bg-emerald-50 text-emerald-800 ring-emerald-200',sky:'bg-sky-50 text-sky-800 ring-sky-200',amber:'bg-amber-50 text-amber-900 ring-amber-200',slate:'bg-slate-100 text-slate-600 ring-slate-200'};
@@ -28,10 +29,19 @@ export default function V8DailyBoard({onSelectRace}) {
   const visible=rows.filter(row=>(venue==='ALL'||String(row.race.venue_code)===venue)&&(filter==='ALL'||(filter==='BUY'?row.decision.key==='BUY':filter==='CANDIDATE'?['WATCH','PRE'].includes(row.decision.key):!row.forecast)));
   const buys=rows.filter(row=>row.decision.key==='BUY').length, captured=rows.filter(row=>row.forecast).length;
   const coverage=data?.coverage || {},expected=numeric(coverage.expected_races)??rows.length, missing=numeric(coverage.missing_races)??Math.max(0,expected-captured);
-  return <section className="overflow-hidden rounded-2xl border border-sky-200 bg-white shadow-sm" aria-label="全レースの予想とBUY候補">
+  const upcoming=rows.filter(({race,decision})=>!['CLOSED','CANCELLED'].includes(decision.key)&&(timeMs(race.deadline)??0)>now).sort((a,b)=>timeMs(a.race.deadline)-timeMs(b.race.deadline));
+  const nextRace=upcoming[0]?.race || null, minutesToDeadline=nextRace?Math.ceil((timeMs(nextRace.deadline)-now)/60000):null;
+  const countdown=minutesToDeadline==null?'':minutesToDeadline<60?`${minutesToDeadline}分`:`${Math.floor(minutesToDeadline/60)}時間${minutesToDeadline%60?minutesToDeadline%60+'分':''}`;
+  return <div className="space-y-3">
+    {nextRace&&<a href={raceHref(nextRace)} aria-label={`次の締切：${venueName(nextRace)} ${nextRace.race_number}R`} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 shadow-sm transition hover:border-rose-400">
+      <div className="flex items-center gap-2"><Clock className="h-5 w-5 shrink-0 text-rose-600" aria-hidden="true"/><span className="rounded-full bg-rose-600 px-2.5 py-1 text-[11px] font-bold text-white">{minutesToDeadline<=10?'締切間近':'次の締切'}</span><strong className="text-base font-black text-slate-900">{venueName(nextRace)} {nextRace.race_number}R</strong></div>
+      <div className="flex items-baseline gap-2"><span className="text-[11px] text-slate-500">締切</span><strong className="text-xl font-black tabular-nums text-rose-600">{formatTime(nextRace.deadline,date!==jstDate())}</strong><span className="text-xs font-bold text-rose-700">あと {countdown}</span></div>
+      <div className="ml-auto text-right"><p className="text-[10px] text-slate-500">選択日の全{expected}R</p><p className="text-sm font-bold text-slate-800">締切前 {upcoming.length}R</p></div>
+    </a>}
+    <section className="overflow-hidden rounded-2xl border border-sky-200 bg-white shadow-sm" aria-label="全レースの予想とBUY候補">
     <header className="border-b border-slate-100 bg-gradient-to-br from-sky-50 via-white to-white p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-[10px] font-extrabold tracking-[0.2em] text-sky-700">DAILY RACE SELECTION</p><h2 className="mt-1 text-xl font-black tracking-tight text-slate-900 sm:text-2xl">一日のレースから、選び抜く。</h2><p className="mt-2 max-w-xl text-xs leading-6 text-slate-500">前日の展開を保存し、展示とオッズを確認。条件が整ったレースを上に表示します。</p></div><button type="button" disabled={loading} onClick={()=>void refresh()} className={BUTTON_CLASS}>{loading?'読込中…':'再読込'}</button></div>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">{[[jstDate(),'今日'],[jstDate(1),'明日']].map(([value,label])=><button type="button" key={label} onClick={()=>setDate(value)} className={`rounded-md px-4 py-1.5 text-xs font-bold ${date===value?'bg-sky-700 text-white':'text-slate-500 hover:bg-slate-50'}`}>{label}</button>)}</div><label><span className="sr-only">対象日</span><input type="date" value={date} onChange={event=>{if(event.target.value)setDate(event.target.value);}} className={`${FIELD_CLASS} max-w-44`}/></label></div><p className="text-[11px] text-slate-400">{data?.generated_at?`確認 ${formatTime(data.generated_at,true)}`:'サーバー保存記録を確認'}</p></div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">{[[jstDate(),'今日'],[jstDate(1),'明日']].map(([value,label])=><button type="button" key={label} onClick={()=>setDate(value)} className={`rounded-md px-4 py-1.5 text-xs font-bold ${date===value?'bg-sky-700 text-white':'text-slate-500 hover:bg-slate-50'}`}>{label}</button>)}</div><label><span className="sr-only">対象日</span><input type="date" value={date} onChange={event=>{if(event.target.value)setDate(event.target.value);}} className={`${FIELD_CLASS} max-w-44`}/></label></div><p className="text-[11px] leading-5 text-slate-400">{data?.generated_at?`確認 ${formatTime(data.generated_at,true)}`:'サーバー保存記録を確認'}<span className="block">表示中は1分ごとに更新</span></p></div>
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{[{label:'対象レース',value:expected,suffix:'R',tone:'text-slate-900'},{label:'事前・展示後を保存',value:numeric(coverage.captured_races)??captured,suffix:'R',tone:'text-sky-800'},{label:'現在の研究用BUY',value:buys,suffix:'R',tone:'text-emerald-700'},{label:'まだ未取得',value:missing,suffix:'R',tone:'text-slate-500'}].map(item=><div key={item.label} className="rounded-xl border border-slate-100 bg-white px-3 py-3"><p className="text-[10px] font-semibold text-slate-500 sm:text-[11px]">{item.label}</p><p className={`mt-1 text-2xl font-black tabular-nums ${item.tone}`}>{data?item.value:'—'}<span className="ml-1 text-xs font-medium text-slate-400">{item.suffix}</span></p></div>)}</div>
     </header>
     <div className="space-y-4 p-4 sm:p-6">
@@ -53,5 +63,6 @@ export default function V8DailyBoard({onSelectRace}) {
       </>}
       <p className="border-t border-slate-100 pt-3 text-[10px] leading-5 text-slate-400">BUY件数を固定せず、判定条件を満たしたレースだけを表示します。比較評価は未校正の順位付けです。締切直前・オッズの有効期限切れは再確認待ちになります。</p>
     </div>
-  </section>;
+    </section>
+  </div>;
 }
