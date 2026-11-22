@@ -5,6 +5,8 @@ import {selectV7RaceEntries} from '../../shared/v7RaceEntrySelector.js';
 import {utcMs} from '../../shared/v7FeatureObservation.js';
 import {buildRaceForecast,FORECAST_REVISION} from '../../shared/v8ForecastEngine.js';
 import {jstDate,readV8Rows,groupBy,chronological,canonicalForecasts} from '../../shared/v8Repository.js';
+import {loadLatestRacerDataset} from '../../shared/latestRacerStore.js';
+import {enrichLatestRacerEntries} from '../../shared/latestRacerEvidence.js';
 
 const hasExhibition=(entries:any[])=>entries.some(e=>['exhibition_time','exhibition_st','exhibition_course'].some(k=>e[k]!=null&&e[k]!==''));
 export default async function(req:Request):Promise<Response>{
@@ -19,10 +21,15 @@ export default async function(req:Request):Promise<Response>{
     lock=await acquireLock(client,'V8_FORECAST_CAPTURE','v8CaptureForecasts',120000);
     if(!lock)return Response.json({...summary,skipped:'locked'});
     const budget=Date.now()+30000;
-    const [races,prior]=await Promise.all([
+    const [races,prior,racerDatasetRead]=await Promise.all([
       readV8Rows(sr.Race,{race_date:{$in:[today,tomorrow]}},{budget,maxPages:8}),
-      readV8Rows(sr.V8RaceForecast,{race_date:{$in:[today,tomorrow]}},{budget,maxPages:40})
+      readV8Rows(sr.V8RaceForecast,{race_date:{$in:[today,tomorrow]}},{budget,maxPages:40}),
+      loadLatestRacerDataset(sr,{budget:Date.now()+15000})
+        .then(dataset=>({dataset,status:dataset?'READY':'ABSENT'}))
+        .catch(error=>{console.warn('[V8_RACER_TERM] optional dataset unavailable',String(error?.message||error).slice(0,120));return {dataset:null,status:'READ_FAILED'};})
     ]);
+    summary.racer_term={status:racerDatasetRead.status,dataset_key:racerDatasetRead.dataset?.metadata?.dataset_key||null,
+      term_key:racerDatasetRead.dataset?.metadata?.term_key||null,enriched_forecasts:0,skipped:{}};
     const uniqueRaces=[...groupBy(races,'race_key').values()].filter(group=>group.length===1).map(g=>g[0]);
     summary.races=uniqueRaces.length;
     summary.duplicate_race_keys=groupBy(races,'race_key').size-uniqueRaces.length;
@@ -66,8 +73,15 @@ export default async function(req:Request):Promise<Response>{
           weather=weathers.filter(w=>utcMs(w.observed_at)<=Date.now()&&utcMs(w.observed_at)<utcMs(fresh.deadline)-60000).sort((a,b)=>utcMs(b.observed_at)-utcMs(a.observed_at))[0]||null;
         }
         const baseline=records.filter(r=>r.stage==='DAY_BEFORE').sort(chronological)[0]||records.filter(r=>r.stage==='PRE').sort(chronological)[0]||null;
-        const output=buildRaceForecast({race:fresh,entries,stage,now:new Date().toISOString(),baseline,prediction,odds,weather});
+        const generatedAt=new Date().toISOString();
+        const racerEvidence=enrichLatestRacerEntries({race:fresh,entries,stage,asOf:generatedAt,dataset:racerDatasetRead.dataset});
+        racerEvidence.provenance.dataset_read_status=racerDatasetRead.status;
+        const output=buildRaceForecast({race:fresh,entries:racerEvidence.entries,stage,now:generatedAt,baseline,prediction,odds,weather});
         if(!output.ok){hold(output.reason||'BUILD_HELD');continue;}
+        output.record.provenance.racer_term_evidence=racerEvidence.provenance;
+        if(racerEvidence.provenance.applied_boats>0){
+          output.record.input_as_of=new Date(Math.max(utcMs(output.record.input_as_of),utcMs(racerEvidence.provenance.source.available_at))).toISOString();
+        }
         if(saved.has(output.record.forecast_key)){summary.existing++;continue;}
         if(utcMs(fresh.deadline)<=Date.now()+90000){hold('CUTOFF');continue;}
         // Re-read the exact logical key before append. Duplicate-key readers fail closed.
@@ -78,6 +92,8 @@ export default async function(req:Request):Promise<Response>{
         if(!record?.id)throw new Error('SAVE_NOT_CONFIRMED');
         saved.add(output.record.forecast_key);records.push(record);byRace.set(race.id,records);
         summary.created++;summary[stage==='DAY_BEFORE'?'day_before':stage==='PRE'?'pre':'final']++;
+        if(racerEvidence.provenance.applied_boats>0)summary.racer_term.enriched_forecasts++;
+        else {const reason=racerEvidence.provenance.reason||'NOT_APPLIED';summary.racer_term.skipped[reason]=(summary.racer_term.skipped[reason]||0)+1;}
         if(record.decision?.status==='BUY')summary.buys++;
         if(utcMs(record.created_date)==null||utcMs(record.created_date)>=utcMs(record.deadline)-60000)hold('PERSISTED_TOO_LATE_EXCLUDED');
       }catch(error:any){summary.errors++;console.error('[V8_CAPTURE]',race.race_key,String(error?.message||error).slice(0,150));}
