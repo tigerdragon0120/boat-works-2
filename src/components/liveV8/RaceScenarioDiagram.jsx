@@ -16,7 +16,7 @@ function route(index,method,secondary=false) {
   const y=180+index*24, exitX=secondary?332:252;
   if (method==='MAKURI') return `M 112 ${y} C 285 ${y} 450 ${y+10} 590 ${y-12} C 654 210 637 78 502 72 L ${exitX} 72`;
   if (method==='MAKURISASHI') return `M 112 ${y} C 250 ${y} 386 ${y+4} 448 214 C 545 207 594 120 486 103 L ${exitX} 103`;
-  if (method==='SASHI') return `M 112 ${y} C 279 ${y} 390 ${y} 470 199 C 535 180 567 126 478 118 L ${exitX} 118`;
+  if (method==='SASHI') return `M 112 ${y} C 279 ${y} 390 ${y} 470 199 C 535 180 567 110 478 106 L ${exitX} 106`;
   return `M 112 ${y} C 272 ${y} 384 ${y} 502 184 C 575 181 581 95 487 94 L ${exitX} 94`;
 }
 
