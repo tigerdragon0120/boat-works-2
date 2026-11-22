@@ -26,6 +26,8 @@ import { loadOfficialResultsByRace } from "./officialResultRead.js";
 import { provisionStageClaims } from "./v7StageClaimProvision.js";
 import { acquireLock, releaseLock } from "./concurrencyLock.js";
 import { selectV7RaceEntries } from "./v7RaceEntrySelector.js";
+import { loadLatestRacerDataset } from "./latestRacerStore.js";
+import { enrichLatestRacerEntries } from "./latestRacerEvidence.js";
 
 const DEFAULT_HORIZON_MINUTES = 25;
 const MAX_RACES = 200;
@@ -119,7 +121,7 @@ export async function runV7AutoGeneration(client, options = {}) {
   const ids = targets.map((race) => race.id);
   const keys = [...new Set(targets.map((race) => race.race_key).filter(Boolean))];
 
-  const [entriesById, entriesByKey, oddsById, oddsByKey, logs, existing, results, traceRows] = await Promise.all([
+  const [entriesById, entriesByKey, oddsById, oddsByKey, logs, existing, results, traceRows, racerDatasetRead] = await Promise.all([
     sr.RaceEntry.filter({ race_id: { $in: ids } }, "boat_number", 2000).catch(() => []),
     sr.RaceEntry.filter({ race_key: { $in: keys } }, "boat_number", 2000).catch(() => []),
     sr.OddsSnapshot.filter({ race_id: { $in: ids } }, "-captured_at", 1000).catch(() => []),
@@ -131,7 +133,17 @@ export async function runV7AutoGeneration(client, options = {}) {
     loadOfficialResultsByRace(sr, ids),
     // 追跡記録は診断専用。読めない場合は上書きだけを止める。
     fetchAllPaged((query, options) => sr.V7GenerationTrace.filter(query, options), { race_date: raceDate }),
+    // Read the complete active period once; a failed optional read must not stop
+    // the existing daily-card prediction path for every race.
+    loadLatestRacerDataset(sr, { budget: Date.now() + 15000 })
+      .then(dataset => ({ dataset, status: dataset ? 'READY' : 'ABSENT' }))
+      .catch(error => {
+        console.warn('[V7_RACER_TERM] optional dataset unavailable', String(error?.message || error).slice(0, 120));
+        return { dataset: null, status: 'READ_FAILED' };
+      }),
   ]);
+  const racerTermSummary = { status: racerDatasetRead.status, dataset_key: racerDatasetRead.dataset?.metadata?.dataset_key || null,
+    term_key: racerDatasetRead.dataset?.metadata?.term_key || null, enriched_predictions: 0, skipped: {} };
 
   const dedupe = (rows) => {
     const map = new Map();
@@ -264,8 +276,12 @@ export async function runV7AutoGeneration(client, options = {}) {
         continue;
       }
       let snapshot;
+      const racerEvidence = enrichLatestRacerEntries({ race: normalizedRace, entries: raceEntries, stage,
+        asOf: attemptStartedAt, dataset: racerDatasetRead.dataset });
+      racerEvidence.provenance.dataset_read_status = racerDatasetRead.status;
       try {
-        snapshot = buildSnapshot({ race: normalizedRace, entries: raceEntries, odds: raceOdds, observedAt: attemptStartedAt, quality }, stage);
+        snapshot = buildSnapshot({ race: normalizedRace, entries: racerEvidence.entries, odds: raceOdds, observedAt: attemptStartedAt, quality }, stage);
+        snapshot.provenance.racer_term_evidence = racerEvidence.provenance;
       } catch {
         bump("input_incomplete");
         trace.observe(race, stage, "FAILED", "input_incomplete", { generation_started_at: attemptStartedAt });
@@ -296,6 +312,7 @@ export async function runV7AutoGeneration(client, options = {}) {
       const doc = {
         record_hash: `server:${key}:${stage}`,
         input_hash: await digest(fingerprintInput(snapshot)),
+        racer_term_evidence: racerEvidence.provenance,
         race_id: liveRace.id,
         race_key: key,
         race_date: liveRace.race_date || key.slice(0, 10),
@@ -315,6 +332,11 @@ export async function runV7AutoGeneration(client, options = {}) {
         judgment_reason: output.judgment_reason ? String(output.judgment_reason).slice(0, 500) : null,
         source: "SERVER",
       };
+      if (racerEvidence.provenance.applied_boats > 0) racerTermSummary.enriched_predictions++;
+      else {
+        const reason = racerEvidence.provenance.reason || 'NOT_APPLIED';
+        racerTermSummary.skipped[reason] = (racerTermSummary.skipped[reason] || 0) + 1;
+      }
       docs.push(doc);
       takenPairs.add(pairKey(key, stage));
     }
@@ -322,7 +344,7 @@ export async function runV7AutoGeneration(client, options = {}) {
 
   if (!docs.length) {
     const traced = await trace.flush(sr);
-    return { race_date: raceDate, targets: targets.length, saved: 0, saved_pre: 0, saved_final: 0, traced: traced.tracked, reasons, claims: claimSummary };
+    return { race_date: raceDate, targets: targets.length, saved: 0, saved_pre: 0, saved_final: 0, traced: traced.tracked, reasons, claims: claimSummary, racer_term: racerTermSummary };
   }
 
   // === 共通の保存処理に委ねる ===
@@ -371,5 +393,6 @@ export async function runV7AutoGeneration(client, options = {}) {
     traced: traced.tracked,
     reasons,
     claims: claimSummary,
+    racer_term: racerTermSummary,
   };
 }
