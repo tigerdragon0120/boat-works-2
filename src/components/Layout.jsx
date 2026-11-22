@@ -28,10 +28,10 @@ const subNav = [
 export default function Layout() {
   const loc = useLocation();
   const { isAuthenticated, user } = useAuth();
-  // 匿名閲覧ではレース一覧だけ、一般ユーザーには管理系(DB・管理)の導線を出さない
+  // 匿名閲覧はレース一覧・保存済みV8アラート。管理系(DB・管理)は管理者のみ。
   const isAdmin = isAuthenticated && user?.role === "admin";
   const nav = !isAuthenticated
-    ? navAll.filter((n) => n.to === "/")
+    ? navAll.filter((n) => n.to === "/" || n.to === "/alerts")
     : isAdmin ? navAll : navAll.filter((n) => n.to !== "/database" && n.to !== "/admin");
   const [kImport, setKImport] = useState(getKBatchImportState());
   const [termImport, setTermImport] = useState(getRacerTermImportState());
