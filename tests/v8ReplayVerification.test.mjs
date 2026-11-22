@@ -61,7 +61,7 @@ test('pipeline coverage prefers live PRE, accepts replay FINAL, and requires bot
 
 const source=readFileSync(new URL('../base44/shared/v8VerificationRunner.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
 const executable=stripTypeScriptTypes(source).replace(/^export /gm,'');
-const imports=['jstDate','dateValid','readV8Rows','canonicalForecasts','canonicalReplayForecasts','latestForecasts','firstBuyForecasts','groupBy'];
+const imports=['jstDate','dateValid','readV8Rows','canonicalForecasts','canonicalReplayForecasts','latestForecasts','firstBuyForecasts','groupBy','isCompleteFinalForecast'];
 const factory=new Function('createClientFromRequest','acquireLock','releaseLock',...imports,'settleForecast','settleReplayForecast','settleExcludedForecast','settleExternal','utcMs','SETTLEMENT_REVISION','hasCompleteResultDetails',executable+'\nreturn {runV8VerifyForecasts};');
 const matches=(row,query)=>Object.entries(query).every(([key,value])=>value&&typeof value==='object'&&'$in'in value?value.$in.includes(row[key]):row[key]===value);
 const makeProvider=()=>{
@@ -112,4 +112,30 @@ test('old-revision settlement does not block rechecking after complete official 
   assert.deepEqual(env.data.V8ForecastVerification[0],old);
   for(const row of env.data.V8ForecastVerification.slice(1)){assert.equal(row.revision,'V8_SETTLEMENT_2');assert.equal(row.provenance.result_details_complete,true);}
   const repeat=await env.runV8VerifyForecasts(env.client,{dates:[race.race_date]});assert.equal(repeat.created,0);
+});
+
+test('progress prefers completed LIVE then completed REPLAY and never treats a partial FINAL as finished',()=>{
+ const pre=livePre(),partial={...livePre(),id:'live-partial',forecast_key:'live-partial',stage:'FINAL',exhibition_complete:false,generated_at:'2026-11-22T09:10:00Z',created_date:'2026-11-22T09:10:00.100Z'},replay=forecast('FINAL');
+ const settledPre={...settlement.settleForecast({forecast:pre,result,provenance:proof,now:new Date(NOW).toISOString()}).record,id:'pre-settled'};
+ const settledReplay={...settle(replay).record,id:'replay-settled'};
+ const args={races:[race],forecasts:[pre,partial],replayForecasts:[replay],verifications:[settledPre],replayVerifications:[settledReplay],now:NOW};
+ const before=JSON.stringify(args),fallback=repository.buildRaceProgress(args);
+ assert.equal(fallback.rows[0].final.forecast_id,replay.id);assert.equal(fallback.rows[0].status,'VERIFIED');assert.equal(JSON.stringify(args),before);
+ const complete={...partial,id:'live-complete',forecast_key:'live-complete',exhibition_complete:true,generated_at:'2026-11-22T08:40:00Z',created_date:'2026-11-22T08:40:00.100Z'};
+ const settledComplete={...settlement.settleForecast({forecast:complete,result,provenance:proof,now:new Date(NOW).toISOString()}).record,id:'live-complete-settled'};
+ const preferLive=repository.buildRaceProgress({...args,forecasts:[pre,complete,partial],verifications:[settledPre,settledComplete]});
+ assert.equal(preferLive.rows[0].final.forecast_id,complete.id);assert.equal(preferLive.rows[0].final.record_mode,'LIVE');assert.equal(preferLive.rows[0].status,'VERIFIED');
+ const waiting=repository.buildRaceProgress({...args,replayForecasts:[],replayVerifications:[]});
+ assert.equal(waiting.rows[0].final.state,'PENDING');assert.equal(waiting.rows[0].status,'FINAL_PENDING');assert.equal(waiting.coverage.final_available_count,0);
+});
+
+test('worker verifies an earlier complete LIVE FINAL and complete REPLAY while leaving partial history untouched',async(t)=>{
+ t.mock.timers.enable({apis:['Date'],now:NOW});const env=makeProvider(),pre=livePre();
+ const complete={...pre,id:'complete-live',forecast_key:'complete-live',stage:'FINAL',exhibition_complete:true,generated_at:'2026-11-22T08:40:00Z',created_date:'2026-11-22T08:40:00.100Z'};
+ const partial={...complete,id:'partial-live',forecast_key:'partial-live',exhibition_complete:false,generated_at:'2026-11-22T09:10:00Z',created_date:'2026-11-22T09:10:00.100Z',decision:{status:'BUY'}};
+ env.data.V8RaceForecast.splice(0,env.data.V8RaceForecast.length,pre,complete,partial,forecast('FINAL'));
+ const before=JSON.stringify(env.data.V8RaceForecast),out=await env.runV8VerifyForecasts(env.client,{dates:[race.race_date]});
+ assert.equal(out.created,3);assert.equal(out.live,2);assert.equal(out.replay,1);
+ assert.deepEqual(env.data.V8ForecastVerification.map(row=>row.forecast_id).sort(),['complete-live','live-pre','replay-FINAL']);
+ assert.equal(JSON.stringify(env.data.V8RaceForecast),before);
 });
