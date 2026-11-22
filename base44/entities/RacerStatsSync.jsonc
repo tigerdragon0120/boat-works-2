@@ -1,0 +1,85 @@
+{
+  "name": "RacerStatsSync",
+  "type": "object",
+  "description": "\u516c\u5f0f\u306e\u6700\u65b0\u516c\u958b\u671f\u3060\u3051\u3092\u81ea\u52d5\u53d6\u5f97\u3059\u308b\u72b6\u614b\u3002\u691c\u8a3c\u6e08\u307f\u30c7\u30fc\u30bf\u3078\u306e\u53c2\u7167\u306f\u5168\u30da\u30fc\u30b8\u4fdd\u5b58\u5f8c\u306b\u5207\u308a\u66ff\u3048\u308b\u3002",
+  "properties": {
+    "state_key": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "workflow_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "checking",
+        "importing",
+        "ready",
+        "error"
+      ]
+    },
+    "active_dataset_key": {
+      "type": "string"
+    },
+    "active_metadata": {
+      "type": "object"
+    },
+    "pending_dataset_key": {
+      "type": "string"
+    },
+    "last_checked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_success_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "next_check_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "pending_count": {
+      "type": "number"
+    },
+    "imported_count": {
+      "type": "number"
+    },
+    "error_message": {
+      "type": "string"
+    },
+    "unchanged": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "state_key",
+    "status"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "none"
+      }
+    }
+  }
+}
