@@ -2,7 +2,7 @@
 import {createClientFromRequest} from 'npm:@base44/sdk@0.8.60';
 import {acquireLock,releaseLock} from '../../shared/concurrencyLock.js';
 import {jstDate,dateValid,readV8Rows,buildRaceProgress} from '../../shared/v8Repository.js';
-import {selectResearchDay,researchDayComplete} from '../../shared/v8ResearchQueue.js';
+import {selectResearchDay,researchDayComplete,researchWindowDates,researchBootstrapDates} from '../../shared/v8ResearchQueue.js';
 import {recoverRaceResearchInputs} from '../../shared/v8ResearchRecovery.js';
 import {runV8ReplayForecasts} from '../../shared/v8ReplayCapture.js';
 import {runV8VerifyForecasts} from '../../shared/v8VerificationRunner.js';
@@ -18,12 +18,16 @@ export async function runV8CompleteRaceResearch(client:any,options:any={}){
   try{
     lock=await acquireLock(client,'V8_COMPLETE_RACE_RESEARCH','v8CompleteRaceResearch',120000);
     if(!lock)return {...summary,skipped:'locked'};
-    const queue=await readV8Rows(sr.V8ResearchDay,{}, {budget:Date.now()+10000,maxPages:20});
-    const target=requested||today;
-    if(!queue.some((row:any)=>row.race_date===target)){
-      const created=await sr.V8ResearchDay.create({race_date:target,status:'PENDING',attempt_count:0,recovery_cursor:0,replay_cursor:0});
+    const bootstrapBudget=Math.min(budget,Date.now()+15000);
+    const [queue,recentRaces]=await Promise.all([
+      readV8Rows(sr.V8ResearchDay,{}, {budget:bootstrapBudget,maxPages:20}),
+      readV8Rows(sr.Race,{race_date:{$in:researchWindowDates(today,requested)}},{budget:bootstrapBudget,maxPages:20})
+    ]);
+    summary.registered_dates=[];
+    for(const date of researchBootstrapDates(recentRaces,queue,today,requested)){
+      const created=await sr.V8ResearchDay.create({race_date:date,status:'PENDING',attempt_count:0,recovery_cursor:0,replay_cursor:0});
       if(!created?.id)throw new Error('RESEARCH_DAY_SAVE_NOT_CONFIRMED');
-      queue.push(created);
+      queue.push(created);summary.registered_dates.push(date);
     }
     day=selectResearchDay(queue,today,requested);
     if(!day)return {...summary,skipped:'no_pending_dates'};
