@@ -117,11 +117,11 @@ export default function Layout() {
           </Link>
 
           {/* BOATCAST風 横並びナビ (PC) */}
-          <nav className="hidden lg:flex items-center gap-1">
+          <nav className="hidden xl:flex items-center gap-1 shrink-0">
             {subNav.map((n) => {
               const Icon = n.icon;
               return (
-                <span key={n.label} className="flex items-center gap-1.5 px-3 h-9 rounded-lg text-[13px] font-medium text-blue-50 hover:text-white hover:bg-white/10 cursor-default transition-colors">
+                <span key={n.label} className="flex items-center gap-1.5 px-3 h-9 whitespace-nowrap rounded-lg text-[13px] font-medium text-blue-50 hover:text-white hover:bg-white/10 cursor-default transition-colors">
                   <Icon className="w-3.5 h-3.5" />
                   {n.label}
                 </span>
@@ -136,13 +136,13 @@ export default function Layout() {
             <button className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg text-white hover:bg-white/10 flex items-center justify-center transition-colors">
               <Search className="w-4.5 h-4.5" />
             </button>
-            <nav className="flex items-center gap-1">
+            <nav className="hidden sm:flex items-center gap-1">
               {nav.map((n) => {
                 const active = loc.pathname === n.to || (n.to === "/" && loc.pathname.startsWith("/venue")) || (n.to === "/race" && loc.pathname.startsWith("/race"));
                 const Icon = n.icon;
                 return (
-                  <Link key={n.to} to={n.to} className={cn(
-                    "flex items-center gap-1.5 px-2.5 sm:px-3 h-9 sm:h-10 rounded-lg text-sm font-semibold transition-colors",
+                  <Link key={n.to} to={n.to} aria-label={n.label} className={cn(
+                    "flex items-center gap-1.5 px-2.5 sm:px-3 h-9 whitespace-nowrap sm:h-10 rounded-lg text-sm font-semibold transition-colors",
                     active ? "bg-white text-[#075ee8]" : "text-white hover:bg-white/10"
                   )}>
                     <Icon className="w-4 h-4" />
