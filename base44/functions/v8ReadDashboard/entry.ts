@@ -4,6 +4,10 @@ import {jstDate,dateValid,readV8Rows,canonicalForecasts,latestForecasts,firstBuy
 import {utcMs} from '../../shared/v7FeatureObservation.js';
 
 const compactRace=(r:any)=>({id:r.id,race_key:r.race_key,race_date:r.race_date,venue_code:r.venue_code,venue_name:r.venue_name||r.venue,race_number:r.race_number,deadline:r.deadline,status:r.status,exhibition_ready:r.exhibition_ready,is_womens:r.is_womens,series_name:r.series_name});
+const safeReadCode=(error:any)=>{
+  const codes=['read_budget_exhausted','page_read_failed_or_timed_out','page_format_invalid','page_row_invalid_or_repeated','terminal_cursor_invalid','continuation_invalid_or_repeated','page_safety_limit','retry_budget_exhausted'];
+  return codes.some(code=>error?.message==='INCOMPLETE_READ:'+code)?error.message:'READ_FAILED';
+};
 export default async function(req:Request):Promise<Response>{
   const client=createClientFromRequest(req);let user:any=null,body:any={};
   try{user=await client.auth.me()}catch{}
@@ -15,7 +19,12 @@ export default async function(req:Request):Promise<Response>{
   const now=Date.now(),budget=now+35000;
   const readEntity=async(name:string,filter:any,options:any)=>{
     try{return await readV8Rows(sr[name],filter,options);}
-    catch(error:any){const wrapped:any=new Error(String(error?.message||'READ_FAILED'));wrapped.read_context=name;throw wrapped;}
+    catch(error:any){
+      const code=safeReadCode(error);
+      const wrapped:any=new Error(code);wrapped.read_context=name;
+      if(Number.isInteger(error?.http_status)&&error.http_status>=100&&error.http_status<=599)wrapped.http_status=error.http_status;
+      throw wrapped;
+    }
   };
   try{
     let query:any={},raceQuery:any={},races:any[]=[],dates:string[]=[];
@@ -82,7 +91,9 @@ export default async function(req:Request):Promise<Response>{
       policies:{buy_evaluation:'FIRST_PUBLISHED_BUY_PER_RACE',forecast_evaluation:'LATEST_STAGE_BEFORE_DEADLINE',stake_per_ticket:100,research_only:true,external_automatic_collection:'NOT_CONNECTED',weather_forecast:'NOT_CONNECTED',tide:'NOT_CONNECTED'}
     },{headers:{'Cache-Control':'private, no-store'}});
   }catch(error:any){
-    const diagnostic={context:error?.read_context||'RACE_OR_FORMAT',code:/^INCOMPLETE_READ:[a-z_]+$/.test(String(error?.message))?error.message:'READ_FAILED'};
+    const contexts=['Race','V8RaceForecast','V8ExternalPrediction','V8ForecastVerification','V8TheoryTrial'];
+    const diagnostic:any={context:contexts.includes(error?.read_context)?error.read_context:'RACE_OR_FORMAT',code:safeReadCode(error)};
+    if(Number.isInteger(error?.http_status)&&error.http_status>=100&&error.http_status<=599)diagnostic.http_status=error.http_status;
     console.error('[V8_READ]',JSON.stringify(diagnostic));
     return Response.json({ok:false,error:'READ_INCOMPLETE',diagnostic,message:'データを最後まで確認できないため表示を保留しました。再読込してください。'},{status:503});
   }
