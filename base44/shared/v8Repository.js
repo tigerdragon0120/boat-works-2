@@ -1,13 +1,22 @@
 // Shared read/selection rules for V8. No late records or silent truncated ledgers.
-import {fetchAllPaged} from './pagedFetch.js';
 import {utcMs} from './v7FeatureObservation.js';
 
 export const jstDate = (offset=0, now=Date.now()) => new Date(now+offset*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
 export const dateValid = value => typeof value==='string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value+'T00:00:00Z')) && new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
-export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=40,sort='-created_date'}={}) {
-  const page=await fetchAllPaged((q,o)=>entity.filter(q,o),query,{pageSize:200,maxPages,sort,deadlineMs:budget});
-  if(!page.complete)throw new Error('INCOMPLETE_READ:'+String(page.error||'unknown'));
-  return page.rows;
+export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=40,sort='created_date'}={}) {
+  // The deployed SDK documents positional filter(query,sort,limit,skip), returning an array.
+  // Read every page; never interpret a capped first page as a complete day.
+  const rows=[],ids=new Set(),size=200;
+  for(let page=0;page<maxPages;page++){
+    const timeLeft=budget-Date.now();if(timeLeft<=0)throw new Error('INCOMPLETE_READ:BUDGET');
+    let timer;let batch;
+    try{batch=await Promise.race([entity.filter(query,sort,size,page*size),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('INCOMPLETE_READ:TIMEOUT')),Math.min(10000,timeLeft));})]);}
+    finally{clearTimeout(timer);}
+    if(!Array.isArray(batch)||batch.length>size)throw new Error('INCOMPLETE_READ:FORMAT');
+    for(const row of batch){if(!row?.id||ids.has(row.id))throw new Error('INCOMPLETE_READ:REPEATED_ROW');ids.add(row.id);rows.push(row);}
+    if(batch.length<size)return rows;
+  }
+  throw new Error('INCOMPLETE_READ:PAGE_LIMIT');
 }
 export function groupBy(rows,key) {
   const map=new Map();
@@ -22,11 +31,11 @@ export function eligibleForecast(row,now=Date.now()){
   return jstDate(offset,generated)===row.race_date&&jstDate(offset,created)===row.race_date;
 }
 // Ambiguous logical keys are held, never picked by their eventual result.
-export function canonicalForecasts(rows){
+export function canonicalForecasts(rows,now=Date.now()){
   const valid=[],conflicts=[];
   for(const [key,group] of groupBy(rows,'forecast_key')){
     if(!key||group.length!==1){conflicts.push(key);continue;}
-    if(eligibleForecast(group[0]))valid.push(group[0]);
+    if(eligibleForecast(group[0],now))valid.push(group[0]);
   }
   return {rows:valid,conflicts};
 }
