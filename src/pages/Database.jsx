@@ -27,7 +27,7 @@ export default function Database(){
  const [rows,setRows]=useState([]),[total,setTotal]=useState(0),[page,setPage]=useState(1),[selectedTerm,setSelectedTerm]=useState('');
  const [summary,setSummary]=useState(null),[summaryBusy,setSummaryBusy]=useState(false),[rowsBusy,setRowsBusy]=useState(false),[rowRevision,setRowRevision]=useState(0);
  const [summaryError,setSummaryError]=useState(''),[rowsError,setRowsError]=useState(''),[syncError,setSyncError]=useState(''),[syncNotice,setSyncNotice]=useState(''),[syncBusy,setSyncBusy]=useState(false);
- const sequence=useRef(0),summarySequence=useRef(0),latestSummary=useRef(null);
+ const sequence=useRef(0),summarySequence=useRef(0),latestSummary=useRef(null),listTopRef=useRef(null);
  const termKeys=useMemo(()=>availableTerms(summary),[summary]);
  const automatic=summary?.latest_racer_sync||null;
  const updating=automatic?.status==='checking'||automatic?.status==='importing';
@@ -77,6 +77,12 @@ export default function Database(){
   finally{setSyncBusy(false);}
  };
  const pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+ const changePage=(nextPage,scrollToList=false)=>{
+  const target=Math.min(pages,Math.max(1,nextPage));
+  if(busy||target===page)return;
+  setPage(target);
+  if(scrollToList)requestAnimationFrame(()=>listTopRef.current?.scrollIntoView({block:'start',behavior:'auto'}));
+ };
  return <div className="space-y-3">
   <div className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="flex items-center gap-2 text-xl font-black text-slate-900 sm:text-2xl"><DbIcon className="h-5 w-5 text-amber-500"/>BOAT WORKS DATABASE</h1><p className="mt-1 text-xs text-slate-500">選手プロフィールと公式の期別成績</p></div><button type="button" onClick={()=>void reload()} disabled={busy} className="flex h-10 items-center gap-2 rounded-lg bg-[#f9c836] px-4 text-sm font-black text-slate-950 disabled:opacity-50"><RefreshCw className={cn('h-4 w-4',busy&&'animate-spin')}/>{busy?'読込中':'再読込'}</button></div>
   <AutoUpdateCard summary={summary} sync={automatic} busy={syncBusy} onUpdate={checkAndUpdate} notice={syncNotice} error={syncError}/>
@@ -85,9 +91,21 @@ export default function Database(){
   <div className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-1">{tabs.map(([key,label,Icon])=><button type="button" key={key} onClick={()=>{setTab(key);setPage(1);}} className={cn('flex h-10 items-center justify-center gap-1.5 rounded-lg text-xs font-bold sm:text-sm',tab===key?'bg-[#f9c836] text-slate-950':'text-slate-600')}><Icon className="h-4 w-4"/>{label}</button>)}</div>
   {tab==='terms'&&<label className="block"><span className="mb-1 block text-[11px] font-semibold text-slate-500">保存されている期を選択</span><select value={selectedTerm} onChange={event=>{setSelectedTerm(event.target.value);setPage(1);}} className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900">{!termKeys.length&&<option value="">取得済みの期を確認中</option>}{termKeys.map(key=><option key={key} value={key}>{termLabel(key)}（{key}）</option>)}</select></label>}
   <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"/><input value={q} onChange={event=>setQ(event.target.value)} placeholder="選手名・登録番号・支部・級別・元ファイル名で検索" aria-label="選手データを検索" className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-3 text-sm text-slate-900 outline-none focus:border-blue-500"/></div>
-  <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-500"><span>{count(total)}件中 {total?((page-1)*PAGE_SIZE+1):0}〜{Math.min(page*PAGE_SIZE,total)}件</span><div className="flex items-center gap-2"><button type="button" disabled={page<=1||busy} onClick={()=>setPage(value=>value-1)} className="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-30">前へ</button><span>{page}/{pages}</span><button type="button" disabled={page>=pages||busy} onClick={()=>setPage(value=>value+1)} className="rounded-lg border border-slate-200 px-3 py-2 disabled:opacity-30">次へ</button></div></div>
+  <div ref={listTopRef} className="scroll-mt-28"><DatabasePagination total={total} page={page} pages={pages} busy={busy} onPageChange={changePage} label="一覧上部のページ切り替え"/></div>
   {tab==='profiles'?<Profiles rows={rows} busy={rowsBusy}/>:<Terms rows={rows} busy={rowsBusy}/>}
+  <div className="pb-3"><DatabasePagination total={total} page={page} pages={pages} busy={busy} onPageChange={nextPage=>changePage(nextPage,true)} label="一覧下部のページ切り替え"/></div>
  </div>;
+}
+
+function DatabasePagination({total,page,pages,busy,onPageChange,label}){
+ return <nav aria-label={label} className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-500">
+  <span>{count(total)}件中 {total?((page-1)*PAGE_SIZE+1):0}〜{Math.min(page*PAGE_SIZE,total)}件</span>
+  <div className="flex items-center gap-2">
+   <button type="button" disabled={page<=1||busy} onClick={()=>onPageChange(page-1)} className="min-h-11 min-w-20 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-30">前へ</button>
+   <span aria-label={`全${pages}ページ中${page}ページ`} className="min-w-12 text-center tabular-nums">{page}/{pages}</span>
+   <button type="button" disabled={page>=pages||busy} onClick={()=>onPageChange(page+1)} className="min-h-11 min-w-20 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:opacity-30">次へ</button>
+  </div>
+ </nav>;
 }
 
 function AutoUpdateCard({summary,sync,busy,onUpdate,notice,error}){
