@@ -1,6 +1,6 @@
 // Independent result settlement. LIVE and post-deadline REPLAY remain distinct.
 import {acquireLock,releaseLock} from './concurrencyLock.js';
-import {jstDate,dateValid,readV8Rows,canonicalForecasts,canonicalReplayForecasts,latestForecasts,firstBuyForecasts,groupBy} from './v8Repository.js';
+import {jstDate,dateValid,readV8Rows,canonicalForecasts,canonicalReplayForecasts,latestForecasts,firstBuyForecasts,groupBy,isCompleteFinalForecast} from './v8Repository.js';
 import {settleForecast,settleReplayForecast,settleExcludedForecast,settleExternal,SETTLEMENT_REVISION} from './v8Settlement.js';
 import {hasCompleteResultDetails} from './v8ResultDetails.js';
 import {utcMs} from './v7FeatureObservation.js';
@@ -23,10 +23,12 @@ export async function runV8VerifyForecasts(client    ,options    ={}){
       readV8Rows(sr.V8ForecastVerification,query,{budget:readBudget,maxPages:70})
     ]);
     const source=canonicalForecasts(allForecasts),replays=canonicalReplayForecasts(allForecasts);
-    const selected=new Map([...latestForecasts(source.rows),...firstBuyForecasts(source.rows)].map(row=>[row.id,{kind:'FORECAST',row}]));
-    for(const row of latestForecasts(replays.rows))selected.set(row.id,{kind:'REPLAY',row});
+    const liveStages=source.rows.filter(row=>row.stage!=='FINAL'||isCompleteFinalForecast(row));
+    const replayStages=replays.rows.filter(row=>row.stage!=='FINAL'||isCompleteFinalForecast(row));
+    const selected=new Map([...latestForecasts(liveStages),...firstBuyForecasts(liveStages)].map(row=>[row.id,{kind:'FORECAST',row}]));
+    for(const row of latestForecasts(replayStages))selected.set(row.id,{kind:'REPLAY',row});
     const sourceById=new Map([...source.rows,...replays.rows].map(row=>[row.id,row]));
-    for(const item of [...selected.values()]){const row=sourceById.get(item.row.comparison?.baseline_id);if(row)selected.set(row.id,{kind:row.record_mode==='REPLAY'?'REPLAY':'FORECAST',row});}
+    for(const item of [...selected.values()]){const row=sourceById.get(item.row.comparison?.baseline_id);if(row&&['DAY_BEFORE','PRE'].includes(row.stage))selected.set(row.id,{kind:row.record_mode==='REPLAY'?'REPLAY':'FORECAST',row});}
     for(const records of groupBy(external,'record_key').values())if(records.length===1&&records[0].verification_eligible===true)selected.set(records[0].id,{kind:'EXTERNAL',row:records[0]});
     const done=new Set(existing.filter(row=>row.revision===SETTLEMENT_REVISION).map(row=>row.source_kind+':'+(row.forecast_id||row.external_id)));
     const waiting=[...selected.values()].filter(item=>utcMs(item.row.deadline)<Date.now()-60000&&!done.has(item.kind+':'+item.row.id));
