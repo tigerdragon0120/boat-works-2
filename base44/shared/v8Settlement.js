@@ -14,7 +14,8 @@ function refundOrCancellation(result) {
   if (['refund_boats', 'refunded_boats', 'refunds'].some((key) => Array.isArray(result[key]) && result[key].length > 0)) return true;
   if ((result.finish_order || []).some(hasRefundCode)) return true;
   return (Array.isArray(result.boats) ? result.boats : []).some((boat) =>
-    ['finish', 'finish_rank', 'rank', 'arrival', 'status', 'finish_position', 'result'].some((key) => hasRefundCode(boat?.[key])));
+    boat?.f_flag === true || ['f_flag', 'finish_order', 'result_status', 'finish', 'finish_rank', 'rank', 'arrival', 'status', 'finish_position', 'result']
+      .some((key) => hasRefundCode(boat?.[key])));
 }
 
 // The worker may pass every RaceResult row. Different final outcomes are never silently chosen.
@@ -58,6 +59,7 @@ function checkSource(source, sourceKind, nowMs) {
 
 function verifyResultEvidence({source, result, provenance, nowMs, deadline}) {
   if (!result.id || result.race_id !== source.race_id) return fail('RESULT_RACE_MISMATCH');
+  if (!['BOATCAST', 'LOCAL', 'TXT'].includes(result.source)) return fail('RESULT_SOURCE_UNSUPPORTED');
   if (!provenance?.id || provenance.evidence_type !== 'LIVE') return fail('LIVE_RESULT_PROVENANCE_REQUIRED');
   if (provenance.race_id !== source.race_id || provenance.race_key !== source.race_key || provenance.result_id !== result.id ||
       provenance.result_trifecta !== result.result_trifecta || provenance.source !== result.source) return fail('RESULT_PROVENANCE_MISMATCH');
@@ -66,7 +68,10 @@ function verifyResultEvidence({source, result, provenance, nowMs, deadline}) {
   const recorded = evidenceTime(provenance.recorded_at || provenance.created_date);
   const stored = evidenceTime(provenance.created_date || provenance.recorded_at);
   if ([finished, fetched, recorded, stored].some((time) => time === null)) return fail('RESULT_TIMESTAMPS_MISSING');
-  if (finished < deadline || fetched < deadline || fetched < finished || recorded < fetched || stored < fetched ||
+  // Existing writers stamp finished_at while processing the fetched response, rather
+  // than supplying the official race finish instant. Check both against the deadline
+  // independently; do not invent an ordering or an arbitrary timing tolerance.
+  if (finished < deadline || fetched < deadline || recorded < fetched || stored < fetched ||
       [finished, fetched, recorded, stored].some((time) => time > nowMs)) return fail('RESULT_TIME_ORDER_INVALID');
   return {ok: true};
 }
