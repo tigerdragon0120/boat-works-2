@@ -1,0 +1,121 @@
+{
+  "name": "V8TheoryTrial",
+  "type": "object",
+  "description": "\u7de0\u5207\u524dV7FeatureSnapshot\u304b\u3089\u751f\u6210\u3057\u305f\u72ec\u7acb\u7406\u8ad6\u7814\u7a76\u3002\u3046\u3044\u30614\u5c55\u958b\u3001\u5c55\u793a\u30b9\u30bf\u30fc\u30c8\u76f8\u5bfe\u8a55\u4fa1\u3001V8\u591a\u56e0\u5b50\u306e\u6bd4\u8f03\u3002\u672c\u4eba\u975e\u516c\u958b\u5f0f\u3092\u518d\u73fe\u3057\u305f\u3082\u306e\u3067\u306f\u306a\u3044\u3002",
+  "properties": {
+    "trial_key": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_id": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "stage": {
+      "type": "string"
+    },
+    "gender_model": {
+      "type": "string"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "snapshot_key": {
+      "type": "string"
+    },
+    "snapshot_id": {
+      "type": "string"
+    },
+    "source_created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "baseline_top": {
+      "type": "string"
+    },
+    "baseline_tickets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "type": "string"
+    },
+    "provenance": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "trial_key",
+    "revision",
+    "race_key",
+    "race_id",
+    "race_date",
+    "venue_code",
+    "race_number",
+    "stage",
+    "gender_model",
+    "snapshot_key",
+    "generated_at",
+    "deadline",
+    "models",
+    "status"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "none"
+      }
+    }
+  }
+}
