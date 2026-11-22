@@ -16,6 +16,7 @@
 import { timeMs } from "./liveV7Time.js";
 import { fetchAllPaged } from "./pagedFetch.js";
 import { loadOfficialResultsByRace } from "./officialResultRead.js";
+import { LATEST_RACER_EVIDENCE_REVISION } from "./latestRacerEvidence.js";
 
 const COMBO_RE = /^[1-6]-[1-6]-[1-6]$/;
 const RACE_KEY_RE = /^\d{4}-\d{2}-\d{2}_\d{1,2}_\d{1,2}$/;
@@ -62,9 +63,20 @@ function sanitize(input) {
     ? input.rank_order.map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= 6)
     : [];
 
+  // The scheduler supplies this immutable evidence alongside the input hash.
+  // Browser synchronization cannot attach an official-data provenance claim.
+  const rawEvidence = input.racer_term_evidence;
+  const termEvidence = input.source === 'SERVER' && rawEvidence && typeof rawEvidence === 'object'
+    && rawEvidence.revision === LATEST_RACER_EVIDENCE_REVISION && rawEvidence.race_key === raceKeyRaw
+    && rawEvidence.stage === stage && timeMs(rawEvidence.as_of) !== null
+    && timeMs(rawEvidence.as_of) === timeMs(input.generated_at)
+    && Array.isArray(rawEvidence.boats) && rawEvidence.boats.length <= 6
+    && JSON.stringify(rawEvidence).length <= 30000 ? structuredClone(rawEvidence) : null;
+
   return {
     record_hash: recordHash,
     input_hash: typeof input.input_hash === "string" ? input.input_hash.slice(0, 200) : null,
+    ...(termEvidence ? { racer_term_evidence: termEvidence } : {}),
     race_id: input.race_id ? String(input.race_id) : null,
     race_key: raceKeyRaw,
     stage,
