@@ -23,18 +23,19 @@ const forecast=(stage='FINAL')=>({
 });
 const matches=(record,query)=>Object.entries(query).every(([key,value])=>value&&typeof value==='object'&&'$in' in value?value.$in.includes(record[key]):record[key]===value);
 
-async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],forecasts=[forecast()],failRaceCursor=false}={}){
-  t.mock.timers.enable({apis:['Date'],now:NOW});
+async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],forecasts=[forecast()],failRaceCursor=false,raceReadErrors=[],raceLookupError=null,mockReadTimers=false}={}){
+  t.mock.timers.enable({apis:mockReadTimers?['Date','setTimeout']:['Date'],now:NOW});
   t.mock.method(console,'error',()=>{});
   const calls=[];
   const rowsByEntity={Race:raceRows,V8RaceForecast:forecasts,V8ExternalPrediction:[],V8ForecastVerification:[],V8TheoryTrial:[]};
   const sr={};
   for(const [name,rows] of Object.entries(rowsByEntity)){
     sr[name]={
-      get:async id=>id===race.id?structuredClone(race):null,
+      get:async id=>{if(raceLookupError)throw raceLookupError;return id===race.id?structuredClone(race):null;},
       async filter(query,options){
         calls.push({entity:name,query:structuredClone(query),options:structuredClone(options)});
         assert.equal(typeof options,'object');
+        if(name==='Race'&&raceReadErrors.length)throw raceReadErrors.shift();
         if(name==='Race'&&options.cursor&&failRaceCursor)throw new Error('read failed on second page');
         const selected=rows.filter(row=>matches(row,query));
         const offset=options.cursor?Number(options.cursor.slice('cursor-'.length)):0;
@@ -108,3 +109,42 @@ test('a race disappearing between ID lookup and key lookup is held',async(t)=>{
   assert.equal(Object.hasOwn(out.body,'forecasts'),false);
 });
 
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+const sourceError=status=>Object.assign(new Error('private source body and credential-bearing URL'),{response:{status,data:{secret:'never publish'},headers:{authorization:'private-token'}}});
+
+test('an initial transient Race read is recovered inside the first dashboard request',async(t)=>{
+  const pending=exercise(t,{body:{mode:'day',race_date:race.race_date},raceReadErrors:[sourceError(503)],mockReadTimers:true});
+  await flush();t.mock.timers.tick(200);await flush();
+  const out=await pending;
+  assert.equal(out.response.status,200);
+  assert.equal(out.calls.filter(call=>call.entity==='Race').length,2);
+  assert.equal(out.body.forecasts.length,1);
+  assert.equal(out.body.forecasts[0].effective_status,'BUY');
+});
+
+test('permanent Race read errors propagate only the safe status and context without retry',async(t)=>{
+  const out=await exercise(t,{raceReadErrors:[sourceError(403)]});
+  assert.equal(out.response.status,503);
+  assert.deepEqual(out.body.diagnostic,{context:'Race',code:'INCOMPLETE_READ:page_read_failed_or_timed_out',http_status:403});
+  assert.equal(out.calls.filter(call=>call.entity==='Race').length,1);
+  assert.equal(Object.hasOwn(out.body,'forecasts'),false);
+  assert.doesNotMatch(JSON.stringify(out.body),/private|credential|secret|authorization|token/);
+});
+
+test('exhausted transient Race reads retain the last status and cannot publish partial forecasts',async(t)=>{
+  const pending=exercise(t,{raceReadErrors:[sourceError(502),sourceError(503),sourceError(504)],mockReadTimers:true});
+  await flush();t.mock.timers.tick(200);await flush();t.mock.timers.tick(500);await flush();
+  const out=await pending;
+  assert.equal(out.response.status,503);
+  assert.deepEqual(out.body.diagnostic,{context:'Race',code:'INCOMPLETE_READ:page_read_failed_or_timed_out',http_status:504});
+  assert.equal(out.calls.filter(call=>call.entity==='Race').length,3);
+  assert.equal(Object.hasOwn(out.body,'forecasts'),false);
+  assert.doesNotMatch(JSON.stringify(out.body),/private|credential|secret|authorization|token/);
+});
+
+test('unverified source exception messages are not accepted as public diagnostic codes',async(t)=>{
+  const out=await exercise(t,{raceLookupError:new Error('INCOMPLETE_READ:private_source_details')});
+  assert.equal(out.response.status,503);
+  assert.deepEqual(out.body.diagnostic,{context:'RACE_OR_FORMAT',code:'READ_FAILED'});
+  assert.doesNotMatch(JSON.stringify(out.body),/private_source_details/);
+});
