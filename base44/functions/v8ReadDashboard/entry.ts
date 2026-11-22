@@ -2,6 +2,7 @@
 import {createClientFromRequest} from 'npm:@base44/sdk@0.8.60';
 import {jstDate,dateValid,readV8Rows,canonicalForecasts,canonicalReplayForecasts,latestForecasts,firstBuyForecasts,currentDecision,groupBy,publicRow,buildRaceProgress} from '../../shared/v8Repository.js';
 import {utcMs} from '../../shared/v7FeatureObservation.js';
+import {SETTLEMENT_REVISION} from '../../shared/v8Settlement.js';
 
 const compactRace=(r:any)=>({id:r.id,race_key:r.race_key,race_date:r.race_date,venue_code:r.venue_code,venue_name:r.venue_name||r.venue,race_number:r.race_number,deadline:r.deadline,status:r.status,exhibition_ready:r.exhibition_ready,is_womens:r.is_womens,series_name:r.series_name});
 const safeReadCode=(error:any)=>{
@@ -72,7 +73,9 @@ export default async function(req:Request):Promise<Response>{
     const ids=new Set(selected.keys()),replayIds=new Set(replaySelected.keys()),buyIds=new Set(buys.map(b=>b.id));
     const external=externalRaw.filter(r=>r.use_scope==='PRIVATE_RESEARCH');
     const externalIds=new Set(external.map(r=>r.id));
-    const verificationGroups=groupBy(verificationRaw,'verification_key');
+    // Earlier ledgers did not require outcomes for every active boat. Preserve
+    // those rows but publish only the current, fully checked settlement cohort.
+    const verificationGroups=groupBy(verificationRaw.filter(row=>row.revision===SETTLEMENT_REVISION),'verification_key');
     const settlements=[...verificationGroups.values()].filter(g=>g.length===1).map(g=>g[0]);
     const verified=settlements.filter(v=>v.source_kind==='FORECAST'?ids.has(v.forecast_id):v.source_kind==='EXTERNAL'&&admin&&externalIds.has(v.external_id));
     const replayVerified=settlements.filter(v=>v.source_kind==='REPLAY'&&replayIds.has(v.forecast_id));
