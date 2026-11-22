@@ -1,5 +1,6 @@
-// Prospective verification only. No reconstruction of pre-race predictions from results.
+// Independent settlement for prospective forecasts and explicitly labelled replays.
 import {CUTOFF_MS, evidenceTime, jstDay, validTicket, validateTickets} from './v8ExternalEvidence.js';
+import {eligibleReplayForecast} from './v8Repository.js';
 
 export const SETTLEMENT_REVISION = 'V8_SETTLEMENT_1';
 const fail = (reason) => ({ok: false, reason});
@@ -19,9 +20,9 @@ function refundOrCancellation(result) {
 }
 
 // The worker may pass every RaceResult row. Different final outcomes are never silently chosen.
-function resolveResult(input, provenance) {
+function resolveResult(input, provenance, allowRefund=false) {
   const rows = Array.isArray(input) ? input : input ? [input] : [];
-  if (rows.some(refundOrCancellation)) return fail('REFUND_OR_CANCELLATION_REQUIRES_REVIEW');
+  if (rows.some(refundOrCancellation)&&!allowRefund) return fail('REFUND_OR_CANCELLATION_REQUIRES_REVIEW');
   const finals = rows.filter(isFinal);
   if (!finals.length) return fail('RESULT_NOT_FINAL');
   if (finals.some((r) => !validTicket(r.result_trifecta) || amount(r.payout) === null || amount(r.payout) <= 0))
@@ -38,6 +39,8 @@ function checkSource(source, sourceKind, nowMs) {
   const generated = evidenceTime(sourceKind === 'EXTERNAL' ? source.recorded_at : source.generated_at);
   const created = evidenceTime(source.created_date);
   if (deadline === null || generated === null || created === null || nowMs === null) return fail('SOURCE_TIMESTAMPS_MISSING');
+  if(sourceKind==='REPLAY')return eligibleReplayForecast(source,nowMs)?{ok:true,deadline,generated,created}:fail('INVALID_REPLAY_SOURCE');
+  if(source.record_mode==='REPLAY')return fail('REPLAY_REQUIRES_SEPARATE_COHORT');
   if (generated >= deadline - CUTOFF_MS || created >= deadline - CUTOFF_MS || generated > nowMs || created > nowMs)
     return fail('SOURCE_NOT_SAVED_BEFORE_CUTOFF');
   if (generated > created + 1000) return fail('SOURCE_CLOCK_ORDER_INVALID');
@@ -82,11 +85,13 @@ const methodKey = (method) => ({
   ESCAPE: 'ESCAPE', SASHI: 'SASHI', MAKURI: 'MAKURI', MAKURISASHI: 'MAKURISASHI',
 }[String(method || '').trim()] || null);
 
-function settle({source, sourceKind, result: resultInput, provenance, now}) {
+function settle({source, sourceKind, result: resultInput, provenance, now, excludeRefund=false}) {
   const nowMs = evidenceTime(now);
   const checked = checkSource(source, sourceKind, nowMs);
   if (!checked.ok) return checked;
-  const resolved = resolveResult(resultInput, provenance);
+  const hasRefund=(Array.isArray(resultInput)?resultInput:[resultInput]).filter(Boolean).some(refundOrCancellation);
+  if(excludeRefund&&!hasRefund)return fail('NO_REFUND_TO_EXCLUDE');
+  const resolved = resolveResult(resultInput, provenance, excludeRefund);
   if (!resolved.ok) return resolved;
   const result = resolved.result;
   const evidence = verifyResultEvidence({source, result, provenance, nowMs, deadline: checked.deadline});
@@ -105,7 +110,7 @@ function settle({source, sourceKind, result: resultInput, provenance, now}) {
   const buyTickets = buySelected ? source.decision.tickets : [];
   if (buySelected && !validateTickets(buyTickets)) return fail('INVALID_BUY_TICKETS');
   const buyHit = buySelected && buyTickets.includes(result.result_trifecta);
-  const topScenario = sourceKind === 'FORECAST'
+  const topScenario = sourceKind !== 'EXTERNAL'
     ? (source.scenarios || []).find((row) => row.key === source.top_scenario_key) : null;
   const winner = Number(result.result_trifecta.split('-')[0]);
   const leader = Number(topScenario?.leader);
@@ -113,10 +118,10 @@ function settle({source, sourceKind, result: resultInput, provenance, now}) {
   const actualMethod = methodKey(result.winning_method);
   const predictedMethod = methodKey(topScenario?.method);
   const methodHit = actualMethod && predictedMethod && leaderKnown ? actualMethod === predictedMethod && leader === winner : null;
-  return {ok: true, record: {
+  const record = {
     verification_key: SETTLEMENT_REVISION + ':' + sourceKind + ':' + source.id + ':' + result.id,
-    revision: SETTLEMENT_REVISION, source_kind: sourceKind,
-    ...(sourceKind === 'FORECAST' ? {forecast_id: source.id} : {external_id: source.id}),
+    revision: SETTLEMENT_REVISION, source_kind: sourceKind, record_mode:sourceKind==='REPLAY'?'REPLAY':'LIVE',
+    ...(sourceKind !== 'EXTERNAL' ? {forecast_id: source.id} : {external_id: source.id}),
     race_id: source.race_id, race_key: source.race_key, race_date: source.race_date,
     venue_code: source.venue_code || '', venue_name: source.venue_name || '', race_number: source.race_number,
     stage: source.stage, source_revision: source.revision || '',
@@ -132,13 +137,22 @@ function settle({source, sourceKind, result: resultInput, provenance, now}) {
     winning_method_hit: methodHit, actual_winning_method: result.winning_method || null,
     provenance: {
       result_source: result.source, result_evidence_type: 'LIVE', result_fetched_at: provenance.fetched_at,
-      source_evidence_type: sourceKind === 'EXTERNAL' ? source.evidence_type : 'SERVER_SNAPSHOT',
+      source_evidence_type: sourceKind === 'EXTERNAL' ? source.evidence_type : sourceKind==='REPLAY'?'POST_DEADLINE_RECONSTRUCTION':'SERVER_SNAPSHOT',
+      reconstructed_after_deadline:sourceKind==='REPLAY', prospective_statistics_eligible:sourceKind!=='REPLAY',
       external_publisher_verified: sourceKind === 'EXTERNAL' ? source.publisher_verified === true : null,
       all_tickets_charged: true, cancelled_or_refunded_included: false, unit_payout_yen: 100,
       planned_stake_only: true, result_and_source_race_matched: true,
     },
-  }};
+  };
+  if(excludeRefund){
+    record.status='EXCLUDED_REFUND';record.buy_selected=false;record.buy_tickets=[];record.buy_stake=0;
+    for(const key of ['research_hit','research_return','buy_hit','buy_return','net_return','scenario_leader_hit','winning_method_hit'])delete record[key];
+    record.provenance.exclusion_reason='REFUND_OR_CANCELLATION_REQUIRES_REVIEW';
+  }
+  return {ok:true,record};
 }
 
 export const settleForecast = ({forecast, result, provenance, now}) => settle({source: forecast, sourceKind: 'FORECAST', result, provenance, now});
+export const settleReplayForecast = ({forecast, result, provenance, now}) => settle({source: forecast, sourceKind: 'REPLAY', result, provenance, now});
+export const settleExcludedForecast = ({forecast, result, provenance, now}) => settle({source:forecast,sourceKind:forecast?.record_mode==='REPLAY'?'REPLAY':'FORECAST',result,provenance,now,excludeRefund:true});
 export const settleExternal = ({external, result, provenance, now}) => settle({source: external, sourceKind: 'EXTERNAL', result, provenance, now});
