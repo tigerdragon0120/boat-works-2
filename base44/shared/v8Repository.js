@@ -4,12 +4,60 @@ import {utcMs} from './v7FeatureObservation.js';
 
 export const jstDate = (offset=0, now=Date.now()) => new Date(now+offset*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
 export const dateValid = value => typeof value==='string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value+'T00:00:00Z')) && new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
+const READ_PAGE_TIMEOUT_MS=10000;
+const retryBackoff=[200,500];
+const readHttpStatus=error=>{
+  const raw=error?.response?.status??error?.http_status??error?.status??error?.statusCode;
+  const status=typeof raw==='number'?raw:typeof raw==='string'&&/^\d{3}$/.test(raw)?Number(raw):null;
+  return Number.isInteger(status)&&status>=100&&status<=599?status:null;
+};
+const transientReadError=(error,status)=>status!=null?status===429||(status>=500&&status<=599):
+  ['ERR_NETWORK','ECONNRESET','ECONNABORTED','ETIMEDOUT','EAI_AGAIN','ENOTFOUND','UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET'].includes(error?.code)
+  ||/network|connection|timed?\s*out|timeout|fetch failed|failed to fetch|socket|\bdns\b/i.test(String(error?.message||''));
+const retryAfterMs=error=>{
+  const headers=error?.response?.headers??error?.headers;
+  let value=null;
+  try{value=typeof headers?.get==='function'?headers.get('retry-after'):headers?.['retry-after']??headers?.['Retry-After'];}catch{}
+  if(typeof value==='number')return Number.isFinite(value)&&value>=0?value*1000:null;
+  if(typeof value!=='string'||!value.trim())return null;
+  if(/^\d+(?:\.\d+)?$/.test(value.trim()))return Number(value)*1000;
+  const at=Date.parse(value);
+  return Number.isFinite(at)?Math.max(0,at-Date.now()):null;
+};
 export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=40,sort='-created_date'}={}) {
   // Match the deployed cursor contract used by existing successful collectors.
   // Arrays and incomplete pages are never interpreted as a complete ledger.
-  const page=await fetchAllPaged((q,options)=>entity.filter(q,options),query,
-    {pageSize:200,maxPages,sort,deadlineMs:budget});
-  if(!page.complete)throw new Error('INCOMPLETE_READ:'+String(page.error||'unknown'));
+  let stopped=false,lastHttpStatus=null,retryBudgetExhausted=false;
+  const fetchPage=async(q,options)=>{
+    const pageDeadline=Math.min(budget,Date.now()+READ_PAGE_TIMEOUT_MS);
+    for(let attempt=0;attempt<3;attempt++){
+      if(stopped||Date.now()>=pageDeadline){retryBudgetExhausted=true;throw new Error('READ_RETRY_BUDGET');}
+      lastHttpStatus=null;
+      try{
+        const result=await entity.filter(q,{...options});
+        if(stopped||Date.now()>=pageDeadline){retryBudgetExhausted=true;throw new Error('READ_RETRY_BUDGET');}
+        // Only the paging helper validates response shapes, IDs and continuations.
+        // A malformed successful response must not be retried or masked.
+        return result;
+      }catch(error){
+        lastHttpStatus=readHttpStatus(error);
+        if(stopped||attempt===2||!transientReadError(error,lastHttpStatus))throw new Error('READ_ATTEMPT_FAILED');
+        const delay=Math.max(retryBackoff[attempt],retryAfterMs(error)??0);
+        if(!Number.isFinite(delay)||Date.now()+delay>=pageDeadline){retryBudgetExhausted=true;throw new Error('READ_RETRY_BUDGET');}
+        await new Promise(resolve=>setTimeout(resolve,delay));
+      }
+    }
+    throw new Error('READ_ATTEMPT_FAILED');
+  };
+  const page=await fetchAllPaged(fetchPage,query,
+    {pageSize:200,maxPages,sort,deadlineMs:budget,pageTimeoutMs:READ_PAGE_TIMEOUT_MS});
+  stopped=true;
+  if(!page.complete){
+    const failure=retryBudgetExhausted?'retry_budget_exhausted':String(page.error||'unknown');
+    const error=new Error('INCOMPLETE_READ:'+failure);
+    if(lastHttpStatus!=null)error.http_status=lastHttpStatus;
+    throw error;
+  }
   return page.rows;
 }
 export function groupBy(rows,key) {
