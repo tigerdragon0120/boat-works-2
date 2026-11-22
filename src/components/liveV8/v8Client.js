@@ -78,6 +78,7 @@ export function useV8Dashboard(parameters, enabled=true) {
       if (alive.current && request===sequence.current) setState({data,loading:false,error:null});
       return data;
     } catch (error) {
+      if(error?.response?.data?.diagnostic) console.warn('[V8 dashboard read]',JSON.stringify(error.response.data.diagnostic));
       if (alive.current && request===sequence.current) setState({data:null,loading:false,error:error?.response?.data?.message || error?.message || '読込に失敗しました'});
       return null;
     }
