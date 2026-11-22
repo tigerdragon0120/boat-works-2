@@ -45,12 +45,16 @@ function stripTags(html) {
 }
 
 // HTTP取得(指数バックオフ付き)
-export async function fetchHtml(url, maxRetries = 3) {
+export async function fetchHtml(url, maxRetries = 3, options = {}) {
   let lastError;
+  const deadlineMs = Number.isFinite(options.deadlineMs) ? options.deadlineMs : Infinity;
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 30000;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const remainingMs = deadlineMs - Date.now();
+    if (remainingMs <= 0) return { ok: false, status: 0, html: "", error: "FETCH_TIME_BUDGET" };
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 30000);
+      const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, remainingMs));
       try {
         const res = await fetch(url, {
           signal: controller.signal,
@@ -60,7 +64,6 @@ export async function fetchHtml(url, maxRetries = 3) {
             "Accept-Language": "ja,en;q=0.9",
           },
         });
-        clearTimeout(timer);
         if (res.status === 429 || res.status >= 500) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -76,7 +79,9 @@ export async function fetchHtml(url, maxRetries = 3) {
       lastError = e;
       if (attempt < maxRetries) {
         const delays = [2000, 5000, 15000];
-        await new Promise((r) => setTimeout(r, delays[attempt] || 15000));
+        const delay = delays[attempt] || 15000;
+        if (Date.now() + delay >= deadlineMs) break;
+        await new Promise((r) => setTimeout(r, delay));
       }
     }
   }
