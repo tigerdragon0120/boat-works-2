@@ -1,15 +1,9 @@
 import React, {useId} from 'react';
+import {getScenarioLayout} from './raceScenarioLayout';
 
 const COLORS={1:{fill:'#fff',text:'#0f172a',stroke:'#94a3b8'},2:{fill:'#1e293b',text:'#fff',stroke:'#1e293b'},3:{fill:'#e8484c',text:'#fff',stroke:'#c33239'},4:{fill:'#2779da',text:'#fff',stroke:'#1d63b9'},5:{fill:'#f5cf45',text:'#422006',stroke:'#d6ac20'},6:{fill:'#249774',text:'#fff',stroke:'#167556'}};
 const METHODS={ESCAPE:'逃げ',SASHI:'差し',MAKURI:'まくり',MAKURISASHI:'まくり差し'};
 
-function getOrder(boats,stage) {
-  const rows=(boats||[]).filter(boat=>Number(boat.boat_number)>=1 && Number(boat.boat_number)<=6);
-  const field=stage==='FINAL'?'observed_course':'expected_course';
-  const valid=rows.length===6 && rows.every(boat=>Number.isInteger(Number(boat[field]))&&Number(boat[field])>=1&&Number(boat[field])<=6) && new Set(rows.map(boat=>Number(boat[field]))).size===6;
-  const assumption=rows.some(boat=>boat.expected_course_basis==='FRAME_ORDER_ASSUMPTION');
-  return {valid,order:valid?[...rows].sort((a,b)=>Number(a[field])-Number(b[field])).map(boat=>Number(boat.boat_number)):[],label:valid?(stage==='FINAL'?'展示進入':assumption?'想定進入・枠なりを仮定':'想定進入'):'進入未確認'};
-}
 // Stand-side view: boats approach left-to-right, pass the right side of 1M,
 // then turn left (counterclockwise) toward 2M. Inside routes still clear the buoy.
 function route(index,method,secondary=false) {
@@ -21,11 +15,11 @@ function route(index,method,secondary=false) {
 }
 
 export default function RaceScenarioDiagram({scenario,boats=[],stage='PRE',compact=false}) {
-  const uid=useId().replace(/:/g,''), layout=getOrder(boats,stage);
-  const leader=Number(scenario?.leader), index=layout.order.indexOf(leader), color=COLORS[leader] || COLORS[4];
+  const uid=useId().replace(/:/g,''), layout=getScenarioLayout(boats,stage);
+  const leader=Number(scenario?.leader), index=layout.laneByBoat[leader] ?? -1, color=COLORS[leader] || COLORS[4];
   const benefits=(scenario?.beneficiaries||[]).map(Number).filter(boat=>boat!==leader&&layout.order.includes(boat)).slice(0,2);
   if (!scenario) return <div className="flex min-h-40 items-center justify-center rounded-xl bg-sky-50 px-5 text-sm text-slate-500">展開を保存すると、想定進路を表示します。</div>;
-  if (!layout.valid) return <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-sky-200 bg-sky-50 px-5 text-center"><p className="text-sm font-semibold text-slate-600">{stage==='FINAL'?'展示進入の確認待ち':'想定進入の確認待ち'}</p><p className="mt-2 text-xs leading-6 text-slate-500">6艇の進入が揃っていないため、展開図を保留しています。</p></div>;
+  if (!layout.valid) return <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed border-sky-200 bg-sky-50 px-5 text-center"><p className="text-sm font-semibold text-slate-600">{stage==='FINAL'?'展示進入の確認待ち':'想定進入の確認待ち'}</p><p className="mt-2 text-xs leading-6 text-slate-500">実出走艇の進入が未取得、または重複しているため、展開図を保留しています。</p></div>;
   return <figure className="overflow-hidden rounded-xl border border-sky-100 bg-gradient-to-br from-sky-50 to-white">
     <svg viewBox="0 0 720 350" className="block h-auto w-full" role="img" aria-labelledby={`${uid}-title ${uid}-description`}>
       <title id={`${uid}-title`}>{leader}号艇の{METHODS[scenario.method] || scenario.label}を想定した1マークの展開図</title>
@@ -43,8 +37,8 @@ export default function RaceScenarioDiagram({scenario,boats=[],stage='PRE',compa
       <text x="25" y="140" textAnchor="start" fill="#94a3b8" fontSize="10">内側</text>
       <path d="M 165 172 V 318" stroke="#94a3b8" strokeWidth="1" strokeDasharray="4 5"/>
       <text x="165" y="337" textAnchor="middle" fill="#64748b" fontSize="10">スタート方向 →</text>
-      {layout.order.map((boat,lane)=><path key={`lane-${boat}`} d={`M 120 ${180+lane*24} H 250`} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3 6"/>)}
-      {benefits.map((boat,i)=><path key={`benefit-${boat}`} d={route(layout.order.indexOf(boat),i===0?'SASHI':'MAKURISASHI',true)} fill="none" stroke={COLORS[boat].fill==='#fff'?'#94a3b8':COLORS[boat].fill} strokeWidth="2.5" strokeDasharray="6 6" opacity="0.65" markerEnd={`url(#${uid}-small)`}/>)}
+      {layout.order.map((boat,lane)=><path key={`lane-${boat}`} d={`M 120 ${180+(layout.courses[lane]-1)*24} H 250`} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3 6"/>)}
+      {benefits.map((boat,i)=><path key={`benefit-${boat}`} d={route(layout.laneByBoat[boat],i===0?'SASHI':'MAKURISASHI',true)} fill="none" stroke={COLORS[boat].fill==='#fff'?'#94a3b8':COLORS[boat].fill} strokeWidth="2.5" strokeDasharray="6 6" opacity="0.65" markerEnd={`url(#${uid}-small)`}/>)}
       {index>=0 && <>
         <path d={route(index,scenario.method)} fill="none" stroke="#fff" strokeWidth="9" strokeLinecap="round"/>
         <path d={route(index,scenario.method)} fill="none" stroke={leader===1?'#64748b':color.fill} strokeWidth="4" strokeLinecap="round" markerEnd={`url(#${uid}-arrow)`}/>
@@ -54,9 +48,9 @@ export default function RaceScenarioDiagram({scenario,boats=[],stage='PRE',compa
       <path d="M 504 137 H 516 L 518 143 H 502 Z" fill="#fff"/>
       <text x="510" y="174" textAnchor="middle" fill="#64748b" fontSize="10">1M</text>
       {layout.order.map((boat,lane)=>{
-        const y=180+lane*24, c=COLORS[boat];
+        const y=180+(layout.courses[lane]-1)*24, c=COLORS[boat];
         return <g key={boat}>
-          <text x="41" y={y+4} textAnchor="middle" fill="#64748b" fontSize="10">{layout.valid?`${lane+1}コース`:`${boat}枠`}</text>
+          <text x="41" y={y+4} textAnchor="middle" fill="#64748b" fontSize="10">{layout.valid?`${layout.courses[lane]}コース`:`${boat}枠`}</text>
           <path d={`M 131 ${y} Q 118 ${y-12} 89 ${y-10} L 83 ${y} L 89 ${y+10} Q 118 ${y+12} 131 ${y} Z`} fill={c.fill} stroke={c.stroke} strokeWidth={boat===leader?2:1}/>
           <text x="106" y={y+4} textAnchor="middle" fill={c.text} fontSize="12" fontWeight="800">{boat}</text>
         </g>;
@@ -65,6 +59,6 @@ export default function RaceScenarioDiagram({scenario,boats=[],stage='PRE',compa
       <text x="427" y="297" fill="#0f172a" fontSize="12" fontWeight="700">中心：{leader}号艇 {METHODS[scenario.method] || scenario.label}</text>
       <text x="427" y="314" fill="#64748b" fontSize="10">{benefits.length?`展開を利用する候補：${benefits.join('・')}号艇`:'想定進路の模式図です'}</text>
     </svg>
-    {!compact && <figcaption className="border-t border-sky-100 bg-white/70 px-3 py-2 text-[11px] leading-5 text-slate-500">矢印は展開仮説の説明用です。位置・速度・本番の進入を再現したシミュレーションではありません。</figcaption>}
+    {!compact && <figcaption className="border-t border-sky-100 bg-white/70 px-3 py-2 text-[11px] leading-5 text-slate-500">矢印は展開仮説の説明用です。位置・速度・本番の進入を再現したシミュレーションではありません。{layout.absentBoats.length>0&&` 欠場：${layout.absentBoats.join('・')}号艇。`}</figcaption>}
   </figure>;
 }
