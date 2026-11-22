@@ -41,7 +41,7 @@ export default async function(req:Request):Promise<Response>{
     ]);
     const allRaceKeys=new Set(races.map(r=>r.race_key).filter(Boolean));
     const raceGroups=groupBy(races,'race_key');
-    const ambiguousRaces=[...raceGroups.values()].filter(g=>g.length!==1).length;
+    const ambiguousRaceKeys=[...raceGroups.entries()].filter(([,g])=>g.length!==1).map(([key])=>key);
     races=[...raceGroups.values()].filter(g=>g.length===1).map(g=>g[0]);
     const validRaceIds=new Set(races.map(r=>r.id));
     const canonical=canonicalForecasts(raw.filter(f=>validRaceIds.has(f.race_id)),now),latest=latestForecasts(canonical.rows),buys=firstBuyForecasts(canonical.rows);
@@ -64,11 +64,11 @@ export default async function(req:Request):Promise<Response>{
       races:races.map(compactRace),forecasts:[...selected.values()].map(publicForecast),
       buy_forecasts:buys.map(publicForecast),
       verifications:verified.map(publicRow),buy_verifications:settlements.filter(v=>v.source_kind==='FORECAST'&&buyIds.has(v.forecast_id)).map(publicRow),
-      external:external.map(publicRow),theories:theories.map(publicRow),
+      external:external.map(publicRow),theories:theories.map(publicRow),ambiguous_race_keys:ambiguousRaceKeys,
       coverage:{expected_races:raceKeys.size,captured_races:captured.size,missing_races:[...raceKeys].filter(k=>!captured.has(k)).length,
         day_before_count:latest.filter(f=>f.stage==='DAY_BEFORE').length,pre_count:latest.filter(f=>f.stage==='PRE').length,final_count:finals.size,
         active_buy_count:[...finals.values()].filter(f=>currentDecision(f,racesById.get(f.race_id),now)==='BUY').length,
-        ambiguous_race_keys:ambiguousRaces,ambiguous_forecast_keys:canonical.conflicts.length,ambiguous_verification_keys:[...verificationGroups.values()].filter(g=>g.length!==1).length},
+        ambiguous_race_keys:ambiguousRaceKeys.length,ambiguous_forecast_keys:canonical.conflicts.length,ambiguous_verification_keys:[...verificationGroups.values()].filter(g=>g.length!==1).length},
       errors:canonical.conflicts.length?['予想キーの重複がある記録を保留しました']:[],
       policies:{buy_evaluation:'FIRST_PUBLISHED_BUY_PER_RACE',forecast_evaluation:'LATEST_STAGE_BEFORE_DEADLINE',stake_per_ticket:100,research_only:true,external_automatic_collection:'NOT_CONNECTED',weather_forecast:'NOT_CONNECTED',tide:'NOT_CONNECTED'}
     },{headers:{'Cache-Control':'private, no-store'}});
