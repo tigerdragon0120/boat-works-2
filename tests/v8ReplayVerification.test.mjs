@@ -5,13 +5,14 @@ import {stripTypeScriptTypes} from 'node:module';
 import * as repository from '../base44/shared/v8Repository.js';
 import * as settlement from '../base44/shared/v8Settlement.js';
 import {utcMs} from '../base44/shared/v7FeatureObservation.js';
+import {hasCompleteResultDetails} from '../base44/shared/v8ResultDetails.js';
 
 const NOW=Date.parse('2026-11-22T11:00:00Z');
 const race={id:'race-001',race_key:'2026-11-22_12_08',race_date:'2026-11-22',venue_code:'12',venue_name:'住之江',race_number:8,deadline:'2026-11-22T09:39:00Z',status:'finished',exhibition_ready:true};
 const forecast=(stage='PRE',overrides={})=>({id:'replay-'+stage,forecast_key:'V8_FORECAST_1_REPLAY_1:'+race.race_key+':'+stage,revision:'V8_FORECAST_1_REPLAY_1',record_mode:'REPLAY',race_id:race.id,race_key:race.race_key,race_date:race.race_date,deadline:race.deadline,stage,
   generated_at:'2026-11-22T10:55:00Z',created_date:'2026-11-22T10:55:00.100Z',input_as_of:'2026-11-22T10:50:00Z',exhibition_complete:stage==='FINAL',research_tickets:['1-2-3','1-3-2'],decision:{status:'REPLAY'},
   provenance:{result_excluded:true,reconstruction:true,input_fields_whitelisted:true},top_scenario_key:'escape1',scenarios:[{key:'escape1',leader:1,method:'ESCAPE'}],...overrides});
-const result={id:'result-001',race_id:race.id,result_status:'RESULT_FINAL',is_finished:true,result_trifecta:'1-2-3',payout:850,source:'LOCAL',finished_at:'2026-11-22T09:42:00Z',winning_method:'逃げ'};
+const result={id:'result-001',race_id:race.id,result_status:'RESULT_FINAL',is_finished:true,result_trifecta:'1-2-3',payout:850,source:'LOCAL',finished_at:'2026-11-22T09:42:00Z',winning_method:'逃げ',boats:Array.from({length:6},(_,i)=>({boat_number:i+1,finish_order:i+1}))};
 const proof={id:'proof-001',evidence_type:'LIVE',race_id:race.id,race_key:race.race_key,result_id:result.id,result_trifecta:result.result_trifecta,source:'LOCAL',fetched_at:'2026-11-22T10:45:00Z',recorded_at:'2026-11-22T10:45:00.100Z',created_date:'2026-11-22T10:45:00.200Z'};
 const settle=row=>settlement.settleReplayForecast({forecast:row,result,provenance:proof,now:new Date(NOW).toISOString()});
 const livePre=()=>forecast('PRE',{id:'live-pre',forecast_key:'live-pre',record_mode:'LIVE',generated_at:'2026-11-22T08:00:00Z',created_date:'2026-11-22T08:00:00.100Z',input_as_of:'2026-11-22T07:59:00Z',decision:{status:'WATCH'}});
@@ -61,7 +62,7 @@ test('pipeline coverage prefers live PRE, accepts replay FINAL, and requires bot
 const source=readFileSync(new URL('../base44/shared/v8VerificationRunner.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
 const executable=stripTypeScriptTypes(source).replace(/^export /gm,'');
 const imports=['jstDate','dateValid','readV8Rows','canonicalForecasts','canonicalReplayForecasts','latestForecasts','firstBuyForecasts','groupBy'];
-const factory=new Function('createClientFromRequest','acquireLock','releaseLock',...imports,'settleForecast','settleReplayForecast','settleExcludedForecast','settleExternal','utcMs',executable+'\nreturn {runV8VerifyForecasts};');
+const factory=new Function('createClientFromRequest','acquireLock','releaseLock',...imports,'settleForecast','settleReplayForecast','settleExcludedForecast','settleExternal','utcMs','SETTLEMENT_REVISION','hasCompleteResultDetails',executable+'\nreturn {runV8VerifyForecasts};');
 const matches=(row,query)=>Object.entries(query).every(([key,value])=>value&&typeof value==='object'&&'$in'in value?value.$in.includes(row[key]):row[key]===value);
 const makeProvider=()=>{
   const data={Race:[race],RaceResult:[result],ResultProvenance:[proof],V8RaceForecast:[forecast(),forecast('FINAL')],V8ExternalPrediction:[],V8ForecastVerification:[]},calls=[];
@@ -70,7 +71,7 @@ const makeProvider=()=>{
     async create(input){const row={...input,id:name+'-'+rows.length,created_date:new Date().toISOString()};rows.push(row);return row;}
   }]));
   const client={auth:{me:async()=>({role:'admin'})},asServiceRole:{entities}};
-  const handlers=factory(()=>client,async()=> 'lock',async()=>{},...imports.map(name=>repository[name]),settlement.settleForecast,settlement.settleReplayForecast,settlement.settleExcludedForecast,settlement.settleExternal,utcMs);
+  const handlers=factory(()=>client,async()=> 'lock',async()=>{},...imports.map(name=>repository[name]),settlement.settleForecast,settlement.settleReplayForecast,settlement.settleExcludedForecast,settlement.settleExternal,utcMs,settlement.SETTLEMENT_REVISION,hasCompleteResultDetails);
   return {client,data,calls,...handlers};
 };
 test('actual worker batches result reads and reruns without duplicating completed replay settlements',async(t)=>{
@@ -95,4 +96,20 @@ test('refund evidence produces an exclusion receipt without fabricated loss or r
   for(const row of env.data.V8ForecastVerification){assert.equal(row.status,'EXCLUDED_REFUND');assert.equal(Object.hasOwn(row,'research_return'),false);assert.equal(Object.hasOwn(row,'research_hit'),false);}
   const progress=repository.buildRaceProgress({races:[race],replayForecasts:env.data.V8RaceForecast,replayVerifications:env.data.V8ForecastVerification,now:NOW});
   assert.equal(progress.rows[0].status,'RESULT_EXCLUDED');assert.equal(progress.coverage.pending_races,0);assert.equal(progress.coverage.verified_races,0);assert.equal(progress.coverage.fully_completed_races,1);
+});
+
+test('old-revision settlement does not block rechecking after complete official details arrive',async(t)=>{
+  t.mock.timers.enable({apis:['Date'],now:NOW});const env=makeProvider();
+  const old={...settle(forecast('PRE')).record,id:'old-receipt',revision:'V8_SETTLEMENT_1',verification_key:'V8_SETTLEMENT_1:REPLAY:replay-PRE:'+result.id};
+  env.data.V8ForecastVerification.push(old);
+  env.data.RaceResult[0]={...result,boats:[],finish_order:[]};
+  const held=await env.runV8VerifyForecasts(env.client,{dates:[race.race_date]});
+  assert.equal(held.created,0);assert.equal(held.reasons.RESULT_DETAILS_PENDING,1);
+  assert.equal(env.data.V8ForecastVerification.length,1);
+  env.data.RaceResult[0]=structuredClone(result);
+  const recovered=await env.runV8VerifyForecasts(env.client,{dates:[race.race_date]});
+  assert.equal(recovered.created,2);assert.equal(env.data.V8ForecastVerification.length,3);
+  assert.deepEqual(env.data.V8ForecastVerification[0],old);
+  for(const row of env.data.V8ForecastVerification.slice(1)){assert.equal(row.revision,'V8_SETTLEMENT_2');assert.equal(row.provenance.result_details_complete,true);}
+  const repeat=await env.runV8VerifyForecasts(env.client,{dates:[race.race_date]});assert.equal(repeat.created,0);
 });
