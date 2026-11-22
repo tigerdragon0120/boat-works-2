@@ -6,6 +6,7 @@ import {selectResearchDay,researchDayComplete} from '../../shared/v8ResearchQueu
 import {recoverRaceResearchInputs} from '../../shared/v8ResearchRecovery.js';
 import {runV8ReplayForecasts} from '../../shared/v8ReplayCapture.js';
 import {runV8VerifyForecasts} from '../../shared/v8VerificationRunner.js';
+import {SETTLEMENT_REVISION} from '../../shared/v8Settlement.js';
 
 export async function runV8CompleteRaceResearch(client:any,options:any={}){
   const sr=client.asServiceRole.entities,started=Date.now(),today=jstDate();
@@ -29,10 +30,10 @@ export async function runV8CompleteRaceResearch(client:any,options:any={}){
     summary.date=day.race_date;
     await sr.V8ResearchDay.update(day.id,{status:'RUNNING',last_attempt_at:new Date().toISOString(),attempt_count:Number(day.attempt_count||0)+1,last_error:''});
     // Live capture keeps its own priority workflow. Recovery never waits for an open browser.
-    try{summary.recovery=await recoverRaceResearchInputs(client,{date:day.race_date,budgetMs:Math.min(20000,remaining()-60000),max_races:6,cursor:Number(day.recovery_cursor||0)});}
+    try{summary.recovery=await recoverRaceResearchInputs(client,{date:day.race_date,budgetMs:Math.min(26000,remaining()-55000),max_races:40,cursor:Number(day.recovery_cursor||0)});}
     catch(error:any){summary.errors.push({phase:'INPUTS',reason:String(error?.message||'INPUT_RECOVERY_FAILED').slice(0,120)});}
     if(remaining()>12000){
-      try{summary.forecasts=await runV8ReplayForecasts(client,{date:day.race_date,max_races:24,budgetMs:Math.min(35000,remaining()-12000),cursor:Number(day.replay_cursor||0)});}
+      try{summary.forecasts=await runV8ReplayForecasts(client,{date:day.race_date,max_races:40,budgetMs:Math.min(30000,remaining()-12000),cursor:Number(day.replay_cursor||0)});}
       catch(error:any){summary.errors.push({phase:'FORECASTS',reason:String(error?.message||'FORECAST_RECOVERY_FAILED').slice(0,120)});}
     }
     if(remaining()>10000){
@@ -46,7 +47,8 @@ export async function runV8CompleteRaceResearch(client:any,options:any={}){
       readV8Rows(sr.V8ForecastVerification,{race_date:day.race_date},{budget:readBudget,maxPages:40})
     ]);
     const results=races.length?await readV8Rows(sr.RaceResult,{race_id:{$in:races.map((row:any)=>row.id)}},{budget:readBudget,maxPages:6}):[];
-    const progress=buildRaceProgress({races,forecasts:forecasts.filter((row:any)=>row.record_mode!=='REPLAY'),replayForecasts:forecasts.filter((row:any)=>row.record_mode==='REPLAY'),verifications:verifications.filter((row:any)=>row.source_kind==='FORECAST'),replayVerifications:verifications.filter((row:any)=>row.source_kind==='REPLAY'),results});
+    const currentVerifications=verifications.filter((row:any)=>row.revision===SETTLEMENT_REVISION);
+    const progress=buildRaceProgress({races,forecasts:forecasts.filter((row:any)=>row.record_mode!=='REPLAY'),replayForecasts:forecasts.filter((row:any)=>row.record_mode==='REPLAY'),verifications:currentVerifications.filter((row:any)=>row.source_kind==='FORECAST'),replayVerifications:currentVerifications.filter((row:any)=>row.source_kind==='REPLAY'),results});
     summary.coverage=progress.coverage;
     summary.pending=progress.rows.filter((row:any)=>!['VERIFIED','RESULT_EXCLUDED','CANCELLED'].includes(row.status)).map((row:any)=>({race_key:row.race_key,status:row.status,missing:row.missing}));
     summary.ok=summary.errors.length===0&&Number(summary.forecasts?.errors||0)===0&&Number(summary.verification?.errors||0)===0;
