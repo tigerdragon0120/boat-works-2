@@ -1,7 +1,8 @@
 // Independent result settlement. LIVE and post-deadline REPLAY remain distinct.
 import {acquireLock,releaseLock} from './concurrencyLock.js';
 import {jstDate,dateValid,readV8Rows,canonicalForecasts,canonicalReplayForecasts,latestForecasts,firstBuyForecasts,groupBy} from './v8Repository.js';
-import {settleForecast,settleReplayForecast,settleExcludedForecast,settleExternal} from './v8Settlement.js';
+import {settleForecast,settleReplayForecast,settleExcludedForecast,settleExternal,SETTLEMENT_REVISION} from './v8Settlement.js';
+import {hasCompleteResultDetails} from './v8ResultDetails.js';
 import {utcMs} from './v7FeatureObservation.js';
 
 export async function runV8VerifyForecasts(client    ,options    ={}){
@@ -27,7 +28,7 @@ export async function runV8VerifyForecasts(client    ,options    ={}){
     const sourceById=new Map([...source.rows,...replays.rows].map(row=>[row.id,row]));
     for(const item of [...selected.values()]){const row=sourceById.get(item.row.comparison?.baseline_id);if(row)selected.set(row.id,{kind:row.record_mode==='REPLAY'?'REPLAY':'FORECAST',row});}
     for(const records of groupBy(external,'record_key').values())if(records.length===1&&records[0].verification_eligible===true)selected.set(records[0].id,{kind:'EXTERNAL',row:records[0]});
-    const done=new Set(existing.map(row=>row.source_kind+':'+(row.forecast_id||row.external_id)));
+    const done=new Set(existing.filter(row=>row.revision===SETTLEMENT_REVISION).map(row=>row.source_kind+':'+(row.forecast_id||row.external_id)));
     const waiting=[...selected.values()].filter(item=>utcMs(item.row.deadline)<Date.now()-60000&&!done.has(item.kind+':'+item.row.id));
     const groups=groupBy(waiting,item=>item.row.race_id),raceIds=[...groups.keys()],keys=new Set(existing.map(row=>row.verification_key));
     if(!raceIds.length)return {...summary,remaining_sources:0,completed_at:new Date().toISOString()};
@@ -50,7 +51,8 @@ export async function runV8VerifyForecasts(client    ,options    ={}){
       if(outcomes.size!==1){hold(outcomes.size?'RESULT_CONFLICT':'RESULT_PENDING');continue;}
       const eligible=validResults.map(result=>({result,evidence:proof.filter(row=>row.result_id===result.id&&row.result_trifecta===result.result_trifecta&&row.source===result.source)})).filter(row=>row.evidence.length===1);
       if(eligible.length!==1){hold(eligible.length?'RESULT_EVIDENCE_AMBIGUOUS':'RESULT_EVIDENCE_MISSING');continue;}
-      const {evidence}=eligible[0];
+      const {result:verifiedResult,evidence}=eligible[0];
+      if(!hasCompleteResultDetails(verifiedResult,race)){hold('RESULT_DETAILS_PENDING');continue;}
       for(const item of items){
         if(prepared.length>=maxCreated)break;
         if(item.row.race_key!==race.race_key||utcMs(item.row.deadline)!==utcMs(race.deadline)){hold('RACE_IDENTITY_CHANGED');continue;}
@@ -59,6 +61,7 @@ export async function runV8VerifyForecasts(client    ,options    ={}){
         if(!output.ok&&output.reason==='REFUND_OR_CANCELLATION_REQUIRES_REVIEW'&&item.kind!=='EXTERNAL')output=settleExcludedForecast(input);
         if(!output.ok){hold(output.reason||'SETTLEMENT_HELD');continue;}
         if(keys.has(output.record.verification_key)){summary.existing++;continue;}
+        output.record.provenance={...output.record.provenance,result_details_complete:true,result_details_revision:'V8_RESULT_DETAILS_1'};
         prepared.push(output.record);
       }
     }
