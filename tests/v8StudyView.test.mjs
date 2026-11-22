@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildStudyRows,isReplay,studyStageLabel,studySettlementIndex,studyStats,studyPairs} from '../src/components/liveV8/v8StudyView.js';
+import {buildStudyRows,latestStudyStage,isReplay,studyStageLabel,studySettlementIndex,studyStats,studyPairs} from '../src/components/liveV8/v8StudyView.js';
 
 const race={id:'r1',race_key:'2026-11-22_24_10',race_date:'2026-11-22',venue_code:'24'};
-const forecast=(id,stage,mode='LIVE',time='2026-11-22T10:00:00Z')=>({id,race_id:race.id,race_key:race.race_key,stage,record_mode:mode,generated_at:time});
+const forecast=(id,stage,mode='LIVE',time='2026-11-22T10:00:00Z')=>({id,race_id:race.id,race_key:race.race_key,stage,record_mode:mode,generated_at:time,...(stage==='FINAL'?{exhibition_complete:true,research_tickets:['1-2-3']}:{} )});
 const settled=(id,hit,mode='FORECAST')=>({forecast_id:id,source_kind:mode,status:'SETTLED',research_hit:hit,research_stake:800,research_return:hit?2100:0,research_tickets:['1-2-3','1-3-2','1-2-4','1-4-2','1-2-5','1-5-2','1-2-6','1-6-2']});
 
 test('newer replay cannot replace an existing saved-in-time stage',()=>{
@@ -52,4 +52,38 @@ test('refund receipts complete the pipeline but never count as losses or recover
  const [row]=buildStudyRows({races:[race],replay_forecasts:[pre,final],replay_verifications:receipts});
  assert.equal(row.preResult.status,'EXCLUDED_REFUND');assert.equal(row.finalResult.status,'EXCLUDED_REFUND');
  assert.equal(studyStats(receipts).n,0);assert.equal(studyPairs([row],'REPLAY').count,0);
+});
+
+// A partial server snapshot must not suppress a completed study record.
+test('incomplete LIVE final falls back to the completed REPLAY final',()=>{
+ const partial={...forecast('live-partial','FINAL'),exhibition_complete:false};
+ const replay=forecast('replay-complete','FINAL','REPLAY');
+ const data={races:[race],forecasts:[partial],replay_forecasts:[replay],replay_verifications:[settled(replay.id,true,'REPLAY')]};
+ const [row]=buildStudyRows(data);
+ assert.equal(row.final.id,replay.id);assert.equal(row.finalResult.research_hit,true);
+ assert.equal(data.forecasts[0].id,partial.id);assert.equal(data.forecasts.length,1);
+});
+test('a newer partial LIVE version cannot hide an older completed LIVE version',()=>{
+ const complete=forecast('live-complete','FINAL','LIVE','2026-11-22T09:00:00Z');
+ const partial={...forecast('live-partial','FINAL','LIVE','2026-11-22T11:00:00Z'),exhibition_complete:false};
+ const replay=forecast('replay-complete','FINAL','REPLAY','2026-11-22T12:00:00Z');
+ assert.equal(latestStudyStage([complete,partial],'FINAL').id,complete.id);
+ const [row]=buildStudyRows({races:[race],forecasts:[complete,partial],replay_forecasts:[replay]});
+ assert.equal(row.final.id,complete.id);
+});
+test('an empty ticket set is incomplete even when exhibition is marked ready',()=>{
+ const empty={...forecast('live-empty','FINAL'),research_tickets:[]};
+ const replay=forecast('replay-complete','FINAL','REPLAY');
+ const [row]=buildStudyRows({races:[race],forecasts:[empty],replay_forecasts:[replay]});
+ assert.equal(row.final.id,replay.id);
+});
+test('partial records in both cohorts remain pending without destroying raw history',()=>{
+ const live={...forecast('live-partial','FINAL'),exhibition_complete:false};
+ const replay={...forecast('replay-partial','FINAL','REPLAY'),research_tickets:[]};
+ const pre=forecast('pre','PRE');
+ const data={races:[race],forecasts:[pre,live],replay_forecasts:[replay]};
+ const [row]=buildStudyRows(data);
+ assert.equal(row.final,null);assert.equal(row.pre.id,pre.id);
+ assert.deepEqual(data.forecasts.map(item=>item.id),['pre','live-partial']);
+ assert.equal(data.replay_forecasts.length,1);
 });
