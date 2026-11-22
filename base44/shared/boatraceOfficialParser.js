@@ -643,18 +643,18 @@ export function parseBeforeInfo(html) {
   }
 
   const exhibitionData = [];
+  const playerBodies=[...String(html||'').matchAll(/<tbody\b[^>]*>[\s\S]*?<\/tbody>/gi)].map(match=>match[0]);
 
   for (let i = 0; i < Math.min(6, regNumbers.length); i++) {
     const regNum = regNumbers[i];
-    const boatNumber = i + 1;
-
-    // toban=XXXX の直後のHTMLから展示タイム・チルトを抽出
-    // 構造: <td rowspan="4">展示タイム</td><td rowspan="4">チルト</td>
-    const tobanIdx = html.indexOf(`toban=${regNum}`);
-    if (tobanIdx < 0) continue;
-
-    // 選手名の後の td 要素を順に抽出
-    const section = html.slice(tobanIdx, tobanIdx + 2000);
+    // A short absent row used to borrow the next boat's time from a fixed
+    // 2,000-character slice. Read only this player's actual tbody.
+    const matching=playerBodies.filter(body=>body.includes('toban='+regNum));
+    if(matching.length!==1){errors.push('選手展示行を一意に確認できません: '+regNum);continue;}
+    const section=matching[0];
+    const boatCell=section.match(/<td\b(?=[^>]*\bis-boatColor([1-6]))[^>]*>([\s\S]*?)<\/td>/i);
+    const boatNumber=boatCell?num(normalizeWidth(stripTags(boatCell[2]))):null;
+    if(!boatNumber||String(boatNumber)!==boatCell[1]){errors.push('展示行の艇番を確認できません: '+regNum);continue;}
     const tdRe = /<td[^>]*rowspan="(\d+)"[^>]*>([\s\S]*?)<\/td>/g;
     const tdValues = [];
     let td;
@@ -676,8 +676,10 @@ export function parseBeforeInfo(html) {
       if (exhibitionTime !== null && tilt !== null) break;
     }
 
-    // 欠場判定
-    const isAbsent = /欠場|返還/.test(section);
+    // is-miss is the official row marker observed on both Gamagori 2R/8R.
+    // Never infer a scratch from a missing ST or an adjacent player's data.
+    const firstRow=section.match(/<tr\b[^>]*>[\s\S]*?<\/tr>/i)?.[0]||'';
+    const isAbsent=/<tbody\b[^>]*class=["'][^"']*\bis-miss\b[^"']*["']/i.test(section)||/欠場|返還/.test(stripTags(firstRow));
 
     exhibitionData.push({
       boat_number: boatNumber,
@@ -692,28 +694,7 @@ export function parseBeforeInfo(html) {
     });
   }
 
-  // 公式beforeinfoは欠場艇に「欠場」という文字を出さず、展示値を空欄に
-  // することがある。少なくとも5艇で展示タイム・ST・進入コースが
-  // 完全に一致する場合だけ、残る1艇の展示不参加を欠場として扱う。
-  // 部分取得や5艇全体が未公開の場合、欠場と推測してはいけない。
-  const completeExhibitors = exhibitionData.filter(e =>
-    e.exhibition_time != null && e.exhibition_st != null &&
-    Number.isInteger(e.exhibition_course) && e.exhibition_course >= 1 &&
-    e.exhibition_course <= 6
-  );
-  const explicitScratches = exhibitionData.filter(e => e.is_absent || e.is_scratched);
-  const blankBoats = exhibitionData.filter(e =>
-    !e.is_absent && !e.is_scratched && e.exhibition_time == null &&
-    e.exhibition_st == null && e.exhibition_course == null
-  );
-  const courseCount = new Set(completeExhibitors.map(e => e.exhibition_course)).size;
-  if (exhibitionData.length === 6 && completeExhibitors.length === 5 &&
-      explicitScratches.length === 0 && blankBoats.length === 1 &&
-      courseCount === 5 && Object.keys(stExMap).length === 5) {
-    blankBoats[0].is_absent = true;
-    blankBoats[0].is_scratched = true;
-    warnings.push(`${blankBoats[0].boat_number}号艇：公式直前情報の展示不参加を確認（5艇の展示完了）`);
-  }
+  // A blank row without an explicit official absence marker remains incomplete.
 
   // 天候情報抽出
   let weather = null, windSpeed = null, waterTemp = null, airTemp = null, waveHeight = null;
@@ -745,7 +726,7 @@ export function parseBeforeInfo(html) {
   }
 
   return {
-    ok: exhibitionData.length > 0 && activeBoatCount >= 3 && realCount >= activeBoatCount,
+    ok: errors.length===0 && exhibitionData.length > 0 && activeBoatCount >= 3 && realCount >= activeBoatCount,
     errors,
     warnings,
     data: {
