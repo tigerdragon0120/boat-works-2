@@ -18,8 +18,29 @@ function ConditionsPanel({forecast}) {
   return <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-bold text-slate-800">保存した入力データと取得状況</summary><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{[...fields,{label:'潮位・潮流',value:'未接続'},{label:'周回・直線・回り足タイム',value:'未取得'},{label:'展示進入・ST・タイム',value:forecast.stage!=='FINAL'?'事前予想には不使用':completeExhibition?'6艇確認済み':'一部未取得・要確認'}].map(field=><div key={field.label} className="rounded-lg bg-slate-50 p-3"><p className="text-[10px] leading-5 text-slate-500">{field.label}</p><p className="mt-1 text-xs font-semibold text-slate-800">{field.value}</p></div>)}</div><p className="mt-2 text-[10px] leading-5 text-slate-500">{conditions.observed_at?`気象の取得 ${formatTime(conditions.observed_at,true)}。`:''}気象・潮位による補正は、現在の展開評価には加えていません。未取得を0として扱いません。</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[680px] text-left text-xs"><thead className="text-[10px] text-slate-500"><tr>{['艇・選手','想定進入','展示進入','平均ST','展示ST','展示タイム','モーター2連率','コース1着率'].map(label=><th key={label} className="px-2 py-2 font-semibold">{label}</th>)}</tr></thead><tbody>{boats.map(boat=><tr key={boat.boat_number} className="border-t border-slate-100"><th className="px-2 py-2 font-semibold text-slate-800">{boat.boat_number} {boat.player_name || '選手名未取得'}</th><td className="px-2 py-2 text-slate-600">{boat.expected_course ?? '—'}{boat.expected_course_basis==='FRAME_ORDER_ASSUMPTION'?' 仮定':''}</td><td className="px-2 py-2 text-slate-600">{boat.observed_course ?? '—'}</td><td className="px-2 py-2 text-slate-600">{measured(boat.avg_st)}</td><td className={`px-2 py-2 ${boat.exhibition_flying||boat.exhibition_late?'font-semibold text-rose-700':'text-slate-600'}`}>{boat.exhibition_late?'L':boat.exhibition_flying?`F${measured(Math.abs(boat.exhibition_st))}`:measured(boat.exhibition_st)}</td><td className="px-2 py-2 text-slate-600">{measured(boat.exhibition_time)}</td><td className="px-2 py-2 text-slate-600">{typeof boat.motor_2rate==='number'?`${boat.motor_2rate.toFixed(1)}%`:'—'}</td><td className="px-2 py-2 text-slate-600">{typeof boat.course_win_percent==='number'?`${boat.course_win_percent.toFixed(1)}%`:'未取得'}{boat.course_sample_size?` (${boat.course_sample_size}走)`:''}</td></tr>)}</tbody></table></div><p className="mt-2 text-[10px] leading-5 text-slate-500">展示STは本番のSTとは区別し、展示Fをスタートの速さとして加点しません。コース成績は進入コースが明示された値のみ扱います。</p></details>;
 }
 
+const TICKET_COLORS=['','bg-white text-slate-900 border-slate-400','bg-slate-900 text-white border-slate-900','bg-red-600 text-white border-red-600','bg-blue-600 text-white border-blue-600','bg-yellow-400 text-slate-900 border-yellow-400','bg-emerald-600 text-white border-emerald-600'];
 function TicketList({tickets=[]}) {
-  return <div className="flex flex-wrap gap-1.5">{tickets.map(ticket=><span key={ticket} className="rounded-md border border-slate-200 bg-white px-2 py-1 font-mono text-xs font-semibold text-slate-800">{ticket}</span>)}</div>;
+  return <ol role="list" aria-label="三連単の買い目" className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-2 sm:gap-3">
+    {tickets.map((ticket,index)=>{
+      const value=String(ticket), boats=value.split('-');
+      const valid=/^[1-6]-[1-6]-[1-6]$/.test(value)&&new Set(boats).size===3;
+      return <li key={`${value}-${index}`} data-ticket={value} className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-3 text-slate-900 shadow-sm">
+        <span className="sr-only">{valid?`買い目${index+1}：${boats.map((boat,position)=>`${position+1}着${boat}号艇`).join('、')}`:`買い目${index+1}：${value}`}</span>
+        <div aria-hidden="true" className="flex items-center gap-3">
+          <span className="w-5 shrink-0 pt-5 text-center text-xs font-bold tabular-nums text-slate-500">{String(index+1).padStart(2,'0')}</span>
+          {valid?<div className="grid min-w-0 flex-1 grid-cols-[1fr_auto_1fr_auto_1fr] items-end gap-1">
+            {boats.map((boat,position)=><React.Fragment key={position}>
+              {position>0&&<span className="pb-2.5 text-sm font-bold text-slate-400">−</span>}
+              <div className="flex min-w-0 flex-col items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-slate-500">{position+1}着</span>
+                <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border text-xl font-black ${TICKET_COLORS[Number(boat)]}`}>{boat}</span>
+              </div>
+            </React.Fragment>)}
+          </div>:<strong className="min-w-0 break-all text-xl">{value}</strong>}
+        </div>
+      </li>;
+    })}
+  </ol>;
 }
 function ForecastCard({forecast,title,subtitle,step,empty}) {
   const [selected,setSelected]=useState(null);
@@ -88,7 +109,7 @@ export default function V8RaceJourney({race}) {
           {decision.key==='STALE'&&<p className="mt-2 text-xs leading-6">保存後に時間が経過したため、現在のBUY表示を保留しています。オッズと展示情報の再確認を待ちます。</p>}
           {historicalBuy&&decision.key!=='BUY'&&<p className="mt-2 text-xs leading-6">保存時の判定：研究用BUY。現在は{decision.label}です。</p>}
           <ul className="mt-2 space-y-1 text-xs leading-6">{(final?.decision?.reasons || ['事前の展開を確認し、展示後の情報とオッズが揃ってから判定します。']).map((reason,index)=><li key={index}>・{reason}</li>)}</ul>
-          {!!final?.decision?.tickets?.length&&<div className="mt-3"><p className="mb-2 text-[11px] font-semibold">保存した判定の買い目 · {final.decision.tickets.length}点</p><TicketList tickets={final.decision.tickets}/></div>}
+          {!!final?.decision?.tickets?.length&&<div className="mt-3"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><h5 className="text-base font-bold">保存した判定の買い目</h5><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-700">三連単 · {final.decision.tickets.length}点</span></div><TicketList tickets={final.decision.tickets}/></div>}
           {final?.decision?.odds_captured_at&&<p className="mt-3 text-[11px] opacity-80">オッズ取得 {formatTime(final.decision.odds_captured_at)}{final.decision.valid_until?` / 有効期限 ${formatTime(final.decision.valid_until)}`:''}</p>}
           <p className="mt-3 text-[10px] leading-5 opacity-70">実績を蓄積中の研究判定です。的中率40％・回収率140％は目標値です。</p>
         </div>
