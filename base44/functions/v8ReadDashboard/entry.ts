@@ -13,6 +13,10 @@ export default async function(req:Request):Promise<Response>{
   if(!['day','race','verification'].includes(mode))return Response.json({ok:false,error:'INVALID_MODE'},{status:400});
   if(mode==='verification'&&!admin)return Response.json({ok:false,error:'Forbidden'},{status:403});
   const now=Date.now(),budget=now+35000;
+  const readEntity=async(name:string,filter:any,options:any)=>{
+    try{return await readV8Rows(sr[name],filter,options);}
+    catch(error:any){const wrapped:any=new Error(String(error?.message||'READ_FAILED'));wrapped.read_context=name;throw wrapped;}
+  };
   try{
     let query:any={},raceQuery:any={},races:any[]=[],dates:string[]=[];
     if(mode==='race'){
@@ -22,7 +26,7 @@ export default async function(req:Request):Promise<Response>{
       if(typeof race.race_key!=='string'||!race.race_key)return Response.json({ok:false,error:'RACE_IDENTITY_UNVERIFIED'},{status:409});
       // A single ID lookup cannot establish uniqueness of the logical race.
       // Read the whole key group so race/day views apply the same ambiguity guard.
-      races=await readV8Rows(sr.Race,{race_key:race.race_key},{budget,maxPages:16});
+      races=await readEntity('Race',{race_key:race.race_key},{budget,maxPages:16});
       if(!races.some(r=>r.id===race.id&&r.race_key===race.race_key))return Response.json({ok:false,error:'RACE_IDENTITY_CHANGED'},{status:409});
       dates=[race.race_date];query={race_id:race.id};
     }else{
@@ -36,13 +40,13 @@ export default async function(req:Request):Promise<Response>{
         dates=Array.from({length:days},(_,i)=>jstDate(-i));
       }
       query={race_date:{$in:dates}};raceQuery=query;
-      races=await readV8Rows(sr.Race,raceQuery,{budget,maxPages:16});
+      races=await readEntity('Race',raceQuery,{budget,maxPages:16});
     }
     const [raw,externalRaw,verificationRaw,theories]=await Promise.all([
-      readV8Rows(sr.V8RaceForecast,query,{budget,maxPages:90}),
-      admin&&mode!=='day'?readV8Rows(sr.V8ExternalPrediction,query,{budget,maxPages:30}):Promise.resolve([]),
-      mode==='verification'||mode==='race'?readV8Rows(sr.V8ForecastVerification,{...query,...(!admin?{source_kind:'FORECAST'}:{})},{budget,maxPages:90}):Promise.resolve([]),
-      admin&&mode==='race'?readV8Rows(sr.V8TheoryTrial,query,{budget,maxPages:6}):Promise.resolve([])
+      readEntity('V8RaceForecast',query,{budget,maxPages:90}),
+      admin&&mode!=='day'?readEntity('V8ExternalPrediction',query,{budget,maxPages:30}):Promise.resolve([]),
+      mode==='verification'||mode==='race'?readEntity('V8ForecastVerification',{...query,...(!admin?{source_kind:'FORECAST'}:{})},{budget,maxPages:90}):Promise.resolve([]),
+      admin&&mode==='race'?readEntity('V8TheoryTrial',query,{budget,maxPages:6}):Promise.resolve([])
     ]);
     const allRaceKeys=new Set(races.map(r=>r.race_key).filter(Boolean));
     const raceGroups=groupBy(races,'race_key');
@@ -77,5 +81,9 @@ export default async function(req:Request):Promise<Response>{
       errors:canonical.conflicts.length?['予想キーの重複がある記録を保留しました']:[],
       policies:{buy_evaluation:'FIRST_PUBLISHED_BUY_PER_RACE',forecast_evaluation:'LATEST_STAGE_BEFORE_DEADLINE',stake_per_ticket:100,research_only:true,external_automatic_collection:'NOT_CONNECTED',weather_forecast:'NOT_CONNECTED',tide:'NOT_CONNECTED'}
     },{headers:{'Cache-Control':'private, no-store'}});
-  }catch(error:any){console.error('[V8_READ]',String(error?.message||error).slice(0,150));return Response.json({ok:false,error:'READ_INCOMPLETE',message:'データを最後まで確認できないため表示を保留しました。再読込してください。'},{status:503});}
+  }catch(error:any){
+    const diagnostic={context:error?.read_context||'RACE_OR_FORMAT',code:/^INCOMPLETE_READ:[a-z_]+$/.test(String(error?.message))?error.message:'READ_FAILED'};
+    console.error('[V8_READ]',JSON.stringify(diagnostic));
+    return Response.json({ok:false,error:'READ_INCOMPLETE',diagnostic,message:'データを最後まで確認できないため表示を保留しました。再読込してください。'},{status:503});
+  }
 }
