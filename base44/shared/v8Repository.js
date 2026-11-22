@@ -1,22 +1,16 @@
 // Shared read/selection rules for V8. No late records or silent truncated ledgers.
+import {fetchAllPaged} from './pagedFetch.js';
 import {utcMs} from './v7FeatureObservation.js';
 
 export const jstDate = (offset=0, now=Date.now()) => new Date(now+offset*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
 export const dateValid = value => typeof value==='string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value+'T00:00:00Z')) && new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
-export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=40,sort='created_date'}={}) {
-  // The deployed SDK documents positional filter(query,sort,limit,skip), returning an array.
-  // Read every page; never interpret a capped first page as a complete day.
-  const rows=[],ids=new Set(),size=200;
-  for(let page=0;page<maxPages;page++){
-    const timeLeft=budget-Date.now();if(timeLeft<=0)throw new Error('INCOMPLETE_READ:BUDGET');
-    let timer;let batch;
-    try{batch=await Promise.race([entity.filter(query,sort,size,page*size),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('INCOMPLETE_READ:TIMEOUT')),Math.min(10000,timeLeft));})]);}
-    finally{clearTimeout(timer);}
-    if(!Array.isArray(batch)||batch.length>size)throw new Error('INCOMPLETE_READ:FORMAT');
-    for(const row of batch){if(!row?.id||ids.has(row.id))throw new Error('INCOMPLETE_READ:REPEATED_ROW');ids.add(row.id);rows.push(row);}
-    if(batch.length<size)return rows;
-  }
-  throw new Error('INCOMPLETE_READ:PAGE_LIMIT');
+export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=40,sort='-created_date'}={}) {
+  // Match the deployed cursor contract used by existing successful collectors.
+  // Arrays and incomplete pages are never interpreted as a complete ledger.
+  const page=await fetchAllPaged((q,options)=>entity.filter(q,options),query,
+    {pageSize:200,maxPages,sort,deadlineMs:budget});
+  if(!page.complete)throw new Error('INCOMPLETE_READ:'+String(page.error||'unknown'));
+  return page.rows;
 }
 export function groupBy(rows,key) {
   const map=new Map();
@@ -50,10 +44,13 @@ export function firstBuyForecasts(rows){
   return [...out.values()];
 }
 export function currentDecision(row,race,now=Date.now()){
-  if(!row||row.stage!=='FINAL'||!eligibleForecast(row,now))return 'WAIT';
+  if(!row||!eligibleForecast(row,now))return 'WAIT';
   if(race&&(row.race_id!==race.id||row.race_key!==race.race_key||utcMs(row.deadline)!==utcMs(race.deadline)))return 'WAIT';
   const deadline=utcMs(race?.deadline||row.deadline);
   if(deadline==null||now>=deadline-60000||['finished','cancelled'].includes(race?.status))return 'CLOSED';
+  // Preserve a valid pre-race candidate for the UI's exhibition-waiting state.
+  // A malformed pre-race BUY can never bypass the FINAL-only price checks.
+  if(row.stage!=='FINAL')return ['WATCH','SKIP'].includes(row.decision?.status)?row.decision.status:'WAIT';
   if(row.decision?.status!=='BUY')return row.decision?.status||'WAIT';
   const validUntil=utcMs(row.decision.valid_until),priceAt=utcMs(row.decision.odds_captured_at);
   return validUntil!=null&&priceAt!=null&&priceAt<=now&&now<validUntil&&now-priceAt<300000?'BUY':'WAIT';
