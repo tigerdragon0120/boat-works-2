@@ -64,7 +64,7 @@ export async function runLatestRacerSync(client,{force=false,scheduled=false,bud
     for(let index=0;index<pageCount;index++){
       if(existing.has(index))continue;
       if(Date.now()+10000>=budget){
-        await persist({pending_count:records.length-imported,imported_count:imported,next_check_at:nextRacerCheck()});
+        await persist({status:'idle',pending_count:records.length-imported,imported_count:imported,next_check_at:nextRacerCheck()});
         return {ok:true,complete:false,latest_racer_sync:latestRacerSyncView(state),duration_ms:Date.now()-started};
       }
       const part=records.slice(index*RACER_PAGE_SIZE,(index+1)*RACER_PAGE_SIZE);
@@ -94,7 +94,13 @@ export async function runLatestRacerSync(client,{force=false,scheduled=false,bud
     return {ok:true,complete:true,unchanged:false,latest_racer_sync:latestRacerSyncView(state),duration_ms:Date.now()-started};
   }catch(error){
     const reason=String(error?.message||'最新成績の取得に失敗しました').split('\n')[0].replace(/Bearer\s+\S+/gi,'Bearer [redacted]').slice(0,180);
-    if(state?.id){try{await persist({status:'error',error_message:reason,next_check_at:nextRacerCheck()});}catch{}}
-    return {ok:false,error:reason,latest_racer_sync:latestRacerSyncView(state),duration_ms:Date.now()-started};
+    const phase=reason.includes('INDEX_HTTP')?'配布一覧':reason.includes('ARCHIVE_HTTP')?'配布ファイル':'公式サイト';
+    const friendly=/HTTP_403/.test(reason)?`${phase}が今回の接続を拒否しました（HTTP 403）。保存済みの成績を維持し、次回の自動確認で再試行します。`
+      :/HTTP_429/.test(reason)?'公式サイトのアクセス制限中です。保存済みの成績を維持し、次回の自動確認で再試行します。'
+      :/BUDGET|abort|timed?out/i.test(reason)?'公式データの確認が時間内に完了しませんでした。保存済みの成績を維持し、次回確認で再開します。':reason;
+    if(state?.id&&!['RACER_SYNC_LEASE_EXPIRED','RACER_SYNC_NEWER_DATASET_ACTIVE'].includes(reason)){
+      try{await persist({status:'error',error_message:friendly,next_check_at:nextRacerCheck()});}catch{}
+    }
+    return {ok:false,error:friendly,error_code:reason,latest_racer_sync:latestRacerSyncView(state),duration_ms:Date.now()-started};
   }finally{if(lock){try{await sr.ProcessLock.update(lock,{status:'released'});}catch{}}}
 }
