@@ -10,7 +10,7 @@ import {isReplay} from '../src/components/liveV8/v8StudyView.js';
 
 const handlerSource=readFileSync(new URL('../base44/functions/v8ReadDashboard/entry.ts',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
 const executable=stripTypeScriptTypes(handlerSource).replace('export default async function','return async function');
-const names=['jstDate','dateValid','readV8Rows','canonicalForecasts','canonicalReplayForecasts','latestForecasts','firstBuyForecasts','currentDecision','groupBy','publicRow','buildRaceProgress'];
+const names=['jstDate','dateValid','readV8Rows','canonicalForecasts','canonicalReplayForecasts','latestForecasts','firstBuyForecasts','currentDecision','groupBy','publicRow','buildRaceProgress','isCompleteFinalForecast'];
 const factory=new Function('createClientFromRequest',...names,'utcMs','SETTLEMENT_REVISION',executable);
 const clientSource=readFileSync(new URL('../src/components/liveV8/v8Client.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
 const displayDecision=new Function('isReplay',clientSource+'\nreturn displayDecision;')(isReplay);
@@ -18,7 +18,7 @@ const NOW=Date.parse('2026-11-23T05:30:00.000Z');
 const race={id:'race-001',race_key:'2026-11-23_01_08',race_date:'2026-11-23',venue_code:'01',venue_name:'桐生',race_number:8,deadline:'2026-11-23T06:00:00Z',status:'scheduled'};
 const forecast=(stage='FINAL')=>({
   id:'forecast-'+stage,forecast_key:'V8_FORECAST_1:'+race.race_key+':'+stage+':one',
-  race_id:race.id,race_key:race.race_key,race_date:race.race_date,stage,deadline:race.deadline,
+  race_id:race.id,race_key:race.race_key,race_date:race.race_date,stage,deadline:race.deadline,exhibition_complete:stage==='FINAL',research_tickets:['1-2-3'],
   generated_at:stage==='DAY_BEFORE'?'2026-11-22T10:00:00Z':'2026-11-23T05:20:00Z',
   created_date:stage==='DAY_BEFORE'?'2026-11-22T10:00:00Z':'2026-11-23T05:20:00Z',
   decision:{status:stage==='FINAL'?'BUY':'WATCH',odds_captured_at:'2026-11-23T05:29:00Z',valid_until:'2026-11-23T05:34:00Z'},
@@ -168,4 +168,11 @@ test('dashboard omits obsolete result ledgers until current-revision verificatio
  const f=forecast(),old={id:'old-check',verification_key:'old-key',revision:'V8_SETTLEMENT_1',source_kind:'FORECAST',forecast_id:f.id,race_id:race.id,race_key:race.race_key,race_date:race.race_date,status:'SETTLED',research_hit:true,result_trifecta:'1-2-3'};
  const out=await exercise(t,{forecasts:[f],verifications:[old]});
  assert.equal(out.response.status,200);assert.deepEqual(out.body.verifications,[]);assert.deepEqual(out.body.buy_verifications,[]);assert.deepEqual(out.body.replay_verifications,[]);
+});
+
+test('dashboard selects a complete FINAL before latest so newer partial history cannot hide it',async(t)=>{
+ const complete=forecast(),partial={...complete,id:'partial-final',forecast_key:'partial-final',generated_at:'2026-11-23T05:25:00Z',created_date:'2026-11-23T05:25:00Z',exhibition_complete:false};
+ const out=await exercise(t,{forecasts:[complete,partial]});
+ assert.equal(out.response.status,200);assert.deepEqual(out.body.forecasts.map(row=>row.id),[complete.id]);
+ assert.deepEqual(out.body.buy_forecasts.map(row=>row.id),[complete.id]);assert.equal(out.body.coverage.final_count,1);
 });
