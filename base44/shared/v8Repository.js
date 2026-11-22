@@ -67,6 +67,7 @@ export function groupBy(rows,key) {
 }
 export const chronological=(a,b)=>(utcMs(a.generated_at||a.recorded_at)||0)-(utcMs(b.generated_at||b.recorded_at)||0)||(utcMs(a.created_date)||0)-(utcMs(b.created_date)||0)||String(a.id).localeCompare(String(b.id));
 export function eligibleForecast(row,now=Date.now()){
+  if(row?.record_mode!=null&&row.record_mode!=='LIVE')return false;
   const deadline=utcMs(row?.deadline),created=utcMs(row?.created_date),generated=utcMs(row?.generated_at);
   if(!row?.id||!row?.race_id||!row?.race_key||!dateValid(row.race_date)||!['DAY_BEFORE','PRE','FINAL'].includes(row.stage)||deadline==null||created==null||generated==null||created>now||generated>now||created<generated||created>=deadline-60000||generated>=deadline-60000)return false;
   const offset=row.stage==='DAY_BEFORE'?1:0;
@@ -88,8 +89,68 @@ export function latestForecasts(rows){
 }
 export function firstBuyForecasts(rows){
   const out=new Map();
-  for(const row of [...rows].sort(chronological))if(row.stage==='FINAL'&&row.decision?.status==='BUY'&&!out.has(row.race_key))out.set(row.race_key,row);
+  for(const row of [...rows].sort(chronological))if((row.record_mode==null||row.record_mode==='LIVE')&&row.stage==='FINAL'&&row.decision?.status==='BUY'&&!out.has(row.race_key))out.set(row.race_key,row);
   return [...out.values()];
+}
+// Retrospective research is a separate ledger. Real observation/save times are
+// retained, and no reconstructed row can become a published BUY.
+export function eligibleReplayForecast(row,now=Date.now()){
+  if(row?.record_mode!=='REPLAY'||!row.id||!row.race_id||!row.race_key||!dateValid(row.race_date)||!['PRE','FINAL'].includes(row.stage))return false;
+  const deadline=utcMs(row.deadline),generated=utcMs(row.generated_at),created=utcMs(row.created_date),input=utcMs(row.input_as_of);
+  if(deadline==null||generated==null||created==null||generated<deadline||created<generated||generated>now||created>now||jstDate(0,deadline)!==row.race_date)return false;
+  if(row.input_as_of!=null&&(input==null||input>generated))return false;
+  if(row.provenance?.result_excluded!==true||row.provenance?.reconstruction!==true||row.provenance?.input_fields_whitelisted!==true||row.decision?.status==='BUY')return false;
+  if(row.stage==='FINAL'&&row.exhibition_complete!==true)return false;
+  return true;
+}
+export function canonicalReplayForecasts(rows,now=Date.now()){
+  const valid=[],conflicts=[];
+  for(const [key,group] of groupBy((rows||[]).filter(row=>row.record_mode==='REPLAY'),'forecast_key')){
+    if(!key||group.length!==1){conflicts.push(key);continue;}
+    if(eligibleReplayForecast(group[0],now))valid.push(group[0]);
+  }
+  return {rows:valid,conflicts};
+}
+// One row per race keeps acquisition, prediction and settlement gaps visible.
+// Consumers choose the live stage when present and a replay only as its fallback.
+export function buildRaceProgress({races,forecasts=[],replayForecasts=[],verifications=[],replayVerifications=[],results=[],now=Date.now()}){
+  const liveAll=canonicalForecasts(forecasts,now).rows,replayAll=canonicalReplayForecasts(replayForecasts,now).rows;
+  const live=latestForecasts(liveAll),replay=latestForecasts(replayAll),byId=new Map([...liveAll,...replayAll].map(row=>[row.id,row]));
+  const liveByRace=groupBy(live,'race_id'),replayByRace=groupBy(replay,'race_id'),resultsByRace=groupBy(results,'race_id');
+  const verified=new Map();
+  const uniqueVerifications=[...groupBy([...verifications,...replayVerifications],'verification_key').values()].filter(group=>group.length===1).map(group=>group[0]);
+  for(const [key,group] of groupBy(uniqueVerifications,row=>row.source_kind+':'+row.forecast_id))if(group.length===1&&['SETTLED','EXCLUDED_REFUND'].includes(group[0].status))verified.set(key,group[0]);
+  const rows=(races||[]).map(race=>{
+    const matchesRace=row=>row.race_id===race.id&&row.race_key===race.race_key&&utcMs(row.deadline)===utcMs(race.deadline);
+    const liveRows=(liveByRace.get(race.id)||[]).filter(matchesRace),replays=(replayByRace.get(race.id)||[]).filter(matchesRace);
+    const byStage=(rows,stage)=>rows.find(row=>row.stage===stage);
+    const final=byStage(liveRows,'FINAL')||byStage(replays,'FINAL')||null;
+    const linkedCandidate=byId.get(final?.comparison?.baseline_id),linked=linkedCandidate&&matchesRace(linkedCandidate)&&['DAY_BEFORE','PRE'].includes(linkedCandidate.stage)?linkedCandidate:null;
+    const pre=(linked&&linked.record_mode!=='REPLAY'?linked:null)||byStage(liveRows,'DAY_BEFORE')||byStage(liveRows,'PRE')||linked||byStage(replays,'PRE')||null;
+    const stageInfo=row=>row?{state:'SAVED',record_mode:row.record_mode==='REPLAY'?'REPLAY':'LIVE',forecast_id:row.id,stage:row.stage}:{state:'PENDING',record_mode:null,forecast_id:null};
+    const settlement=row=>{if(!row)return null;const item=verified.get((row.record_mode==='REPLAY'?'REPLAY':'FORECAST')+':'+row.id);return item?.race_id===race.id&&item?.race_key===race.race_key?item:null;};
+    const before=settlement(pre),after=settlement(final),complete=!!before&&!!after;
+    const exhibition=race.exhibition_ready===true||final?.exhibition_complete===true;
+    const resultAvailable=(resultsByRace.get(race.id)||[]).some(row=>row.is_finished===true||row.result_status==='RESULT_FINAL');
+    const missing=[];
+    if(!pre)missing.push('PRE_MISSING');
+    if(!exhibition)missing.push('EXHIBITION_MISSING');
+    if(!final)missing.push('FINAL_MISSING');
+    if(!before)missing.push('PRE_VERIFICATION_MISSING');
+    if(!after)missing.push('FINAL_VERIFICATION_MISSING');
+    const status=race.status==='cancelled'?'CANCELLED':complete?(before.status==='EXCLUDED_REFUND'||after.status==='EXCLUDED_REFUND'?'RESULT_EXCLUDED':'VERIFIED'):!pre?'PRE_PENDING':!exhibition?'EXHIBITION_PENDING':!final?'FINAL_PENDING':resultAvailable?'VERIFICATION_PENDING':'RESULT_PENDING';
+    return {race_id:race.id,race_key:race.race_key,status,pre:stageInfo(pre),exhibition:{state:exhibition?'READY':'PENDING'},final:stageInfo(final),verification:{state:complete?'COMPLETE':before||after?'PARTIAL':'PENDING',pre_settled:!!before,final_settled:!!after,pre_status:before?.status||null,final_status:after?.status||null},missing:status==='CANCELLED'?[]:missing};
+  });
+  const active=rows.filter(row=>row.status!=='CANCELLED');
+  return {rows,coverage:{
+    expected_races:rows.length,pre_available_count:active.filter(row=>row.pre.state==='SAVED').length,
+    final_available_count:active.filter(row=>row.final.state==='SAVED').length,exhibition_ready_count:active.filter(row=>row.exhibition.state==='READY').length,
+    verified_races:rows.filter(row=>row.status==='VERIFIED').length,excluded_races:rows.filter(row=>row.status==='RESULT_EXCLUDED').length,cancelled_races:rows.length-active.length,
+    fully_completed_races:active.filter(row=>row.verification.state==='COMPLETE').length,pending_races:rows.filter(row=>!['VERIFIED','RESULT_EXCLUDED','CANCELLED'].includes(row.status)).length,
+    replay_pre_count:active.filter(row=>row.pre.record_mode==='REPLAY').length,replay_final_count:active.filter(row=>row.final.record_mode==='REPLAY').length,
+    pending_pre_count:active.filter(row=>row.pre.state!=='SAVED').length,pending_exhibition_count:active.filter(row=>row.exhibition.state!=='READY').length,
+    pending_final_count:active.filter(row=>row.final.state!=='SAVED').length,pending_verification_count:active.filter(row=>row.verification.state!=='COMPLETE').length,
+  }};
 }
 export function currentDecision(row,race,now=Date.now()){
   if(!row||!eligibleForecast(row,now))return 'WAIT';
