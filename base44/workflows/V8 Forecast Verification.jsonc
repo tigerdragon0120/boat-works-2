@@ -1,0 +1,45 @@
+{
+  "name": "V8 Forecast Verification",
+  "description": "\u4fdd\u5b58\u6e08\u307f\u4e88\u60f3\u3068\u5916\u90e8\u4e88\u60f3\u3092\u78ba\u5b9a\u7d50\u679c\u30fb\u53d6\u5f97\u8a3c\u8de1\u3068\u7167\u5408\u3002\u521d\u56deBUY\u306f\u5f8c\u306e\u5909\u66f4\u3067\u9664\u5916\u3057\u306a\u3044\u3002",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "2,12,22,32,42,52 8-23 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    }
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "v8_forecast_verification",
+      "version": "1.0.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "verify": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v8VerifyForecasts",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "\u4fdd\u5b58\u4e88\u60f3\u306e\u7d50\u679c\u7167\u5408",
+            "description": "\u524d\u65e5\u30fb\u5c55\u793a\u524d\u30fb\u5c55\u793a\u5f8c\u30fb\u521d\u56deBUY\u30fb\u5916\u90e8\u8a18\u9332\u3092\u5206\u3051\u3066\u691c\u8a3c"
+          }
+        }
+      }
+    ]
+  }
+}
