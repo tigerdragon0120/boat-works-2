@@ -2,7 +2,7 @@
 import {CUTOFF_MS, evidenceTime, jstDay, validTicket, validateTickets} from './v8ExternalEvidence.js';
 import {eligibleReplayForecast} from './v8Repository.js';
 
-export const SETTLEMENT_REVISION = 'V8_SETTLEMENT_1';
+export const SETTLEMENT_REVISION = 'V8_SETTLEMENT_2';
 const fail = (reason) => ({ok: false, reason});
 // RESULT_FINAL is the current RaceResult schema; FINAL is accepted only for legacy rows.
 const isFinal = (r) => r && (['RESULT_FINAL', 'FINAL'].includes(r.result_status) || (r.is_finished === true && !r.result_status));
