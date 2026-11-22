@@ -119,7 +119,9 @@ test('cursor pagination follows has_more even for short pages and preserves filt
   assert.equal(Object.hasOwn(entity.calls[0],'cursor'),false);
 });
 test('an array response is never accepted as a complete V8 ledger', async () => {
-  await assert.rejects(readV8Rows({filter:async()=>[{id:'row-1'}]},{}),/INCOMPLETE_READ:page_format_invalid/);
+  let calls=0;
+  await assert.rejects(readV8Rows({filter:async()=>{calls++;return [{id:'row-1'}];}},{}),/INCOMPLETE_READ:page_format_invalid/);
+  assert.equal(calls,1);
 });
 test('repeated rows and invalid cursor continuations fail instead of returning partial data', async () => {
   const cases=[
@@ -131,6 +133,7 @@ test('repeated rows and invalid cursor continuations fail instead of returning p
   for(const sample of cases){
     let calls=0;
     await assert.rejects(readV8Rows({filter:async()=>sample.pages[calls++]},{}),sample.reason);
+    assert.equal(calls,sample.pages.length);
   }
 });
 test('page limits and exhausted read budgets cannot publish incomplete ledgers', async () => {
@@ -140,3 +143,120 @@ test('page limits and exhausted read budgets cannot publish incomplete ledgers',
   assert.equal(calls,0);
 });
 
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+const readError=(status,extra={})=>Object.assign(new Error('private upstream details'),status==null?extra:{response:{status,...extra}});
+
+test('transient page reads recover with at most three attempts on the same query and cursor',async(t)=>{
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:NOW});
+  const calls=[],query={race_date:'2026-11-22'};
+  const entity={async filter(q,options){
+    calls.push({q,options,at:Date.now()});
+    if(calls.length===1)throw readError('503');
+    if(calls.length===2)throw readError(null,{code:'ECONNRESET'});
+    return options.cursor?{items:[{id:'second'}],has_more:false}:{items:[{id:'first'}],has_more:true,next_cursor:'next'};
+  }};
+  const pending=readV8Rows(entity,query,{budget:NOW+5000,sort:'-captured_at'});
+  await flush();
+  assert.equal(calls.length,1);
+  t.mock.timers.tick(199);await flush();assert.equal(calls.length,1);
+  t.mock.timers.tick(1);await flush();assert.equal(calls.length,2);
+  t.mock.timers.tick(499);await flush();assert.equal(calls.length,2);
+  t.mock.timers.tick(1);await flush();
+  assert.deepEqual((await pending).map(row=>row.id),['first','second']);
+  assert.deepEqual(calls.map(call=>call.at),[NOW,NOW+200,NOW+700,NOW+700]);
+  for(const call of calls.slice(0,3)){
+    assert.strictEqual(call.q,query);
+    assert.deepEqual(call.options,{sort:'-captured_at',limit:200});
+  }
+  assert.equal(calls[3].options.cursor,'next');
+});
+
+test('permanent HTTP errors and non-network exceptions never retry or disclose upstream details',async()=>{
+  for(const status of [400,401,403,404,408,422]){
+    let calls=0;
+    await assert.rejects(readV8Rows({filter:async()=>{calls++;throw readError(status);}},{race_date:'2026-11-22'}),error=>{
+      assert.equal(error.message,'INCOMPLETE_READ:page_read_failed_or_timed_out');
+      assert.equal(error.http_status,status);
+      assert.equal(error.message.includes('private'),false);
+      return true;
+    });
+    assert.equal(calls,1);
+  }
+  let calls=0;
+  await assert.rejects(readV8Rows({filter:async()=>{calls++;throw new TypeError('malformed SDK configuration');}},{}),error=>{
+    assert.equal(error.http_status,undefined);return true;
+  });
+  assert.equal(calls,1);
+});
+
+test('Retry-After seconds and HTTP dates are respected before another read',async(t)=>{
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:NOW});
+  for(const kind of ['seconds','date']){
+    const start=Date.now();let calls=0;
+    const headers=kind==='seconds'?{'retry-after':'2'}:new Headers({'Retry-After':new Date(start+2000).toUTCString()});
+    const pending=readV8Rows({filter:async()=>{
+      calls++;if(calls===1)throw readError(429,{headers});
+      return {items:[{id:kind}],has_more:false};
+    }},{},{budget:start+5000});
+    await flush();assert.equal(calls,1);
+    t.mock.timers.tick(1999);await flush();assert.equal(calls,1);
+    t.mock.timers.tick(1);await flush();
+    assert.deepEqual(await pending,[{id:kind}]);
+    assert.equal(calls,2);
+  }
+});
+
+test('a retry that cannot fit the remaining page or request budget fails without another read',async(t)=>{
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:NOW});
+  for(const sample of [{remaining:100,retryAfter:null},{remaining:5000,retryAfter:'6'},{remaining:35000,retryAfter:'11'}]){
+    let calls=0;
+    const headers=sample.retryAfter?{'retry-after':sample.retryAfter}:{};
+    await assert.rejects(readV8Rows({filter:async()=>{calls++;throw readError(429,{headers});}},{},{budget:NOW+sample.remaining}),error=>{
+      assert.equal(error.message,'INCOMPLETE_READ:retry_budget_exhausted');
+      assert.equal(error.http_status,429);return true;
+    });
+    assert.equal(calls,1);
+  }
+});
+
+test('budget expiry during backoff stops all further reads',async(t)=>{
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:NOW});
+  let calls=0;
+  const pending=assert.rejects(readV8Rows({filter:async()=>{calls++;throw readError(503);}},{},{budget:NOW+250}),error=>{
+    assert.match(error.message,/^INCOMPLETE_READ:/);
+    assert.equal(error.http_status,503);return true;
+  });
+  await flush();assert.equal(calls,1);
+  t.mock.timers.tick(300);await flush();await pending;
+  t.mock.timers.tick(1000);await flush();assert.equal(calls,1);
+});
+
+test('three exhausted attempts expose only the last safe status and never partial earlier pages',async(t)=>{
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:NOW});
+  const calls=[];
+  const pending=assert.rejects(readV8Rows({filter:async(q,options)=>{
+    calls.push(options);
+    if(!options.cursor)return {items:[{id:'partial'}],has_more:true,next_cursor:'page-two'};
+    throw readError([502,503,504][calls.length-2]);
+  }},{},{budget:NOW+5000}),error=>{
+    assert.equal(error.message,'INCOMPLETE_READ:page_read_failed_or_timed_out');
+    assert.equal(error.http_status,504);
+    assert.equal(Object.hasOwn(error,'rows'),false);return true;
+  });
+  await flush();t.mock.timers.tick(200);await flush();t.mock.timers.tick(500);await flush();await pending;
+  assert.equal(calls.length,4);
+  assert.deepEqual(calls.slice(1).map(call=>call.cursor),['page-two','page-two','page-two']);
+});
+
+test('a recovered transport error cannot mask an invalid response or attach a stale HTTP status',async(t)=>{
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:NOW});
+  let calls=0;
+  const pending=assert.rejects(readV8Rows({filter:async()=>{
+    calls++;if(calls===1)throw readError(503);return [{id:'invalid-array'}];
+  }},{},{budget:NOW+5000}),error=>{
+    assert.equal(error.message,'INCOMPLETE_READ:page_format_invalid');
+    assert.equal(error.http_status,undefined);return true;
+  });
+  await flush();t.mock.timers.tick(200);await flush();await pending;
+  assert.equal(calls,2);
+});
