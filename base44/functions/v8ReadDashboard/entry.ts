@@ -1,6 +1,6 @@
 // Read-only API. Public forecasts and private external evidence have separate access paths.
 import {createClientFromRequest} from 'npm:@base44/sdk@0.8.60';
-import {jstDate,dateValid,readV8Rows,canonicalForecasts,canonicalReplayForecasts,latestForecasts,firstBuyForecasts,currentDecision,groupBy,publicRow,buildRaceProgress} from '../../shared/v8Repository.js';
+import {jstDate,dateValid,readV8Rows,canonicalForecasts,canonicalReplayForecasts,latestForecasts,firstBuyForecasts,currentDecision,groupBy,publicRow,buildRaceProgress,isCompleteFinalForecast} from '../../shared/v8Repository.js';
 import {utcMs} from '../../shared/v7FeatureObservation.js';
 import {SETTLEMENT_REVISION} from '../../shared/v8Settlement.js';
 
@@ -63,13 +63,16 @@ export default async function(req:Request):Promise<Response>{
     const ambiguousRaceKeys=[...raceGroups.entries()].filter(([,g])=>g.length!==1).map(([key])=>key);
     races=[...raceGroups.values()].filter(g=>g.length===1).map(g=>g[0]);
     const validRaceIds=new Set(races.map(r=>r.id));
-    const canonical=canonicalForecasts(raw.filter(f=>validRaceIds.has(f.race_id)),now),latest=latestForecasts(canonical.rows),buys=firstBuyForecasts(canonical.rows);
-    const replayCanonical=canonicalReplayForecasts(raw.filter(f=>validRaceIds.has(f.race_id)),now),replayLatest=latestForecasts(replayCanonical.rows);
+    const canonical=canonicalForecasts(raw.filter(f=>validRaceIds.has(f.race_id)),now);
+    const liveStages=canonical.rows.filter(row=>row.stage!=='FINAL'||isCompleteFinalForecast(row));
+    const latest=latestForecasts(liveStages),buys=firstBuyForecasts(liveStages);
+    const replayCanonical=canonicalReplayForecasts(raw.filter(f=>validRaceIds.has(f.race_id)),now);
+    const replayLatest=latestForecasts(replayCanonical.rows.filter(row=>row.stage!=='FINAL'||isCompleteFinalForecast(row)));
     const byId=new Map([...canonical.rows,...replayCanonical.rows].map(r=>[r.id,r]));
     const selected=new Map(latest.map(r=>[r.id,r]));
     const replaySelected=new Map(replayLatest.map(r=>[r.id,r]));
     // Include the actual referenced baseline even when another version exists.
-    for(const final of [...latest,...replayLatest].filter(r=>r.stage==='FINAL')){const id=final.comparison?.baseline_id,row=id&&byId.get(id);if(row)(row.record_mode==='REPLAY'?replaySelected:selected).set(id,row);}
+    for(const final of [...latest,...replayLatest].filter(r=>r.stage==='FINAL')){const id=final.comparison?.baseline_id,row=id&&byId.get(id);if(row&&['DAY_BEFORE','PRE'].includes(row.stage))(row.record_mode==='REPLAY'?replaySelected:selected).set(id,row);}
     const ids=new Set(selected.keys()),replayIds=new Set(replaySelected.keys()),buyIds=new Set(buys.map(b=>b.id));
     const external=externalRaw.filter(r=>r.use_scope==='PRIVATE_RESEARCH');
     const externalIds=new Set(external.map(r=>r.id));
