@@ -1,27 +1,14 @@
 // V7の共通取得処理はページ形式({items,next_cursor,has_more})を使うため0.8.60で実行する
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.60';
-import { waitUntil } from 'base44:runtime';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseSeriesName, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
-import { upsertRace, upsertEntry, dedupRace, dedupEntriesForRace, upsertResultAndVerify, upsertBoatcastResultAndVerify, runAndSavePrediction, getSettings, refreshFinalOdds, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
-import { runAndSavePredictionV3 } from '../../shared/predictionServiceV3.js';
-import { runAndSavePredictionV31 } from '../../shared/predictionServiceV31.js';
-import { runAndSavePredictionV4 } from '../../shared/predictionServiceV4.js';
-import { runAndSaveEnsemble } from '../../shared/predictionServiceEnsemble.js';
-// V6.1 policy bundle: 本命・買い目・シナリオ整合 + 1号艇逃げ利益型BUY
-import { runAndSavePredictionV61, verifyV61Prediction } from '../../shared/predictionServiceV61.js';
-import { runAndSavePredictionV62, verifyV62Prediction } from '../../shared/predictionServiceV62.js';
-// V6.3: V4・V6.2・V5を統合した合成エンジン
-import { runAndSavePredictionV63, verifyV63Prediction } from '../../shared/predictionServiceV63.js';
-// V6.4: V6.1・V6.2・V6.3の合議 + 保守的期待値で買い目を絞る回収率重視エンジン
-import { runAndSavePredictionV64, verifyV64Prediction } from '../../shared/predictionServiceV64.js';
-// V6.5: 女子戦専用・的中率特化エンジン
-import { runAndSavePredictionV65, verifyV65Prediction } from '../../shared/predictionServiceV65.js';
+import { upsertRace, upsertEntry, dedupRace, dedupEntriesForRace, upsertResultOnly, upsertBoatcastResultAndVerify, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
 import { isWomensRace } from '../../shared/womensRace.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 // V7: 定期更新で展示を保存したレースも、FINAL予想の生成につなぐ
 import { runV7AutoGeneration } from '../../shared/v7AutoGeneration.js';
+import { runV8LiveGeneration } from '../../shared/v8LiveGeneration.js';
 import { selectLiveInputRaces, isSavedExhibitionComplete } from '../../shared/liveInputPriority.js';
 import { readV8Rows } from '../../shared/v8Repository.js';
 import { planRaceCardEntries } from '../../shared/raceCardEntryPlan.js';
@@ -403,7 +390,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
     try {
       const boatcastResult = await resolveRaceResult(race);
       if (boatcastResult.source === 'BOATCAST' && boatcastResult.result?.result_trifecta) {
-        await upsertBoatcastResultAndVerify(base44, race, boatcastResult);
+        await upsertBoatcastResultAndVerify(base44, race, boatcastResult, { verifyLegacy: false });
         fetched++;
         boatcastCount++;
         resultSaved = true;
@@ -426,7 +413,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
       result.race_number = raceNumber;
 
       try {
-        await upsertResultAndVerify(base44, race, {
+        await upsertResultOnly(base44, race, {
           result_trifecta: result.result_trifecta,
           finish_order: result.finish_order || [],
           payout: result.payout || 0,
@@ -484,378 +471,13 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
       }
     }
 
-    // V6.1はメインエンジン。既存エンジンの検証とは独立して実行する。
-    // BOATCAST/LOCALどちらで結果を保存した場合も、同じ結果で採点する。
-    if (resultSaved) {
-      try {
-        const savedResults = await sr.RaceResult.filter({ race_id: race.id }, '-finished_at', 1).catch(() => []);
-        const savedResult = savedResults?.[0];
-        if (savedResult?.result_trifecta) {
-          const v61Verified = await verifyV61Prediction(base44, race, {
-            result_trifecta: savedResult.result_trifecta,
-            payout: savedResult.payout || 0,
-          });
-          if (v61Verified) logs.push(`${venueName} R${raceNumber}: V6.1検証完了`);
-
-          const v62Verified = await verifyV62Prediction(base44, race, {
-            result_trifecta: savedResult.result_trifecta,
-            payout: savedResult.payout || 0,
-          });
-          if (v62Verified) logs.push(`${venueName} R${raceNumber}: V6.2検証完了`);
-
-          const v63Verified = await verifyV63Prediction(base44, race, {
-            result_trifecta: savedResult.result_trifecta,
-            payout: savedResult.payout || 0,
-          });
-          if (v63Verified) logs.push(`${venueName} R${raceNumber}: V6.3検証完了`);
-
-          const v64Verified = await verifyV64Prediction(base44, race, {
-            result_trifecta: savedResult.result_trifecta,
-            payout: savedResult.payout || 0,
-          });
-          if (v64Verified) logs.push(`${venueName} R${raceNumber}: V6.4検証完了`);
-
-          // V6.5は女子戦のみ。予想が無いレースでは何も作らない。
-          if (isWomensRace(race)) {
-            const v65Verified = await verifyV65Prediction(base44, race, {
-              result_trifecta: savedResult.result_trifecta,
-              payout: savedResult.payout || 0,
-            });
-            if (v65Verified) logs.push(`${venueName} R${raceNumber}: V6.5検証完了`);
-          }
-        }
-      } catch (e: any) {
-        errors.push(`${venueName} R${raceNumber}: V6.1検証失敗 ${e.message}`);
-      }
-    }
+    // V7/V8 settlement is handled by the shared all-race verification queue.
 
     await sleep(300);
   }
 
   logs.push(`結果取得: BOATCAST=${boatcastCount}R LOCAL=${localCount}R`);
   return { total: races.length, fetched, skipped, boatcast: boatcastCount, local: localCount, errors };
-}
-
-// =====================================================
-// 選手プロファイル・ローリング統計の取得
-// 全件(1000件超・十数MB)を毎回読み込むと関数のメモリ上限を超えるため、
-// 対象レースの6艇分だけを読む。
-// =====================================================
-async function loadRacerMaps(sr: any, entries: any[]) {
-  const regs = [...new Set(
-    (entries || [])
-      .map((e: any) => str(e.registration_number || e.register_number))
-      .filter((reg) => /^\d{4}$/.test(reg))
-  )];
-  if (!regs.length) return { profileByReg: new Map(), rollingByReg: new Map() };
-  const [profiles, rolling] = await Promise.all([
-    sr.RacerPerformanceProfile.filter({ registration_number: { $in: regs } }, '-updated_at', 50).catch(() => []),
-    sr.RacerRollingStats.filter({ registration_number: { $in: regs } }, '-calculated_at', 50).catch(() => []),
-  ]);
-  return {
-    profileByReg: new Map((profiles || []).map((p: any) => [String(p.registration_number), p])),
-    rollingByReg: new Map((rolling || []).map((r: any) => [String(r.registration_number), r])),
-  };
-}
-
-function isCompletePrePrediction(p: any) {
-  if (p?.stage !== 'PRE' || p?.status !== 'COMPLETED') return false;
-  const ticketCount = Number(p.ticket_count || 0);
-  const selected = Array.isArray(p.selected_trifectas) ? p.selected_trifectas : [];
-  const judgmentOk = ['BUY', 'WATCH', 'SKIP'].includes(String(p.final_judgment || ''));
-  return ticketCount >= 6 && ticketCount <= 8 && selected.length === ticketCount && judgmentOk;
-}
-
-// =====================================================
-// メインエンジン(V6.1/V6.2)のPRE予想を、対象日の全レースで欠落なく生成する。
-// 画面の「事前予想」が表示するのはV6.1/V6.2だけなので、
-// 時間のかかる旧エンジン(V1/V3/V3.1/V4)より先に必ず埋める。
-// =====================================================
-async function generateMainPrePredictions(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
-  const sr = base44.asServiceRole.entities;
-  const startTime = Date.now();
-  const settings = await getSettings(base44);
-
-  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
-  if (!races.length) return { total: 0, v61_generated: 0, v62_generated: 0, remaining: 0 };
-
-  const [v61Preds, v62Preds, v63Preds, v64Preds, v65Preds] = await Promise.all([
-    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.1', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
-    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.2', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
-    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.3', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
-    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.4', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
-    withRateLimitRetry(() => sr.PredictionV6.filter({ stage: 'PRE', prediction_version: 'v6.5', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 600), 3).catch(() => []),
-  ]);
-  const doneKeys = (rows: any[]) => new Set(
-    (rows || [])
-      .filter((p: any) => p.race_key && (p.status === 'COMPLETED' || !p.status))
-      .map((p: any) => String(p.race_key))
-  );
-  const v61Done = doneKeys(v61Preds);
-  const v62Done = doneKeys(v62Preds);
-  const v63Done = doneKeys(v63Preds);
-  const v64Done = doneKeys(v64Preds);
-  // V6.5は女子戦のみ対象。非女子戦はdone扱いにして余計な生成をしない。
-  const v65Done = doneKeys(v65Preds);
-
-  // 締切が残っているレースを優先し、終了済みレースで時間予算を使わない。
-  const priority = (r: any) => {
-    if (r.status === 'finished' || r.status === 'cancelled') return 2;
-    const ms = r.deadline ? new Date(r.deadline).getTime() : NaN;
-    return Number.isFinite(ms) && ms > Date.now() ? 0 : 1;
-  };
-  const pending = races
-    .filter((r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key))
-      || !v63Done.has(String(r.race_key)) || !v64Done.has(String(r.race_key))
-      || (isWomensRace(r) && !v65Done.has(String(r.race_key))))
-    .sort((a: any, b: any) => priority(a) - priority(b));
-
-  // 全レース分を限られた実行時間で埋めるため、4レースずつ並行して生成する。
-  // 書き込み競合はwithRateLimitRetryが吸収し、失敗したレースは次回実行で再試行する。
-  let v61Generated = 0, v62Generated = 0, v63Generated = 0, v64Generated = 0, v65Generated = 0;
-  const CONCURRENCY = 4;
-  for (let i = 0; i < pending.length; i += CONCURRENCY) {
-    if (Date.now() - startTime > timeBudgetMs - 3000) {
-      logs.push(`メインPRE(${raceDate}): 時間予算到達 — 残り${pending.length - i}Rは次回継続`);
-      break;
-    }
-    const chunk: any[] = pending.slice(i, i + CONCURRENCY);
-    await Promise.all(chunk.map(async (race: any) => {
-      try {
-        const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
-        if (entries.length < 6) return;
-        const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-        const raceKey = String(race.race_key);
-        if (!v61Done.has(raceKey)) {
-          await runAndSavePredictionV61(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-          v61Done.add(raceKey);
-          v61Generated++;
-        }
-        if (!v62Done.has(raceKey)) {
-          const savedV62 = await runAndSavePredictionV62(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-          if (savedV62?.skipped) {
-            errors.push(`V6.2 PRE ${race.venue_code} R${race.race_number}: ${savedV62.reason || 'skipped'}`);
-          } else {
-            v62Done.add(raceKey);
-            v62Generated++;
-          }
-        }
-        if (!v63Done.has(raceKey)) {
-          const savedV63 = await runAndSavePredictionV63(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-          if (savedV63?.skipped) {
-            errors.push(`V6.3 PRE ${race.venue_code} R${race.race_number}: ${savedV63.reason || 'skipped'}`);
-          } else {
-            v63Done.add(raceKey);
-            v63Generated++;
-          }
-        }
-        if (!v64Done.has(raceKey)) {
-          const savedV64 = await runAndSavePredictionV64(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-          if (savedV64?.skipped) {
-            errors.push(`V6.4 PRE ${race.venue_code} R${race.race_number}: ${savedV64.reason || 'skipped'}`);
-          } else {
-            v64Done.add(raceKey);
-            v64Generated++;
-          }
-        }
-        // V6.5(女子戦)は女子戦だけを対象にする
-        if (isWomensRace(race) && !v65Done.has(raceKey)) {
-          const savedV65 = await runAndSavePredictionV65(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-          if (savedV65?.skipped) {
-            errors.push(`V6.5 PRE ${race.venue_code} R${race.race_number}: ${savedV65.reason || 'skipped'}`);
-          } else {
-            v65Done.add(raceKey);
-            v65Generated++;
-          }
-        }
-      } catch (e: any) {
-        errors.push(`メインPRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
-      }
-    }));
-  }
-
-  // 「残り」は処理を試みた数ではなく、両エンジンとも保存できていない実レース数で数える。
-  // 一時的なレート制限などで取りこぼしたレースを次回実行へ確実に残すため。
-  const remaining = pending.filter(
-    (r: any) => !v61Done.has(String(r.race_key)) || !v62Done.has(String(r.race_key))
-      || !v63Done.has(String(r.race_key)) || !v64Done.has(String(r.race_key))
-      || (isWomensRace(r) && !v65Done.has(String(r.race_key)))
-  ).length;
-  logs.push(`メインPRE(${raceDate}): V6.1 ${v61Generated}R / V6.2 ${v62Generated}R / V6.3 ${v63Generated}R / V6.4 ${v64Generated}R / V6.5 ${v65Generated}R 生成 / 残り${remaining}R`);
-  return { total: races.length, v61_generated: v61Generated, v62_generated: v62Generated, v63_generated: v63Generated, v64_generated: v64Generated, v65_generated: v65Generated, remaining, errors };
-}
-
-// =====================================================
-// STEP 8: PRE予想生成
-// =====================================================
-async function generatePrePredictions(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
-  const sr = base44.asServiceRole.entities;
-  const startTime = Date.now();
-  const settings = await getSettings(base44);
-
-  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
-  // 対象日付のレース分だけ読む(全期間分・120通り付きを読むとメモリ上限を超える)
-  const existingPrePreds = await sr.RacePrediction.filter(
-    { stage: 'PRE', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300
-  ).catch(() => []);
-  const completePreKeys = new Set(
-    existingPrePreds.filter((p: any) => isCompletePrePrediction(p)).map((p: any) => String(p.race_key || ''))
-  );
-  // has_preフラグではなく、6〜8点・判定まで揃った実レコードを完成条件にする。
-  const pending = races.filter((r: any) => !completePreKeys.has(String(r.race_key || '')));
-  let generated = 0, skipped = races.length - pending.length, rateLimited = false;
-
-  // 1回の実行で最大5Rだけ生成する。
-  // runAndSavePrediction は1Rあたり複数Entityを書き込むため、短時間に大量実行するとBase44の429制限に達する。
-  // 30分周期の自動更新または手動ボタンで続きを安全に処理する。
-  const batch = pending.slice(0, 5);
-
-  for (const race of batch) {
-    if (Date.now() - startTime > timeBudgetMs - 5000) {
-      logs.push(`PRE予想: 時間予算到達 — 次回へ継続`);
-      break;
-    }
-
-    const entries = await withRateLimitRetry(
-      () => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6),
-      4
-    ).catch(() => []);
-    if (entries.length < 6) {
-      logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: 6艇未満のため保留`);
-      continue;
-    }
-
-    const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-
-    let success = false;
-    for (let attempt = 0; attempt < 3 && !success; attempt++) {
-      try {
-        await runAndSavePrediction(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-        success = true;
-        generated++;
-        logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: PRE予想生成`);
-      } catch (e: any) {
-        const msg = String(e?.message || e || '');
-        if (/rate\s*limit|too many requests|429/i.test(msg)) {
-          rateLimited = true;
-          const waitMs = 4000 * (attempt + 1);
-          logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: Rate limit — ${waitMs/1000}秒待機して再試行`);
-          await sleep(waitMs);
-          continue;
-        }
-        errors.push(`PRE予想 ${race.venue_code} R${race.race_number}: ${msg}`);
-        break;
-      }
-    }
-
-    if (!success && rateLimited) {
-      logs.push(`PRE予想: Rate limit保護のため今回の処理を停止。残りは次回継続`);
-      break;
-    }
-
-    // 1Rごとに十分な間隔を空ける
-    await sleep(1800);
-  }
-
-  const remaining = Math.max(0, pending.length - generated);
-  logs.push(`PRE予想: 今回${generated}R生成 / 残り${remaining}R`);
-
-  // =====================================================
-  // V3 PREギャップ埋め: V1 PRE済み(has_pre=true)だがV3 PRE未生成のRace
-  // runAndSavePredictionはV1済みRaceをスキップするため、
-  // V3のみ個別生成する。V1/V2は上書きしない。
-  // =====================================================
-  let v3Generated = 0;
-  const v3Pending = races.filter((r: any) => r.has_pre === true);
-  if (v3Pending.length > 0) {
-    const [v3Preds, v31Preds] = await Promise.all([
-      withRateLimitRetry(() => sr.PredictionV3.filter({ stage: 'PRE', prediction_version: 'v3', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []),
-      withRateLimitRetry(() => sr.PredictionV31.filter({ stage: 'PRE', prediction_version: 'v3.1', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []),
-    ]);
-    const v3DoneKeys = new Set<string>();
-    for (const p of v3Preds || []) {
-      if (p.race_key) v3DoneKeys.add(String(p.race_key));
-    }
-    const v31DoneKeys = new Set<string>();
-    for (const p of v31Preds || []) {
-      if (p.race_key && (p.status === 'COMPLETED' || !p.status)) v31DoneKeys.add(String(p.race_key));
-    }
-    // V3.1も独立して欠落判定。V3だけ存在してV3.1が待ちのレースを必ず補完する。
-    const v3Missing = v3Pending.filter((r: any) => !v3DoneKeys.has(String(r.race_key)) || !v31DoneKeys.has(String(r.race_key)));
-    const v3Batch = v3Missing.slice(0, 8);
-
-    for (const race of v3Batch) {
-      if (Date.now() - startTime > timeBudgetMs - 5000) {
-        logs.push(`V3 PRE: 時間予算到達 — 次回へ継続`);
-        break;
-      }
-      try {
-        const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
-        if (entries.length < 6) continue;
-        const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-        const raceKey = String(race.race_key);
-        if (!v3DoneKeys.has(raceKey)) {
-          await runAndSavePredictionV3(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-          v3DoneKeys.add(raceKey);
-        }
-        if (!v31DoneKeys.has(raceKey)) {
-          const v31 = await runAndSavePredictionV31(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-          if (v31?.skipped) throw new Error(`V3.1生成失敗: ${v31.reason || v31.error || 'unknown'}`);
-          v31DoneKeys.add(raceKey);
-        }
-        v3Generated++;
-        logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V3/V3.1 PRE補完`);
-      } catch (e: any) {
-        errors.push(`V3 PRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
-      }
-      await sleep(1500);
-    }
-    const v3Remaining = Math.max(0, v3Missing.length - v3Generated);
-    logs.push(`V3 PRE: 今回${v3Generated}R生成 / 残り${v3Remaining}R`);
-  }
-
-  // =====================================================
-  // V4 PREギャップ埋め: V4 PRE未生成のRaceを補完
-  // 出走表データが揃った時点で展示・オッズを待たずにV4 PREを生成
-  // =====================================================
-  let v4Generated = 0;
-  const v4Preds = await withRateLimitRetry(() => sr.PredictionV4.filter({ stage: 'PRE', prediction_version: 'v4', race_key: { $regex: `^${raceDate}` } }, '-computed_at', 300), 3).catch(() => []);
-  const v4DoneKeys = new Set<string>();
-  for (const p of v4Preds || []) {
-    if (p.race_key && String(p.race_key).startsWith(raceDate)) v4DoneKeys.add(String(p.race_key));
-  }
-  const v4Missing = races.filter((r: any) => !v4DoneKeys.has(String(r.race_key)));
-  const v4Batch = v4Missing.slice(0, 5);
-
-  for (const race of v4Batch) {
-    if (Date.now() - startTime > timeBudgetMs - 5000) {
-      logs.push(`V4 PRE: 時間予算到達 — 次回へ継続`);
-      break;
-    }
-    try {
-      const entries = await withRateLimitRetry(() => sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6), 4).catch(() => []);
-      if (entries.length < 6) continue;
-      const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-      await runAndSavePredictionV4(base44, race, entries, settings, 'PRE', {}, profileByReg, rollingByReg);
-      v4Generated++;
-      logs.push(`${race.venue_name || race.venue_code} R${race.race_number}: V4 PRE生成`);
-    } catch (e: any) {
-      errors.push(`V4 PRE ${race.venue_code} R${race.race_number}: ${e?.message || e}`);
-    }
-    await sleep(1500);
-  }
-  const v4Remaining = Math.max(0, v4Missing.length - v4Generated);
-  logs.push(`V4 PRE: 今回${v4Generated}R生成 / 残り${v4Remaining}R`);
-
-  // =====================================================
-  // メインエンジン(V6.1/V6.2)のPREギャップ埋め
-  // 画面の「事前予想」が表示するのはV6.1/V6.2だけなので、必ずここで全レース埋める
-  // =====================================================
-  const mainPre = await generateMainPrePredictions(
-    base44, raceDate, Math.max(3000, timeBudgetMs - (Date.now() - startTime)), logs, errors
-  );
-
-  return { total: races.length, generated, v3_generated: v3Generated, v4_generated: v4Generated, v61_generated: mainPre.v61_generated, v62_generated: mainPre.v62_generated, skipped, remaining, rate_limited: rateLimited, errors };
 }
 
 // =====================================================
@@ -1004,307 +626,6 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
 }
 
 // =====================================================
-// STEP 3: 3連単オッズ取得 + FINAL予想生成
-// 展示取得済みのレースについてオッズを取得し、FINAL予想を生成する。
-// =====================================================
-async function fetchAndSaveOddsAndFinal(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
-  const sr = base44.asServiceRole.entities;
-  const startTime = Date.now();
-  const settings = await getSettings(base44);
-
-  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
-  let oddsFetched = 0, finalGenerated = 0, v61FinalGenerated = 0, v62FinalGenerated = 0;
-
-  for (const race of races) {
-    if (Date.now() - startTime > timeBudgetMs) break;
-    if (race.status === 'finished' || race.status === 'cancelled') continue;
-    // 実オッズは展示未取得でも保存する。予想FINAL生成は後段で展示を必須とする。
-
-    // 表示用オッズは公式に出たら早めに取り込み、FINAL判定は締切5分前付近だけ行う。
-    // これにより「公式にはオッズが出ているのにアプリは—」を防ぎつつ、
-    // BUY/SKIPは直前オッズで確定する。
-    if (!race.deadline) continue;
-    const deadlineMs = new Date(race.deadline).getTime();
-    if (!Number.isFinite(deadlineMs)) continue;
-    const nowMs = Date.now();
-    // 締切直後の3分間も対象にする。5分周期の実行が1回抜けても、
-    // 結果確定(締切5分後)より前に直前予想を確定させ、取りこぼしを防ぐ。
-    const inDisplayOddsWindow = nowMs >= deadlineMs - 25 * 60 * 1000 && nowMs <= deadlineMs + 3 * 60 * 1000;
-    // ワーカーは5分間隔のため、-6〜-2分だけでは締切3分前まで生成されない場合がある。
-    // 10分前から対象にして、遅くとも5分前には表示し、次の実行で直前オッズへ更新する。
-    const inFinalWindow = nowMs >= deadlineMs - 10 * 60 * 1000 && nowMs <= deadlineMs + 3 * 60 * 1000;
-    if (!inDisplayOddsWindow) continue;
-    // 展示未取得レースのオッズは締切前のみ採用。後出し値で事前予想を飾らない。
-    if (race.exhibition_ready !== true && nowMs >= deadlineMs) continue;
-
-    const venueCode = race.venue_code;
-    const raceNumber = race.race_number;
-    const venueName = race.venue_name || race.venue || VENUE_MAP[venueCode] || venueCode;
-
-    const url = buildUrl('odds3t', raceDate, venueCode, raceNumber);
-    const res = await fetchHtml(url);
-    if (!res.ok) continue;
-
-    const oddsMap = parseOdds3t(res.html);
-    const oddsCount = Object.keys(oddsMap).length;
-    if (oddsCount < 100) continue; // オッズが十分でない場合はスキップ
-
-    // 同じオッズを5分ごとに120通り分書き直すと、アプリの1日あたりエンティティ書き込み
-    // 上限に達して自動更新そのものが止まる。直前取得値と同一なら書き込みを省略する。
-    const prevSnapshots = await sr.OddsSnapshot.filter(
-      { race_id: race.id, stage: 'FINAL' }, '-captured_at', 1
-    ).catch(() => []);
-    const prevOdds = prevSnapshots?.[0]?.odds_map || null;
-    const oddsChanged = !prevOdds || Object.entries(oddsMap).some(([k, v]) => Number(prevOdds[k]) !== Number(v));
-    const forceFinalRefresh = race.final_refresh_required === true;
-
-    if (oddsChanged) {
-      // その日最初に取得したオッズをEARLYとして1件だけ残す。
-      // 締切直前のFINALオッズと比べることで「直前にどちらへ動いたか」を判定できる。
-      try {
-        const earlyRows = await sr.OddsSnapshot.filter({ race_id: race.id, stage: 'EARLY' }, '-captured_at', 1);
-        if (!earlyRows?.length) {
-          await withRateLimitRetry(() => sr.OddsSnapshot.create({
-            race_id: race.id, stage: 'EARLY', odds_map: oddsMap,
-            captured_at: new Date().toISOString(), source: 'LOCAL',
-          }), 3);
-        }
-      } catch (e: any) {
-        errors.push(`${venueName} R${raceNumber}: EARLYオッズ保存 ${e.message}`);
-      }
-
-      // OddsSnapshot保存
-      // 1件の429で自動更新全体が失敗扱いにならないよう、リトライで吸収する。
-      await withRateLimitRetry(() => sr.OddsSnapshot.create({
-        race_id: race.id, stage: 'FINAL', odds_map: oddsMap,
-        captured_at: new Date().toISOString(), source: 'LOCAL',
-      }), 4).catch((e: any) => errors.push(`${venueName} R${raceNumber}: オッズ保存 ${e.message}`));
-      oddsFetched++;
-
-      // V6.1(PRE/FINAL)の120通りへも実オッズと期待値を反映する。
-      // これにより事前予想タブでも締切前の実オッズ・期待値が表示される。
-      // 予想確率自体は変更しない。
-      const oddsRows = await sr.PredictionV6.filter(
-        { race_id: race.id, prediction_version: { $in: ['v6.1', 'v6.3'] } }, '-computed_at', 8
-      ).catch(() => []);
-      for (const row of oddsRows || []) {
-        const tris = (row.trifectas || []).map((t: any) => {
-          const odds = oddsMap[t.combination] ?? null;
-          return {
-            ...t,
-            actual_odds: odds,
-            current_odds: odds,
-            expected_value: odds != null ? Math.round((t.probability || 0) * odds * 10) / 10 : (t.expected_value ?? null),
-          };
-        });
-        if (!tris.length) continue;
-        await sr.PredictionV6.update(row.id, {
-          trifectas: tris,
-          odds_source: 'LOCAL',
-          odds_fetched_at: new Date().toISOString(),
-          odds_combination_count: oddsCount,
-        }).catch(() => {});
-      }
-    }
-
-    // FINAL予想は締切10〜1分前に再計算する（5分周期でも5分前表示を保証）。
-    // オッズも展示も変化していない再実行では作り直さない（同じ結果を書き直さない）。
-    let needsFinal = race.exhibition_ready === true && inFinalWindow && (forceFinalRefresh || oddsChanged || !race.has_final);
-    if (race.exhibition_ready === true && inFinalWindow && !needsFinal) {
-      // V6.1/V6.2は画面の「直前予想」そのもの。どちらか欠けていれば作り直す。
-      const [v61Fin, v62Fin, v63Fin, v64Fin, v65Fin, ensembleFin] = await Promise.all([
-        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.1' }, '-computed_at', 1).catch(() => []),
-        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.2' }, '-computed_at', 1).catch(() => []),
-        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.3' }, '-computed_at', 1).catch(() => []),
-        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.4' }, '-computed_at', 1).catch(() => []),
-        sr.PredictionV6.filter({ race_id: race.id, stage: 'FINAL', prediction_version: 'v6.5' }, '-computed_at', 1).catch(() => []),
-        sr.PredictionEnsemble.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1).catch(() => []),
-      ]);
-      if (!v61Fin?.length || !v62Fin?.length || !v63Fin?.length || !v64Fin?.length
-          || (isWomensRace(race) && !v65Fin?.length) || !ensembleFin?.length) needsFinal = true;
-    }
-    if (needsFinal) {
-      const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
-      if (entries.length >= 6) {
-        const { profileByReg, rollingByReg } = await loadRacerMaps(sr, entries);
-
-        // 旧エンジン(V1/V2/V3/V3.1/V4)のFINALは書き込み量が非常に多く、これを先に実行すると
-        // レート制限でメインエンジン(V6.1/V6.2)の保存に失敗し、画面の「直前予想」が未生成になる。
-        // よってV6.1/V6.2と合成を先に確定させ、旧エンジンは後段で処理する。
-        let coreFinalOk = false;
-        let v61FinalOk = false;
-        let v62FinalOk = false;
-        let ensembleFinalOk = false;
-
-        // V6.1はメインエンジン。展示・直前オッズが揃った同じタイミングでFINALを生成する。
-        // 合成予想がV6.1を参照するため、必ず合成より先に生成する。
-        try {
-          let v61Result = await runAndSavePredictionV61(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          // 保存がレート制限などで失敗すると skipped で戻る。放置すると画面が「直前予想 未生成」の
-          // まま次の自動更新まで待つことになるため、少し待って一度だけ再試行する。
-          if (v61Result?.skipped) {
-            await sleep(2500);
-            v61Result = await runAndSavePredictionV61(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          }
-          if (v61Result?.skipped) {
-            errors.push(`${venueName} R${raceNumber}: V6.1 FINAL未生成(${v61Result.reason || 'unknown'})`);
-          } else {
-            v61FinalOk = true;
-            v61FinalGenerated++;
-            logs.push(`${venueName} R${raceNumber}: V6.1 FINAL予想生成 → ${v61Result?.result?.final_judgment || '判定保存'}`);
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: V6.1 FINAL予想失敗 ${e.message}`);
-        }
-
-        // V6.2: 回収率重視の発展エンジン。同じく展示・直前オッズが揃った時点でFINALを生成する。
-        try {
-          let v62Result = await runAndSavePredictionV62(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          // V6.1と同じく、保存失敗時は一度だけ再試行してから次回へ回す。
-          if (v62Result?.skipped) {
-            await sleep(2500);
-            v62Result = await runAndSavePredictionV62(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          }
-          if (v62Result?.skipped) {
-            errors.push(`${venueName} R${raceNumber}: V6.2 FINAL未生成(${v62Result.reason || 'unknown'})`);
-          } else {
-            v62FinalOk = true;
-            v62FinalGenerated++;
-            logs.push(`${venueName} R${raceNumber}: V6.2 FINAL予想生成 → ${v62Result?.result?.final_judgment || '判定保存'}`);
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: V6.2 FINAL予想失敗 ${e.message}`);
-        }
-
-        // V6.3: V4(的中率)・V6.2(期待値)・V5(展開)を統合した買い目。
-        try {
-          let v63Result = await runAndSavePredictionV63(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          if (v63Result?.skipped) {
-            await sleep(2500);
-            v63Result = await runAndSavePredictionV63(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          }
-          if (v63Result?.skipped) {
-            errors.push(`${venueName} R${raceNumber}: V6.3 FINAL未生成(${v63Result.reason || 'unknown'})`);
-          } else {
-            logs.push(`${venueName} R${raceNumber}: V6.3 FINAL予想生成 → ${v63Result?.result?.final_judgment || '判定保存'}`);
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: V6.3 FINAL予想失敗 ${e.message}`);
-        }
-
-        // V6.4: 3エンジンの合議で買い目を絞る回収率重視エンジン
-        try {
-          let v64Result = await runAndSavePredictionV64(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          if (v64Result?.skipped) {
-            await sleep(2500);
-            v64Result = await runAndSavePredictionV64(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-          }
-          if (v64Result?.skipped) {
-            errors.push(`${venueName} R${raceNumber}: V6.4 FINAL未生成(${v64Result.reason || 'unknown'})`);
-          } else {
-            logs.push(`${venueName} R${raceNumber}: V6.4 FINAL予想生成 → ${v64Result?.result?.final_judgment || '判定保存'}`);
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: V6.4 FINAL予想失敗 ${e.message}`);
-        }
-
-        // V6.5: 女子戦専用の的中率特化エンジン。女子戦のみ生成する。
-        if (isWomensRace(race)) {
-          try {
-            let v65Result = await runAndSavePredictionV65(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-            if (v65Result?.skipped && v65Result?.reason !== 'NOT_WOMENS_RACE') {
-              await sleep(2500);
-              v65Result = await runAndSavePredictionV65(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-            }
-            if (v65Result?.skipped) {
-              errors.push(`${venueName} R${raceNumber}: V6.5 FINAL未生成(${v65Result.reason || 'unknown'})`);
-            } else {
-              logs.push(`${venueName} R${raceNumber}: V6.5 FINAL予想生成 → ${v65Result?.result?.final_judgment || '判定保存'}`);
-            }
-          } catch (e: any) {
-            errors.push(`${venueName} R${raceNumber}: V6.5 FINAL予想失敗 ${e.message}`);
-          }
-        }
-
-        // V4・V3.1・V5展開・V6.1を合成した最終判断。画面と検証の主判定に使う。
-        try {
-          const ensembleResult = await runAndSaveEnsemble(base44, race, entries);
-          if (ensembleResult?.skipped) {
-            logs.push(`${venueName} R${raceNumber}: 合成FINALスキップ(${ensembleResult.reason || 'unknown'})`);
-          } else {
-            ensembleFinalOk = true;
-            logs.push(`${venueName} R${raceNumber}: 合成FINAL生成 → ${ensembleResult?.prediction?.final_judgment || '判定保存'}`);
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: 合成FINAL予想失敗 ${e.message}`);
-        }
-
-        // 旧エンジン(V1/V2/V3/V3.1/V4)のFINAL。120通りへ実オッズを反映し、FINAL予想を生成する。
-        // メインエンジンの保存を優先するため、V6.1/V6.2・合成の後に実行する。
-        const latestPreds = await sr.RacePrediction.filter({ race_id: race.id }, '-computed_at', 2).catch(() => []);
-        for (const pred of latestPreds) {
-          const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: pred.id }, 'rank', 120).catch(() => []);
-          const updates = trifectas.map((t: any) => {
-            const actualOdds = oddsMap[t.combination] || null;
-            const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
-            return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev };
-          });
-          if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates).catch(() => {});
-        }
-
-        try {
-          const finResult = await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg, forceFinalRefresh);
-          if (finResult?.skipped) {
-            logs.push(`${venueName} R${raceNumber}: FINALスキップ(${finResult.reason || 'exhibition_not_ready'})`);
-          } else {
-            const sub = finResult?.subversion_status || {};
-            coreFinalOk = !forceFinalRefresh || ['v2', 'v3', 'v31', 'v4'].every((key) => sub[key] === true);
-            finalGenerated++;
-            logs.push(`${venueName} R${raceNumber}: 旧エンジンV1〜V4 FINAL予想生成`);
-            if (forceFinalRefresh && !coreFinalOk) {
-              errors.push(`${venueName} R${raceNumber}: V2/V3/V3.1/V4の一部再計算失敗 ${JSON.stringify(finResult?.subversion_errors || {})}`);
-            }
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: FINAL予想失敗 ${e.message}`);
-        }
-
-        if (forceFinalRefresh) {
-          if (coreFinalOk && v61FinalOk && v62FinalOk && ensembleFinalOk) {
-            await sr.Race.update(race.id, {
-              final_refresh_required: false,
-              final_refresh_reason: '',
-              final_refreshed_at: new Date().toISOString(),
-            }).catch((e: any) => errors.push(`${venueName} R${raceNumber}: 再計算フラグ更新 ${e.message}`));
-            logs.push(`${venueName} R${raceNumber}: 展示変更をV1〜V6.2・合成FINALへ反映完了`);
-          } else {
-            logs.push(`${venueName} R${raceNumber}: 全FINAL再計算は未完了のため次回自動更新で再試行`);
-          }
-        }
-
-        // BOATCAST OD3で最終オッズ更新+期待値再計算(FINAL予想自体は変更しない)
-        try {
-          const refreshResult = await refreshFinalOdds(base44, race, settings);
-          if (refreshResult.refreshed) {
-            logs.push(`${venueName} R${raceNumber}: OD3更新(${refreshResult.source} age=${refreshResult.age_seconds}s integrity=${refreshResult.integrity?.status}) → ${refreshResult.final_judgment}`);
-          } else if (refreshResult.source) {
-            logs.push(`${venueName} R${raceNumber}: OD3更新スキップ(${refreshResult.reason})`);
-          }
-        } catch (e: any) {
-          errors.push(`${venueName} R${raceNumber}: OD3更新失敗 ${e.message}`);
-        }
-      }
-    } else {
-      logs.push(`${venueName} R${raceNumber}: 実オッズ${oddsCount}件を表示用に反映`);
-    }
-
-    await sleep(300);
-  }
-
-  return { total: races.length, odds_fetched: oddsFetched, final_generated: finalGenerated, v61_final_generated: v61FinalGenerated, v62_final_generated: v62FinalGenerated, errors };
-}
-
-// =====================================================
 // STEP 5: 完全性チェック
 // =====================================================
 async function checkCompleteness(base44: any, raceDate: string, logs: string[]) {
@@ -1329,7 +650,13 @@ async function checkCompleteness(base44: any, raceDate: string, logs: string[]) 
   }
 
   const finishedCount = races.filter((r: any) => raceIdsWithResult.has(r.id)).length;
-  const preCount = races.filter((r: any) => r.has_pre).length;
+  // V7/V8 no longer maintain the retired Race.has_pre flag.
+  // Count persisted V8 hypotheses so the admin status matches the current forecast store.
+  const savedPre = await readV8Rows(sr.V8RaceForecast,
+    {race_date: raceDate, stage: {$in: ['DAY_BEFORE', 'PRE']}},
+    {budget: Date.now() + 10000, maxPages: 12});
+  const raceIds = new Set(races.map((race: any) => race.id));
+  const preCount = new Set(savedPre.filter((row: any) => raceIds.has(row.race_id)).map((row: any) => row.race_id)).size;
 
   logs.push(`${raceDate}: ${venueSet.size}場/${races.length}R/艇${entries.length}/結果${finishedCount}/PRE${preCount}`);
   if (incompleteRaces.length) logs.push(`不足: ${incompleteRaces.slice(0, 10).join(', ')}${incompleteRaces.length > 10 ? ` ほか${incompleteRaces.length - 10}件` : ''}`);
@@ -1353,7 +680,7 @@ async function updateAutoUpdateStatus(base44: any, today: string, tomorrow: stri
     const todayStats = await checkCompleteness(base44, today, []);
     const tomorrowStats = await checkCompleteness(base44, tomorrow, []);
 
-    const status = result.errors?.length > 0 ? 'partial' : 'success';
+    const status = result.ok === false || result.errors?.length > 0 ? 'partial' : 'success';
     const doc: any = {
       name: 'default',
       target_date: today,
@@ -1492,23 +819,12 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
       : {saved:0,ready_keys:[]};
     steps.push(`live_odds: ${odds.saved}R`);
     const keys = [...new Set([...exhibition.ready_keys, ...odds.ready_keys])];
-    if (keys.length) {
-      try {
-        const v7 = await runV7AutoGeneration(base44, {race_date:today,race_keys:keys});
-        steps.push(`v7_final: ${Number(v7?.saved_final || 0)}R`);
-      } catch (e: any) { errors.push(`V7 FINAL生成: ${e?.message || e}`); }
-      // Capture the observed exhibition now; do not wait for the next five-minute job.
-      // The V8 writer still rechecks its own deadline and immutable-history guards.
-      try {
-        const response = await base44.functions.invoke('v8CaptureForecasts', {});
-        const v8 = response?.data;
-        if (!v8?.ok) throw new Error(v8?.error || 'V8保存応答を確認できません');
-        steps.push(`v8_final: ${Number(v8.final || 0)}R`);
-      } catch (e: any) { errors.push(`V8 展示後予想保存: ${e?.message || e}`); }
-    }
+    steps.push(`forecast_inputs_ready: ${keys.length}R`);
+    // The five-minute unified forecast workflow owns V7 -> V8 generation.
+    // This collector saves inputs only; independent generation also covers PRE and DAY_BEFORE.
   }
 
-  // Maintenance only uses time left after live inputs and current forecasts.
+  // Maintenance only uses time left after time-sensitive inputs.
   if (remaining() > 8000 && todayRaces.length && jstHour >= 8) {
     const r = await fetchAndSaveResults(base44, today, Math.min(15000, remaining()), logs, errors);
     steps.push(`today_results: ${r.fetched}R`);
@@ -1562,17 +878,24 @@ export default async function(req: Request) {
         result = await fetchAndSaveRaceCards(base44, tomorrow, TIME_BUDGET, logs, errors);
         break;
       case 'pre_predictions':
-        result = await generatePrePredictions(base44, body.race_date || today, TIME_BUDGET, logs, errors);
-        break;
       case 'main_pre':
-        result = await generateMainPrePredictions(base44, body.race_date || today, TIME_BUDGET, logs, errors);
+        // Existing admin actions now use the same V7/V8 engine as scheduled generation.
+        if (body.race_date && ![today, tomorrow].includes(body.race_date)) {
+          return Response.json({ok:false,error:'過去日の予想は全レース検証の再現処理を使用してください。'}, {status:400});
+        }
+        result = await runV8LiveGeneration(base44, {timeBudgetMs: TIME_BUDGET});
+        logs.push('V7/V8の事前・展示後予想を保存');
         break;
       case 'exhibition':
         result = await fetchAndSaveExhibition(base44, today, TIME_BUDGET, logs, errors);
         break;
-      case 'odds_final':
-        result = await fetchAndSaveOddsAndFinal(base44, today, TIME_BUDGET, logs, errors);
+      case 'odds_final': {
+        const started = Date.now();
+        const odds = await fetchLiveOdds(base44, today, 25000, logs, errors);
+        const forecasts = await runV8LiveGeneration(base44, {deadlineMs: started + TIME_BUDGET});
+        result = {odds_fetched: odds.saved, forecasts, ok: forecasts.ok};
         break;
+      }
       case 'completeness':
         const todayStats = await checkCompleteness(base44, today, logs);
         const tomorrowStats = await checkCompleteness(base44, tomorrow, logs);
@@ -1596,18 +919,26 @@ export default async function(req: Request) {
         break;
     }
 
+    // Carry phase failures into the admin status instead of reporting a partial run as success.
+    const phaseErrors = result?.errors || result?.forecasts?.errors || [];
+    if (Array.isArray(phaseErrors)) for (const item of phaseErrors) {
+      const message = typeof item === 'string' ? item : `${item?.phase || 'V7/V8'}: ${item?.reason || item?.error || '処理未完了'}`;
+      if (!errors.includes(message)) errors.push(message);
+    }
+    if (result?.ok === false && errors.length === 0) errors.push(result.error || 'V7/V8予想の一部が未完了です。');
+
     // ステータス更新
     await updateAutoUpdateStatus(base44, today, tomorrow, step, { ...result, errors });
 
     return Response.json({
-      ok: errors.length === 0,
+      ...result,
+      ok: result?.ok !== false && errors.length === 0,
       step,
       today,
       tomorrow,
       jst_time: nowJSTTime(),
       logs,
       errors,
-      ...result,
     });
   } catch (error: any) {
     // 失敗時もログを返し、どのステップで止まったかを追えるようにする。
