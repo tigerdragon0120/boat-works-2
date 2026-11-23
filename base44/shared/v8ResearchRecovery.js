@@ -11,6 +11,20 @@ const hasProof=(row,proof)=>proof.some(p=>p.evidence_type==='LIVE'&&p.result_id=
 const uniqueRows=rows=>[...groupBy(rows,'boat_number').values()].every(group=>group.length===1);
 const changed=(a,b)=>b!=null&&b!==''&&(a==null||a===''||String(a)!==String(b));
 const safeError=e=>String(e?.message||'INPUT_RECOVERY_FAILED').split('\n')[0].replace(/Bearer\s+\S+/gi,'Bearer [redacted]').replace(/[a-f0-9]{64,}/gi,'[redacted]').slice(0,160);
+const sourceUnavailable=(reason,response)=>{
+  const status=response?.status;
+  const message=String(response?.error?.message||response?.error||(status?`HTTP ${status}`:'FETCH_FAILED'))
+    .replace(/(https?:\/\/)[^/\s@]+@/gi,'$1[redacted]@')
+    .replace(/([?&][^=\s]+)=([^&\s)]+)/g,'$1=[redacted]')
+    .replace(/\b((?:api[_-]?key|access[_-]?token|token|secret|password)\s*[:=]\s*)[^\s,;]+/gi,'$1[redacted]');
+  return Object.assign(new Error(reason),{
+    source_http_status:Number.isInteger(status)&&(status===0||status>=100&&status<=599)?status:null,
+    source_error:safeError({message})
+  });
+};
+const recoveryFailure=(race,phase,error)=>({race_key:race.race_key,phase,reason:safeError(error),
+  ...(Object.prototype.hasOwnProperty.call(error||{},'source_http_status')
+    ?{source_http_status:error.source_http_status,source_error:error.source_error}:{})});
 
 export function selectResearchRecoveryWork({races,entriesByRace,resultsByRace,proofByRace,now=Date.now(),cursor=0,maxRaces=6}){
   const candidates=[];
@@ -55,7 +69,7 @@ export async function recoverRaceResearchInputs(client,{date,budgetMs=18000,max_
         const rows=entriesByRace.get(race.id)||[];
         if(!rows.length||!uniqueRows(rows))throw new Error('ENTRY_ROWS_MISSING_OR_AMBIGUOUS');
         const response=await fetchHtml(buildUrl('beforeinfo',date,race.venue_code,race.race_number),0,{timeoutMs:6000,deadlineMs:budget});
-        if(!response.ok)throw new Error('EXHIBITION_SOURCE_UNAVAILABLE');
+        if(!response.ok)throw sourceUnavailable('EXHIBITION_SOURCE_UNAVAILABLE',response);
         const parsed=parseBeforeInfo(response.html);
         if(!parsed.ok||!parsed.data?.entries?.length)throw new Error('EXHIBITION_NOT_PUBLISHED_OR_PARSE_FAILED');
         const byBoat=new Map(rows.map(row=>[Number(row.boat_number),row]));
@@ -81,12 +95,12 @@ export async function recoverRaceResearchInputs(client,{date,budgetMs=18000,max_
         if(complete)summary.exhibition_saved++;
         else summary.failures.push({race_key:race.race_key,phase:'EXHIBITION',reason:'EXHIBITION_INCOMPLETE'});
       }
-    }catch(error){summary.failures.push({race_key:race.race_key,phase:'EXHIBITION',reason:safeError(error)});}
+    }catch(error){summary.failures.push(recoveryFailure(race,'EXHIBITION',error));}
     // Result recovery is independent of a missing/failed exhibition. It never feeds a prediction.
     if(work.result&&Date.now()<budget-1000){
       try{
         const response=await fetchHtml(buildUrl('raceresult',date,race.venue_code,race.race_number),0,{timeoutMs:6000,deadlineMs:budget});
-        if(!response.ok)throw new Error('RESULT_SOURCE_UNAVAILABLE');
+        if(!response.ok)throw sourceUnavailable('RESULT_SOURCE_UNAVAILABLE',response);
         const fetchedAt=new Date().toISOString(),parsed=parseResult(response.html,date,race.venue_code,race.venue_name);
         const input=parsed.data?.venues?.[0]?.results?.[0];
         if(!parsed.ok||!isValidTrifecta(input?.result_trifecta)||!(Number(input.payout)>0))throw new Error('RESULT_NOT_PUBLISHED_OR_PARSE_FAILED');
@@ -118,7 +132,7 @@ export async function recoverRaceResearchInputs(client,{date,budgetMs=18000,max_
         }
         if(race.status!=='finished')await sr.Race.update(race.id,{status:'finished'});
         summary.result_saved++;
-      }catch(error){summary.failures.push({race_key:race.race_key,phase:'RESULT',reason:safeError(error)});}
+      }catch(error){summary.failures.push(recoveryFailure(race,'RESULT',error));}
     }
   }
   summary.next_cursor=chosen.total?(Math.max(0,Number(cursor)||0)+processed)%chosen.total:0;
