@@ -1,4 +1,5 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {useEffect, useState} from 'react';
+import {useCreditSavingRead} from '@/hooks/useCreditSavingRead';
 import {base44} from '@/api/base44Client';
 import {isReplay} from './v8StudyView';
 import {dashboardPollInterval} from './v8Polling';
@@ -67,52 +68,19 @@ export function displayDecision(forecast, now=Date.now(), race=null) {
     WAIT:{key:'WAIT',label:'情報待ち',tone:'slate'},
   }[status] || {key:'WAIT',label:'判定待ち',tone:'slate'};
 }
+async function readV8Dashboard(parameters) {
+  try {
+    const response=await base44.functions.invoke('v8ReadDashboard',parameters);
+    const data=response?.data;
+    if (!data || data.ok!==true || data.complete===false) throw new Error(data?.message || '必要な記録をすべて取得できませんでした。時間を置いて再読込してください。');
+    return data;
+  } catch (error) {
+    if(error?.response?.data?.diagnostic) console.warn('[V8 dashboard read]',JSON.stringify(error.response.data.diagnostic));
+    throw error;
+  }
+}
 export function useV8Dashboard(parameters, enabled=true) {
-  const serialized=JSON.stringify(parameters), sequence=useRef(0), alive=useRef(true);
-  const polling=useRef({data:null,error:null,requestedAt:0,inFlight:null});
-  const [state,setState]=useState({data:null,loading:enabled,error:null});
-  const refresh=useCallback(async()=>{
-    if (!enabled) return;
-    const request=++sequence.current;
-    polling.current={...polling.current,requestedAt:Date.now(),inFlight:request};
-    setState(old=>({...old,loading:true,error:null}));
-    try {
-      const response=await base44.functions.invoke('v8ReadDashboard',JSON.parse(serialized));
-      const data=response?.data;
-      if (!data || data.ok!==true || data.complete===false) throw new Error(data?.message || '必要な記録をすべて取得できませんでした。時間を置いて再読込してください。');
-      if (alive.current && request===sequence.current) {
-        polling.current={...polling.current,data,error:null};
-        setState({data,loading:false,error:null});
-      }
-      return data;
-    } catch (error) {
-      if(error?.response?.data?.diagnostic) console.warn('[V8 dashboard read]',JSON.stringify(error.response.data.diagnostic));
-      if (alive.current && request===sequence.current) {
-        polling.current={...polling.current,data:null,error:true};
-        setState({data:null,loading:false,error:error?.response?.data?.message || error?.message || '読込に失敗しました'});
-      }
-      return null;
-    } finally {
-      if (polling.current.inFlight===request) polling.current.inFlight=null;
-    }
-  },[serialized,enabled]);
-  useEffect(()=>{
-    alive.current=true;
-    polling.current={data:null,error:null,requestedAt:0,inFlight:null};
-    setState({data:null,loading:enabled,error:null});
-    if (!enabled) return;
-    void refresh();
-    const input=JSON.parse(serialized);
-    const poll=()=>{
-      const current=polling.current,now=Date.now();
-      if (document.hidden || current.inFlight!=null) return;
-      if (now-current.requestedAt>=dashboardPollInterval(input,current.data,current.error,now)) void refresh();
-    };
-    const timer=setInterval(poll,60000);
-    document.addEventListener('visibilitychange',poll);
-    return ()=>{alive.current=false; sequence.current++; clearInterval(timer); document.removeEventListener('visibilitychange',poll);};
-  },[refresh,enabled,serialized]);
-  return {...state,refresh};
+  return useCreditSavingRead({operation:'v8ReadDashboard',parameters,enabled,read:readV8Dashboard,interval:dashboardPollInterval});
 }
 export function useClock() {
   const [now,setNow]=useState(Date.now());

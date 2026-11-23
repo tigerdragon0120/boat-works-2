@@ -1,30 +1,22 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState } from "react";
+import { useCreditSavingRead } from "@/hooks/useCreditSavingRead";
 import { getAutoUpdateStatus, runAutoUpdateStep } from "@/lib/dataManagementService";
 import { RefreshCw, Calendar, CheckCircle2, AlertTriangle, Loader2, Clock, Zap, Download, Flag, BarChart3, CloudDownload } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+async function readAutoUpdateStatus() {
+  const response = await getAutoUpdateStatus();
+  return response.data;
+}
+
 export default function AutoUpdateSection() {
-  const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null);
   const [result, setResult] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await getAutoUpdateStatus();
-      setStatus(r.data);
-    } catch (e) {
-      setStatus(null);
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
-  }, [load]);
+  const { data: status, loading, refresh: load } = useCreditSavingRead({
+    operation: 'getAutoUpdateStatusV2',
+    read: readAutoUpdateStatus,
+    interval: busy ? 30000 : 300000,
+  });
 
   const handleStep = async (step) => {
     setBusy(step);
@@ -32,7 +24,7 @@ export default function AutoUpdateSection() {
     try {
       const r = await runAutoUpdateStep(step);
       setResult(r.data);
-      setTimeout(load, 2000);
+      await load(); // Refresh after completion; supersede any pre-operation read.
     } catch (e) {
       setResult({ ok: false, error: e?.response?.data?.error || e.message });
     }
@@ -74,7 +66,7 @@ export default function AutoUpdateSection() {
       <div className="flex items-center gap-2">
         <RefreshCw className="w-5 h-5 text-sky-600" />
         <h2 className="text-lg font-bold text-slate-900">自動データ更新</h2>
-        <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-bold">30分毎自動実行</span>
+        <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-bold">5分毎自動収集</span>
       </div>
       <p className="text-xs text-slate-500">boatrace.jp公式サイトから毎日自動取得。番組表・結果・展示・PRE予想を自動処理。AI不使用・決定論的解析。</p>
 
