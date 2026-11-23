@@ -134,6 +134,7 @@ test('absent dataset preserves the original prediction input exactly',()=>{
 // Only platform/network dependencies are replaced; no production mutations occur.
 const withoutImports = source => source.replace(/^import .*;\r?\n/gm,'');
 const autoSource=withoutImports(readFileSync(new URL('../base44/shared/v7AutoGeneration.js',import.meta.url),'utf8')).replace('export async function','async function');
+const captureRunnerSource=withoutImports(readFileSync(new URL('../base44/shared/v8LiveCapture.js',import.meta.url),'utf8')).replace('export async function','async function');
 const captureSource=stripTypeScriptTypes(withoutImports(readFileSync(new URL('../base44/functions/v8CaptureForecasts/entry.ts',import.meta.url),'utf8')))
   .replace('export default async function','return async function');
 function fakePlatform({shown=false}={}) {
@@ -162,7 +163,7 @@ function v8Handler(state,load) {
   const dependencies={createClientFromRequest:()=>state.client,acquireLock:async()=> 'lock',releaseLock:async()=>{},selectV7RaceEntries,utcMs,
     buildRaceForecast,FORECAST_REVISION,jstDate,readV8Rows:async(entity,query)=>entity.filter(query),groupBy,chronological,canonicalForecasts,
     loadLatestRacerDataset:load,enrichLatestRacerEntries};
-  return new Function(...Object.keys(dependencies),captureSource)(...Object.values(dependencies));
+  return new Function(...Object.keys(dependencies),captureRunnerSource+'\n'+captureSource)(...Object.values(dependencies));
 }
 test('V7 scheduled generation reads once, stores real term provenance, and never updates an existing prediction',async t=>{
   t.mock.timers.enable({apis:['Date'],now:Date.parse(NOW)});const state=fakePlatform();let reads=0,current=dataset();

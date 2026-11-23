@@ -26,15 +26,13 @@ const completeRows = () => Array.from({ length: 6 }, (_, i) => ({
   exhibition_st_raw: .1 + i * .01, exhibition_course: i + 1,
 }));
 
-function setupAuto(t, { failV7 = false } = {}) {
+function setupAuto(t, { spendBudgets = false } = {}) {
   t.mock.timers.enable({ apis: ['Date'], now: NOW });
-  const calls = [], logs = [], errors = [], row = makeRace();
+  const calls = [], budgets = [], logs = [], errors = [], row = makeRace();
+  const spend = (name, budget) => { budgets.push([name, budget]); if (spendBudgets) t.mock.timers.tick(budget); };
   const client = {
     asServiceRole: { entities: { Race: { filter: async () => [row] } } },
-    functions: { invoke: async (name, body) => {
-      calls.push('v8'); assert.equal(name, 'v8CaptureForecasts'); assert.deepEqual(body, {});
-      return { data: { ok: true, final: 1 } };
-    } },
+    functions: { invoke: async () => { calls.push('unexpected-backend-invoke'); throw new Error('AUTO must leave generation to the unified forecast workflow'); } },
   };
   const legacy = () => { calls.push('legacy'); throw new Error('Legacy prediction must not run in AUTO'); };
   const run = bindFunction('autoUpdate', {
@@ -42,39 +40,52 @@ function setupAuto(t, { failV7 = false } = {}) {
     fetchAndSaveExhibition: async (_client, date, budget, _logs, _errors, options) => {
       calls.push('exhibition'); assert.equal(date, TODAY); assert.equal(budget, 30000);
       assert.deepEqual(options, { liveOnly: true, deferV7: true });
+      spend('exhibition', budget);
       return { fetched: 1, ready_keys: [row.race_key] };
     },
     fetchLiveOdds: async (_client, date, budget) => {
       calls.push('odds'); assert.equal(date, TODAY); assert.equal(budget, 18000);
+      spend('odds', budget);
       return { saved: 1, ready_keys: [row.race_key] };
     },
-    runV7AutoGeneration: async (_client, options) => {
-      calls.push('v7'); assert.deepEqual(options, { race_date: TODAY, race_keys: [row.race_key] });
-      if (failV7) throw new Error('V7 temporarily unavailable');
-      return { saved_final: 1 };
+    runV7AutoGeneration: async () => {
+      calls.push('unexpected-v7'); throw new Error('AUTO must not duplicate unified V7 generation');
     },
-    fetchAndSaveResults: async () => { calls.push('results'); return { fetched: 1 }; },
-    fetchAndSaveRaceCards: async (_client, date) => { calls.push('cards:' + date); return { races: 0, entries: 0 }; },
+    runV8LiveGeneration: async () => {
+      calls.push('unexpected-unified-generation'); throw new Error('AUTO must not duplicate the unified workflow');
+    },
+    fetchAndSaveResults: async (_client, date, budget) => {
+      calls.push('results'); assert.equal(date, TODAY); spend('results', budget); return { fetched: 1 };
+    },
+    fetchAndSaveRaceCards: async (_client, date, budget) => {
+      calls.push('cards:' + date); spend('cards:' + date, budget); return { races: 0, entries: 0 };
+    },
     generateMainPrePredictions: legacy, generatePrePredictions: legacy,
     fetchAndSaveOddsAndFinal: legacy, runAndSavePrediction: legacy,
   });
-  return { run: () => run(client, TODAY, TOMORROW, 80000, logs, errors), calls, errors };
+  return { run: () => run(client, TODAY, TOMORROW, 80000, logs, errors), calls, budgets, errors };
 }
 
-test('AUTO performs exhibition, prices, V7 and V8 before maintenance without legacy prediction work', async t => {
+test('AUTO saves exhibition and prices before maintenance without duplicating V7, V8 or legacy generation', async t => {
   const state = setupAuto(t);
   const result = await state.run();
-  assert.deepEqual(state.calls, ['exhibition', 'odds', 'v7', 'v8', 'results', 'cards:' + TODAY, 'cards:' + TOMORROW]);
+  assert.deepEqual(state.calls, ['exhibition', 'odds', 'results', 'cards:' + TODAY, 'cards:' + TOMORROW]);
   assert.deepEqual(state.errors, []);
-  assert.ok(result.steps.includes('v8_final: 1R'));
+  assert.ok(result.steps.includes('forecast_inputs_ready: 1R'), 'the same race from exhibition and odds is counted once');
+  assert.ok(result.steps.includes('exhibition: 1R'));
+  assert.ok(result.steps.includes('live_odds: 1R'));
+  assert.deepEqual(state.budgets, [['exhibition', 30000], ['odds', 18000], ['results', 15000], ['cards:' + TODAY, 20000], ['cards:' + TOMORROW, 80000]]);
 });
 
-test('a V7 generation exception still permits V8 to capture the observed exhibition', async t => {
-  const state = setupAuto(t, { failV7: true });
-  await state.run();
-  assert.deepEqual(state.calls.slice(0, 4), ['exhibition', 'odds', 'v7', 'v8']);
-  assert.equal(state.errors.length, 1);
-  assert.match(state.errors[0], /V7 temporarily unavailable/);
+test('AUTO preserves live-input budgets and uses only remaining time for cards before stopping', async t => {
+  const state = setupAuto(t, { spendBudgets: true });
+  const result = await state.run();
+  assert.deepEqual(state.calls, ['exhibition', 'odds', 'results', 'cards:' + TODAY]);
+  assert.deepEqual(state.budgets, [['exhibition', 30000], ['odds', 18000], ['results', 15000], ['cards:' + TODAY, 17000]]);
+  assert.equal(Date.now() - NOW, 80000);
+  assert.ok(result.steps.includes('forecast_inputs_ready: 1R'));
+  assert.equal(result.steps.some(step => step.startsWith('tomorrow_card:')), false);
+  assert.deepEqual(state.errors, []);
 });
 
 function setupExhibition(t, { failedBoat = null, alreadyComplete = true } = {}) {
