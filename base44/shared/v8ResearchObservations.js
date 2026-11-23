@@ -49,6 +49,7 @@ export async function runV8ResearchObservations(client,options={},dependencies={
     await Promise.all(['factors','theories','shadow'].map(name=>runPhase(name,deadlineMs)));
     report.ok=Object.values(report.phases).every(phase=>phase.ok===true);
     report.complete=report.ok&&Object.values(report.phases).every(phase=>!phase.budget_exhausted&&!phase.skipped);
+    console.info('[V8_RESEARCH_BATCH]',JSON.stringify(report));
     return {...report,status:report.complete?'COMPLETE':'PARTIAL',elapsed_ms:Date.now()-started,completed_at:new Date().toISOString()};
   }finally{
     if(lock)await releaseLock(client,lock).catch(()=>{});

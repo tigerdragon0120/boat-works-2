@@ -20,13 +20,13 @@ export async function runV7FactorCandidates(client, options = {}) {
     if(!dryRun&&!lock)return Response.json({...report,skipped:"locked"});
     const budget=Math.min(Date.now()+24000,stopAt);
     const [featurePage,existingPage]=await Promise.all([
-      fetchAllPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o),{race_date:day},
+      fetchAllPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V7FeatureSnapshot',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:day},
         {pageSize:200,maxPages:10,deadlineMs:budget}),
-      fetchAllPaged((q    ,o    )=>sr.V7FactorCandidate.filter(q,o),{race_date:day},
+      fetchAllPaged((q    ,o    )=>sr.V7FactorCandidate.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V7FactorCandidate',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:day},
         {pageSize:200,maxPages:10,deadlineMs:budget})
     ]);
     if(!featurePage.complete||!existingPage.complete){
-      return Response.json({ok:false,error:"PAGED_SOURCE_INCOMPLETE"},{status:503});
+      return Response.json({ok:false,error:"PAGED_SOURCE_INCOMPLETE",diagnostic:{features:{error:featurePage.error,page:featurePage.page,rows:featurePage.rows.length},existing:{error:existingPage.error,page:existingPage.page,rows:existingPage.rows.length}}},{status:503});
     }
     const existing=new Set(existingPage.rows.map(x=>x.candidate_key));
     const ordered=[...featurePage.rows].sort((a,b)=>{
