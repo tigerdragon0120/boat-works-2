@@ -75,3 +75,5 @@ export default async function(req:Request):Promise<Response>{
   const body=await req.json().catch(()=>({}));
   return Response.json(await runV8CompleteRaceResearch(client,{race_date:body.race_date}));
 }
+
+// Input source diagnostics revision: 2026-11-24.
