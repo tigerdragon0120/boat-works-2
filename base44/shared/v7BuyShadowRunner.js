@@ -2,7 +2,7 @@
 // 参照: Race / PredictionV7 FINAL / OddsSnapshot FINAL。書込: V7BuyShadowTrialへの初回追加のみ。
 // 判定時点のデータを固定し、後日取得したオッズでBUYを遡及生成しない。
 import { acquireLock, releaseLock } from "./concurrencyLock.js";
-import { fetchAllPaged } from "./pagedFetch.js";
+import { readResearchPaged } from "./v8ResearchRead.js";
 import { utcMs as validTime } from "./v7FeatureObservation.js";
 
 const RULE = "V7_IN5_C95_ODDS8_60S_V1";
@@ -33,12 +33,12 @@ export async function runV7BuyShadowTrial(client, options = {}) {
     lock=dryRun?null:await acquireLock(client,"V7_BUY_SHADOW_"+day,"v7BuyShadowTrial",120000);
     if(!dryRun&&!lock)return Response.json({...report,skipped:"locked"});
     const [racesPage, predictionsPage] = await Promise.all([
-      fetchAllPaged(
+      readResearchPaged(
         (query     , options     ) => sr.Race.filter(query, options),
         { race_date: day },
         { sort: "-deadline", pageSize: 200, maxPages: 5, deadlineMs: Math.min(Date.now() + 20000, stopAt) }
       ),
-      fetchAllPaged(
+      readResearchPaged(
         (query     , options     ) => sr.PredictionV7.filter(query, options),
         { race_date: day, stage: "FINAL" },
         { sort: "-generated_at", pageSize: 200, maxPages: 8, deadlineMs: Math.min(Date.now() + 20000, stopAt) }

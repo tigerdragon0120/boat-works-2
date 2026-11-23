@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runV8ResearchObservations,createV8ResearchObservationsHandler} from '../base44/shared/v8ResearchObservations.js';
 import {runV7BuyShadowTrial} from '../base44/shared/v7BuyShadowRunner.js';
+import {runV7CaptureFeatures} from '../base44/shared/v7FeatureCaptureRunner.js';
+import {runV8TheoryTrials} from '../base44/shared/v8TheoryTrialRunner.js';
 
 const NOW=Date.parse('2026-11-23T05:00:00Z');
 const at=offset=>new Date(NOW+offset).toISOString();
@@ -157,4 +159,52 @@ test('all supported timestamp formats enforce the original shadow window and cut
     assert.equal(rows.V7BuyShadowTrial[0].decision,'UNDETERMINED');
     assert.equal(rows.V7BuyShadowTrial[0].reason,'PREDICTION_TIME_INVALID');
   }
+});
+
+test('actual theory runner recovers a transient 429 without changing or duplicating records',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:NOW});
+  const {client,rows}=fixture();
+  await runV7CaptureFeatures(client);
+  const entity=client.asServiceRole.entities.V8TheoryTrial,original=entity.filter;
+  let attempts=0;
+  entity.filter=async(...args)=>{
+    if(++attempts===1)throw Object.assign(new Error('temporary upstream rejection'),{response:{status:429}});
+    return original(...args);
+  };
+  const response=await runV8TheoryTrials(client,{deadlineMs:NOW+5000});
+  assert.equal(response.status,200);assert.equal(attempts,2);
+  assert.equal(rows.V8TheoryTrial.length,2);
+  await runV8TheoryTrials(client,{deadlineMs:NOW+5000});
+  assert.equal(rows.V8TheoryTrial.length,2);
+});
+
+test('actual theory runner rejects permanent errors and malformed pages without retry or write',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:NOW});
+  for(const kind of ['forbidden','array']){
+    const {client,rows}=fixture();await runV7CaptureFeatures(client);
+    let attempts=0;
+    client.asServiceRole.entities.V8TheoryTrial.filter=async()=>{
+      attempts++;
+      if(kind==='forbidden')throw Object.assign(new Error('private response body'),{response:{status:403}});
+      return [];
+    };
+    const response=await runV8TheoryTrials(client,{deadlineMs:NOW+5000}),body=await response.json();
+    assert.equal(response.status,503);assert.equal(attempts,1);assert.equal(rows.V8TheoryTrial.length,0);
+    assert.equal(body.error,'PAGED_SOURCE_INCOMPLETE');
+    assert.equal(body.diagnostic.existing.error,kind==='array'?'page_format_invalid':'page_read_failed_or_timed_out');
+    assert.equal(body.diagnostic.existing.http_status,kind==='forbidden'?403:null);
+    assert.equal(JSON.stringify(body).includes('private'),false);
+  }
+});
+
+test('research retry cannot extend its cooperative deadline',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:NOW});
+  const {client,rows}=fixture();await runV7CaptureFeatures(client);
+  let attempts=0;
+  client.asServiceRole.entities.V8TheoryTrial.filter=async()=>{
+    attempts++;throw Object.assign(new Error('retry later'),{response:{status:429,headers:{'retry-after':'1'}}});
+  };
+  const response=await runV8TheoryTrials(client,{deadlineMs:NOW+100}),body=await response.json();
+  assert.equal(response.status,503);assert.equal(attempts,1);assert.equal(rows.V8TheoryTrial.length,0);
+  assert.equal(body.diagnostic.existing.error,'retry_budget_exhausted');
 });

@@ -1,6 +1,6 @@
 // Append-only V8 model comparison. Reads only immutable pre-deadline V7FeatureSnapshot.
 import {acquireLock,releaseLock} from './concurrencyLock.js';
-import {fetchAllPaged} from './pagedFetch.js';
+import {readResearchPaged} from './v8ResearchRead.js';
 import {buildTheoryTrial,THEORY_REVISION} from './v8TheoryTrial.js';
 import {utcMs} from './v7FeatureObservation.js';
 const today=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
@@ -15,10 +15,10 @@ export async function runV8TheoryTrials(client, options = {}) {
   if(!dryRun&&!lock)return Response.json({...summary,skipped:'locked'});
   const budget=Math.min(Date.now()+26000,stopAt);
   const [features,existing]=await Promise.all([
-   fetchAllPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V7FeatureSnapshot',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:date},{pageSize:200,maxPages:10,deadlineMs:budget}),
-   fetchAllPaged((q    ,o    )=>sr.V8TheoryTrial.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V8TheoryTrial',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:date},{pageSize:200,maxPages:10,deadlineMs:budget})
+   readResearchPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V7FeatureSnapshot',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:date},{pageSize:200,maxPages:10,deadlineMs:budget}),
+   readResearchPaged((q    ,o    )=>sr.V8TheoryTrial.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V8TheoryTrial',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:date},{pageSize:200,maxPages:10,deadlineMs:budget})
   ]);
-  if(!features.complete||!existing.complete)return Response.json({ok:false,error:'PAGED_SOURCE_INCOMPLETE',diagnostic:{features:{error:features.error,page:features.page,rows:features.rows.length},existing:{error:existing.error,page:existing.page,rows:existing.rows.length}}},{status:503});
+  if(!features.complete||!existing.complete)return Response.json({ok:false,error:'PAGED_SOURCE_INCOMPLETE',diagnostic:{features:{error:features.error,page:features.page,rows:features.rows.length,http_status:features.http_status},existing:{error:existing.error,page:existing.page,rows:existing.rows.length,http_status:existing.http_status}}},{status:503});
   const keys=new Set(existing.rows.map(r=>r.trial_key));
   const ready=features.rows.filter(s=>s?.id&&s?.race_key)
     .sort((a,b)=>utcMs(a.deadline)-utcMs(b.deadline));

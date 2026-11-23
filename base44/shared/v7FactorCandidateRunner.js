@@ -1,7 +1,7 @@
 // V7+ factor candidates: independent, append-only prospective research.
 // Never overwrite V7 predictions, BUY judgments, result records or any input snapshots.
 import { acquireLock, releaseLock } from "./concurrencyLock.js";
-import { fetchAllPaged } from "./pagedFetch.js";
+import { readResearchPaged } from "./v8ResearchRead.js";
 import { buildFactorCandidate,FACTOR_REVISION } from "./v7FactorCandidate.js";
 import { utcMs } from "./v7FeatureObservation.js";
 
@@ -20,13 +20,13 @@ export async function runV7FactorCandidates(client, options = {}) {
     if(!dryRun&&!lock)return Response.json({...report,skipped:"locked"});
     const budget=Math.min(Date.now()+24000,stopAt);
     const [featurePage,existingPage]=await Promise.all([
-      fetchAllPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V7FeatureSnapshot',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:day},
+      readResearchPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V7FeatureSnapshot',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:day},
         {pageSize:200,maxPages:10,deadlineMs:budget}),
-      fetchAllPaged((q    ,o    )=>sr.V7FactorCandidate.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V7FactorCandidate',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:day},
+      readResearchPaged((q    ,o    )=>sr.V7FactorCandidate.filter(q,o).catch(error=>{console.warn('[V8_RESEARCH_READ] V7FactorCandidate',Number(error?.response?.status||error?.http_status||error?.status)||null);throw error;}),{race_date:day},
         {pageSize:200,maxPages:10,deadlineMs:budget})
     ]);
     if(!featurePage.complete||!existingPage.complete){
-      return Response.json({ok:false,error:"PAGED_SOURCE_INCOMPLETE",diagnostic:{features:{error:featurePage.error,page:featurePage.page,rows:featurePage.rows.length},existing:{error:existingPage.error,page:existingPage.page,rows:existingPage.rows.length}}},{status:503});
+      return Response.json({ok:false,error:"PAGED_SOURCE_INCOMPLETE",diagnostic:{features:{error:featurePage.error,page:featurePage.page,rows:featurePage.rows.length,http_status:featurePage.http_status},existing:{error:existingPage.error,page:existingPage.page,rows:existingPage.rows.length,http_status:existingPage.http_status}}},{status:503});
     }
     const existing=new Set(existingPage.rows.map(x=>x.candidate_key));
     const ordered=[...featurePage.rows].sort((a,b)=>{

@@ -2,7 +2,7 @@
 // Reads Race/RaceEntry/PredictionV7/OddsSnapshot and writes ONLY V7FeatureSnapshot.
 // In-flight and after-race backfills cannot create prediction-time observations.
 import { acquireLock, releaseLock } from "./concurrencyLock.js";
-import { fetchAllPaged } from "./pagedFetch.js";
+import { readResearchPaged } from "./v8ResearchRead.js";
 import { buildV7FeatureObservation, FEATURE_REVISION, utcMs } from "./v7FeatureObservation.js";
 
 const MAX_NEW_PER_RUN=24;
@@ -36,9 +36,9 @@ export async function runV7CaptureFeatures(client, options = {}) {
     if(!dryRun&&!lockId)return Response.json({...summary,skipped:"locked"});
     const budget=Math.min(Date.now()+35000,stopAt);
     const [racePage,predPage,savedPage]=await Promise.all([
-      fetchAllPaged((q    ,o    )=>sr.Race.filter(q,o),{race_date:day},{pageSize:200,maxPages:3,deadlineMs:budget}),
-      fetchAllPaged((q    ,o    )=>sr.PredictionV7.filter(q,o),{race_date:day},{pageSize:200,maxPages:4,deadlineMs:budget}),
-      fetchAllPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o),{race_date:day},{pageSize:200,maxPages:7,deadlineMs:budget}),
+      readResearchPaged((q    ,o    )=>sr.Race.filter(q,o),{race_date:day},{pageSize:200,maxPages:3,deadlineMs:budget}),
+      readResearchPaged((q    ,o    )=>sr.PredictionV7.filter(q,o),{race_date:day},{pageSize:200,maxPages:4,deadlineMs:budget}),
+      readResearchPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o),{race_date:day},{pageSize:200,maxPages:7,deadlineMs:budget}),
     ]);
     if(!racePage.complete||!predPage.complete||!savedPage.complete){
       return Response.json({ok:false,error:"INPUT_READ_INCOMPLETE",races:racePage.error||null,
