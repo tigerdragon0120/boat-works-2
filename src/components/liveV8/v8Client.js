@@ -1,6 +1,7 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {base44} from '@/api/base44Client';
 import {isReplay} from './v8StudyView';
+import {dashboardPollInterval} from './v8Polling';
 
 export const STAGES = {DAY_BEFORE:'前日', PRE:'当日・展示前', FINAL:'展示後'};
 export const VENUES = ['','桐生','戸田','江戸川','平和島','多摩川','浜名湖','蒲郡','常滑','津','三国','びわこ','住之江','尼崎','鳴門','丸亀','児島','宮島','徳山','下関','若松','芦屋','福岡','唐津','大村'];
@@ -68,31 +69,49 @@ export function displayDecision(forecast, now=Date.now(), race=null) {
 }
 export function useV8Dashboard(parameters, enabled=true) {
   const serialized=JSON.stringify(parameters), sequence=useRef(0), alive=useRef(true);
+  const polling=useRef({data:null,error:null,requestedAt:0,inFlight:null});
   const [state,setState]=useState({data:null,loading:enabled,error:null});
   const refresh=useCallback(async()=>{
     if (!enabled) return;
     const request=++sequence.current;
+    polling.current={...polling.current,requestedAt:Date.now(),inFlight:request};
     setState(old=>({...old,loading:true,error:null}));
     try {
       const response=await base44.functions.invoke('v8ReadDashboard',JSON.parse(serialized));
       const data=response?.data;
       if (!data || data.ok!==true || data.complete===false) throw new Error(data?.message || '必要な記録をすべて取得できませんでした。時間を置いて再読込してください。');
-      if (alive.current && request===sequence.current) setState({data,loading:false,error:null});
+      if (alive.current && request===sequence.current) {
+        polling.current={...polling.current,data,error:null};
+        setState({data,loading:false,error:null});
+      }
       return data;
     } catch (error) {
       if(error?.response?.data?.diagnostic) console.warn('[V8 dashboard read]',JSON.stringify(error.response.data.diagnostic));
-      if (alive.current && request===sequence.current) setState({data:null,loading:false,error:error?.response?.data?.message || error?.message || '読込に失敗しました'});
+      if (alive.current && request===sequence.current) {
+        polling.current={...polling.current,data:null,error:true};
+        setState({data:null,loading:false,error:error?.response?.data?.message || error?.message || '読込に失敗しました'});
+      }
       return null;
+    } finally {
+      if (polling.current.inFlight===request) polling.current.inFlight=null;
     }
   },[serialized,enabled]);
   useEffect(()=>{
     alive.current=true;
+    polling.current={data:null,error:null,requestedAt:0,inFlight:null};
     setState({data:null,loading:enabled,error:null});
     if (!enabled) return;
     void refresh();
-    const timer=setInterval(()=>{if(!document.hidden) void refresh();},60000);
-    return ()=>{alive.current=false; sequence.current++; clearInterval(timer);};
-  },[refresh,enabled]);
+    const input=JSON.parse(serialized);
+    const poll=()=>{
+      const current=polling.current,now=Date.now();
+      if (document.hidden || current.inFlight!=null) return;
+      if (now-current.requestedAt>=dashboardPollInterval(input,current.data,current.error,now)) void refresh();
+    };
+    const timer=setInterval(poll,60000);
+    document.addEventListener('visibilitychange',poll);
+    return ()=>{alive.current=false; sequence.current++; clearInterval(timer); document.removeEventListener('visibilitychange',poll);};
+  },[refresh,enabled,serialized]);
   return {...state,refresh};
 }
 export function useClock() {
