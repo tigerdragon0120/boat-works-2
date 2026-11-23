@@ -170,9 +170,11 @@ export function createGenerationTrace({
   };
 
   // 状態が変わった行だけを書く。記録の失敗で生成を止めない
-  const flush = async (sr, observedAt = new Date().toISOString()) => {
+  const flush = async (sr, observedAt = new Date().toISOString(), { deadlineMs } = {}) => {
     // 読み切れなかった診断記録を新規作成・別状態で上書きしない。
     if (!writable) return { created: 0, updated: 0, tracked: 0, unconfirmed: true };
+    const expired = () => deadlineMs != null && Date.now() >= deadlineMs;
+    if (expired()) return { created: 0, updated: 0, tracked: 0, partial: true };
     const creates = [];
     const updates = [];
     for (const [key, value] of state) {
@@ -186,6 +188,7 @@ export function createGenerationTrace({
     }
     if (creates.length) await sr.V7GenerationTrace.bulkCreate(creates).catch(() => {});
     for (let i = 0; i < updates.length; i += 100) {
+      if (expired()) return { created: creates.length, updated: i, tracked: state.size, partial: true };
       await sr.V7GenerationTrace.bulkUpdate(updates.slice(i, i + 100)).catch(() => {});
     }
     return { created: creates.length, updated: updates.length, tracked: state.size };

@@ -5,14 +5,16 @@ import { resolveOfficialResults } from './resultEvidenceRules.js';
 const BATCH_SIZE = 80;
 const READ_BUDGET_MS = 45000;
 
-export async function loadOfficialResultsByRace(sr, raceIds, { batched = false } = {}) {
+export async function loadOfficialResultsByRace(sr, raceIds, { batched = false, deadlineMs: requestedDeadline } = {}) {
   const ids = [...new Set((raceIds || []).filter(Boolean).map(String))];
   const byRace = new Map();
   const failures = [];
   const failedRaceIds = new Set();
   // Daily verification opts in. Existing generation and save gates keep one read scope.
   const batchSize = batched ? BATCH_SIZE : ids.length;
-  const deadlineMs = batched ? Date.now() + READ_BUDGET_MS : undefined;
+  const deadlineMs = Number.isFinite(requestedDeadline)
+    ? Math.min(requestedDeadline, batched ? Date.now() + READ_BUDGET_MS : Infinity)
+    : batched ? Date.now() + READ_BUDGET_MS : undefined;
 
   for (let offset = 0; offset < ids.length; offset += batchSize) {
     const batch = ids.slice(offset, offset + batchSize);

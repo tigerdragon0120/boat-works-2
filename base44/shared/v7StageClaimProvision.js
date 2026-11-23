@@ -17,12 +17,13 @@ const KEY_CHUNK = 25;
 
 const pairOf = (raceKey, stage) => `${raceKey}::${stage}`;
 
-async function loadClaims(sr, claimKeys) {
+async function loadClaims(sr, claimKeys, deadlineMs) {
   const rows = [];
   for (let i = 0; i < claimKeys.length; i += KEY_CHUNK) {
     const page = await fetchAllPaged(
       (query, options) => sr[CLAIM_ENTITY].filter(query, options),
       { claim_key: { $in: claimKeys.slice(i, i + KEY_CHUNK) } },
+      { deadlineMs },
     );
     // 読み切れない場合は件数を判断できないため、その組は準備済みとしない
     if (!page.complete) return { rows: [], complete: false };
@@ -39,7 +40,7 @@ const countByPair = (rows, expected) => {
 
 // races: 生成対象(未来のレースのみを内部で選ぶ)
 // allowCreate: false のときは既存行の確認だけを行う(作成はしない)
-export async function provisionStageClaims(sr, races, { nowMs = Date.now(), allowCreate = true } = {}) {
+export async function provisionStageClaims(sr, races, { nowMs = Date.now(), allowCreate = true, deadlineMs } = {}) {
   const expected = new Map();
   for (const race of races || []) {
     if (!race || !race.race_key) continue;
@@ -59,7 +60,7 @@ export async function provisionStageClaims(sr, races, { nowMs = Date.now(), allo
   };
   if (!expected.size) return { ...summary, readyPairs: new Set() };
 
-  const before = await loadClaims(sr, [...expected.keys()]);
+  const before = await loadClaims(sr, [...expected.keys()], deadlineMs);
   if (!before.complete) {
     summary.read_complete = false;
     return { ...summary, readyPairs: new Set() };
@@ -69,6 +70,9 @@ export async function provisionStageClaims(sr, races, { nowMs = Date.now(), allo
 
   if (allowCreate && missingKeys.length) {
     for (let i = 0; i < missingKeys.length; i += KEY_CHUNK) {
+      // Only free registration slots are created here. Unfinished chunks remain
+      // missing and can be provisioned by the next run without claiming a write.
+      if (deadlineMs != null && Date.now() >= deadlineMs) break;
       const docs = missingKeys.slice(i, i + KEY_CHUNK).map((key) => ({
         ...expected.get(key), state: 'free', owner: null, record_hash: null, claimed_at: null,
       }));
@@ -79,7 +83,7 @@ export async function provisionStageClaims(sr, races, { nowMs = Date.now(), allo
 
   // 作成後も必ず全件を読み直す。作成応答は存在の証明にしない
   // (作成していない場合は、直前の読み取り結果をそのまま確認結果として使う)
-  const after = missingKeys.length ? await loadClaims(sr, [...expected.keys()]) : { rows: before.rows, complete: true };
+  const after = missingKeys.length ? await loadClaims(sr, [...expected.keys()], deadlineMs) : { rows: before.rows, complete: true };
   if (!after.complete) {
     summary.read_complete = false;
     return { ...summary, readyPairs: new Set() };
