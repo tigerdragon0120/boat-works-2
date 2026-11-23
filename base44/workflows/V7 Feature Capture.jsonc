@@ -1,13 +1,13 @@
 {
   "name": "V7 Feature Capture",
-  "description": "V7\u306e\u4e88\u60f3\u524d\uff0f\u5c55\u793a\u5f8c\uff0f\u7de0\u5207\u524d\u306b\u304a\u3051\u308b\u30aa\u30c3\u30ba\u5909\u52d5\u30fb\u30e2\u30fc\u30bf\u30fc\u30fb\u9078\u624b\u30fb\u7bc0\u9593\u30fb\u6c17\u8c61\u3092\u65b0\u53f0\u5e33\u3078\u4fdd\u5b58\u3002\u5973\u5b50\u30fb\u6e96\u512a\u30fb\u512a\u52dd\u3092\u5206\u96e2\u3002\u65e2\u5b58BUY\u3068\u4e88\u60f3\u306f\u5909\u66f4\u3057\u306a\u3044\u3002",
+  "description": "\u7de0\u5207\u524d\u306e\u7279\u5fb4\u4fdd\u5b58\u2192\u591a\u56e0\u5b50\u5019\u88dc\u30fb\u4e88\u60f3\u5bb6\u7406\u8ad6\u6bd4\u8f03\u30fbBUY\u7814\u7a76\u30921\u56de\u3067\u8a18\u9332\u3002\u7de0\u5207\u30fb\u5165\u529b\u6642\u523b\u3092\u5b88\u308a\u3001\u65e7\u500b\u5225\u51e6\u7406\u3068\u306e\u91cd\u8907\u8d77\u52d5\u3092\u89e3\u6d88\u3002",
   "trigger": {
     "condition": null,
     "config": {
       "trigger_type": "scheduled",
       "events": [],
       "schedule_mode": "recurring",
-      "cron_expression": "3,8,13,18,23,28,33,38,43,48,53,58 8-21 * * *",
+      "cron_expression": "4,9,14,19,24,29,34,39,44,49,54,59 6-23 * * *",
       "one_time_date": null,
       "timezone": "Asia/Tokyo",
       "interval_value": null,
@@ -22,7 +22,7 @@
     "document": {
       "dsl": "1.0.0",
       "name": "v7_feature_capture",
-      "version": "1.0",
+      "version": "1.1.0",
       "namespace": "base44"
     },
     "do": [
@@ -30,13 +30,13 @@
         "capture_v7_features": {
           "call": "invoke_backend_function",
           "with": {
-            "function_name": "v7CaptureFeatures",
+            "function_name": "v8ResearchObservations",
             "args": {}
           },
           "then": "end",
           "x-base44": {
-            "title": "V7\u591a\u56e0\u5b50\u30fb\u6642\u7cfb\u5217\u30c7\u30fc\u30bf\u53ce\u96c6",
-            "description": "\u958b\u50ac\u5834\u30fb\u5c55\u793a\u30fb\u30aa\u30c3\u30ba\u30fb\u6a5f\u529b\u30fb\u7bc0\u9593\u30fb\u5973\u5b50\u6226\u306e\u524d\u5411\u304d\u56fa\u5b9a\u89b3\u6e2c\u3092\u72ec\u7acb\u53f0\u5e33\u306b\u8a18\u9332"
+            "title": "\u7279\u5fb4\u30fb\u591a\u56e0\u5b50\u30fb\u7406\u8ad6\u30fbBUY\u7814\u7a76\u306e\u7d71\u5408\u8a18\u9332",
+            "description": "\u7de0\u5207\u524d\u306e\u7279\u5fb4\u4fdd\u5b58\u2192\u591a\u56e0\u5b50\u5019\u88dc\u30fb\u4e88\u60f3\u5bb6\u7406\u8ad6\u6bd4\u8f03\u30fbBUY\u7814\u7a76\u30921\u56de\u3067\u8a18\u9332\u3002\u7de0\u5207\u30fb\u5165\u529b\u6642\u523b\u3092\u5b88\u308a\u3001\u65e7\u500b\u5225\u51e6\u7406\u3068\u306e\u91cd\u8907\u8d77\u52d5\u3092\u89e3\u6d88\u3002"
           }
         }
       }
