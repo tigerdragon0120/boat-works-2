@@ -768,7 +768,7 @@ export async function collapseDuplicateRaceResults(client, limit = 5000) {
 // PRE/FINAL予想との照合を行う。
 // 既存LOCAL結果がある場合はCONFLICTチェック+BOATCAST優先で上書き。
 // ============================================================
-export async function upsertBoatcastResultAndVerify(client, race, boatcastResult) {
+export async function upsertBoatcastResultAndVerify(client, race, boatcastResult, options = {}) {
   if (boatcastResult?.source !== 'BOATCAST' || !boatcastResult.result?.result_trifecta) {
     return { saved: null, verification: null, skipped: true, reason: boatcastResult?.reason || 'no_result' };
   }
@@ -858,6 +858,9 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
     if (result.conditions.wind_dir) raceUpdate.wind_dir = result.conditions.wind_dir;
     if (Object.keys(raceUpdate).length) await sr.Race.update(race.id, raceUpdate).catch(() => {});
   }
+
+  // Modern collection retains results, racer history and weather without running retired engines.
+  if (options.verifyLegacy === false) return { saved, verification: null, skipped: false };
 
   // 予想照合(PRE/FINAL)
   const verification = await verifyPrediction(client, race, result);
