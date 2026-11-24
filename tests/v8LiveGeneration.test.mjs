@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runV8LiveCapture} from '../base44/shared/v8LiveCapture.js';
 import {runV8LiveGeneration} from '../base44/shared/v8LiveGeneration.js';
-import {runV7AutoGeneration} from '../base44/shared/v7AutoGeneration.js';
 import {buildRaceForecast} from '../base44/shared/v8ForecastEngine.js';
 
 const NOW=Date.parse('2026-11-22T03:00:00Z');
@@ -44,11 +43,12 @@ function setup(t,{races=[],entries=[],forecasts=[],results=[],before=()=>{}}={})
   return {tables,calls,client:{asServiceRole:{entities}}};
 }
 
-test('the combined scheduler fills PRE and DAY_BEFORE when there are no V7 targets or ready keys',async t=>{
+test('the V8 scheduler fills PRE and DAY_BEFORE without any V7 entities or ready keys',async t=>{
   const today=makeRace('today',1),tomorrow=makeRace('tomorrow',1,{tomorrow:true});
   const state=setup(t,{races:[today,tomorrow],entries:[...entriesFor(today),...entriesFor(tomorrow)]});
+  for(const name of ['PredictionV7','V7StageClaim','V7GenerationTrace'])delete state.client.asServiceRole.entities[name];
   const first=await runV8LiveGeneration(state.client);
-  assert.equal(first.ok,true);assert.equal(first.v7.targets,0);assert.equal(first.v8.pre,1);assert.equal(first.v8.day_before,1);
+  assert.equal(first.ok,true);assert.equal(Object.hasOwn(first,'v7'),false);assert.equal(first.v8.pre,1);assert.equal(first.v8.day_before,1);
   const original=structuredClone(state.tables.V8RaceForecast);
   assert.ok(original.every(row=>row.record_mode!=='REPLAY'));
   const again=await runV8LiveGeneration(state.client);
@@ -56,65 +56,74 @@ test('the combined scheduler fills PRE and DAY_BEFORE when there are no V7 targe
   assert.ok(state.tables.ProcessLock.every(row=>row.status==='released'));
 });
 
-test('the combined scheduler confirms V7 FINAL before V8 reads it and preserves its PRE baseline',async t=>{
+test('V8 FINAL preserves its PRE baseline and never reads or writes V7 prediction records',async t=>{
   const race=makeRace('final',2,{deadline:'2026-11-22T03:20:00Z',exhibition_ready:true});
   const preRace={...race,exhibition_ready:false},preEntries=entriesFor(preRace);
   const baseline={...buildRaceForecast({race:preRace,entries:preEntries,stage:'PRE',now:'2026-11-22T02:30:00Z'}).record,
     id:'original-pre',created_date:'2026-11-22T02:30:00Z'};
   const state=setup(t,{races:[race],entries:entriesFor(race,true),forecasts:[baseline]});
+  const old={id:'old-v7',race_id:race.id,stage:'FINAL',plans:{hit_8:{judgment:'SKIP',tickets:['6-5-4']}}};
+  state.tables.PredictionV7.push(structuredClone(old));
+  for(const name of ['PredictionV7','V7StageClaim','V7GenerationTrace'])delete state.client.asServiceRole.entities[name];
   const result=await runV8LiveGeneration(state.client);
-  assert.equal(result.ok,true);assert.equal(result.v7.saved_final,1,JSON.stringify(result.v7));assert.equal(result.v8.final,1);
-  const v7=state.tables.PredictionV7.find(row=>row.stage==='FINAL');
+  assert.equal(result.ok,true);assert.equal(result.v8.final,1);
   const v8=state.tables.V8RaceForecast.find(row=>row.stage==='FINAL');
-  assert.equal(v8.provenance.prediction_id,v7.id);
+  assert.equal(v8.provenance.prediction_id,null);
+  assert.equal(v8.decision.strategy,'V8_OWN_FORECAST_1');
+  assert.equal(v8.decision.status,'WATCH');assert.equal(v8.research_tickets.length,8);
+  assert.deepEqual(v8.decision.tickets,v8.research_tickets);
   assert.equal(v8.comparison.baseline_id,baseline.id);
   assert.deepEqual(state.tables.V8RaceForecast.find(row=>row.id===baseline.id),baseline);
-  const savedAt=state.calls.findIndex(call=>call.name==='PredictionV7'&&call.method==='create'&&call.args[0].stage==='FINAL');
-  const readAt=state.calls.findIndex(call=>call.name==='PredictionV7'&&call.method==='filter'&&call.args[0].source==='SERVER');
-  assert.ok(savedAt>=0&&readAt>savedAt);
+  assert.deepEqual(state.tables.PredictionV7,[old]);
+  assert.equal(state.calls.some(call=>['PredictionV7','V7StageClaim','V7GenerationTrace'].includes(call.name)),false);
 });
 
-test('a deadline reached during V7 saving finishes that claim and resumes the next stage on the next run',async t=>{
-  const race=makeRace('bounded',3,{deadline:'2026-11-22T03:20:00Z',exhibition_ready:true});
-  let delayed=false;
-  const state=setup(t,{races:[race],entries:entriesFor(race,true),before:({name,method,t})=>{
-    if(!delayed&&name==='PredictionV7'&&method==='create'){delayed=true;t.mock.timers.tick(46000);}
-  }});
-  const first=await runV7AutoGeneration(state.client,{deadlineMs:NOW+45000});
-  assert.equal(first.partial,true,JSON.stringify(first));assert.equal(first.saved,1);
-  assert.equal(state.tables.V7StageClaim.find(row=>row.stage==='PRE').state,'written');
-  assert.equal(state.tables.V7StageClaim.find(row=>row.stage==='FINAL').state,'free');
-  const pre=structuredClone(state.tables.PredictionV7[0]);
-  const second=await runV7AutoGeneration(state.client,{deadlineMs:Date.now()+45000});
-  assert.equal(second.saved_final,1);assert.equal(state.tables.PredictionV7.length,2);
-  assert.deepEqual(state.tables.PredictionV7[0],pre);
-});
-
-test('V7 time used by the initial read is included in the combined deadline and V8 still covers PRE',async t=>{
+test('V8 uses the remaining pipeline budget instead of reserving time for another engine',async t=>{
   const race=makeRace('pre',4);let delayed=false;
-  const state=setup(t,{races:[race],entries:entriesFor(race),before:({name,method,args,t})=>{
-    if(!delayed&&name==='Race'&&method==='filter'&&args[0].race_date==='2026-11-22'){
-      delayed=true;t.mock.timers.tick(46000);
-    }
+  const state=setup(t,{races:[race],entries:entriesFor(race),before:({name,method,t})=>{
+    if(!delayed&&name==='ProcessLock'&&method==='create'){delayed=true;t.mock.timers.tick(46000);}
   }});
   const result=await runV8LiveGeneration(state.client);
-  assert.equal(result.v7.partial,true);assert.equal(result.v7.saved,0);assert.equal(result.v8.pre,1);
+  assert.equal(result.ok,true);assert.equal(result.v8.pre,1);
   assert.equal(state.tables.V7StageClaim.length,0);
 });
 
-test('the combined pipeline still captures a PRE after V7 fails or its standalone lock is held',async t=>{
-  const race=makeRace('pre',5);let failOnce=true;
-  const state=setup(t,{races:[race],entries:entriesFor(race),before:({name,method,args})=>{
-    if(failOnce&&name==='Race'&&method==='filter'&&args[0].race_date==='2026-11-22'){
-      failOnce=false;throw new Error('initial V7 read unavailable');
-    }
-  }});
-  // The existing V7 reader treats this failure as no targets; the independent
-  // V8 collection must still inspect the real race list and produce its PRE.
-  const first=await runV8LiveGeneration(state.client);assert.equal(first.v8.pre,1);
-  state.tables.ProcessLock.push({id:'held-v7',lock_key:'v7_generate_2026-11-22',status:'active',expires_at:new Date(NOW+120000).toISOString()});
-  const second=await runV8LiveGeneration(state.client);
-  assert.equal(second.v7.skipped,'locked');assert.equal(second.v8.existing,1);
+test('a legacy V7 lock cannot block V8 capture',async t=>{
+  const race=makeRace('pre',5),state=setup(t,{races:[race],entries:entriesFor(race)});
+  const legacy={id:'held-v7',lock_key:'v7_generate_2026-11-22',status:'active',expires_at:new Date(NOW+120000).toISOString()};
+  state.tables.ProcessLock.push(structuredClone(legacy));
+  const result=await runV8LiveGeneration(state.client);
+  assert.equal(result.ok,true);assert.equal(result.v8.pre,1);
+  assert.deepEqual(state.tables.ProcessLock.find(row=>row.id==='held-v7'),legacy);
+});
+
+test('the three-minute throttle never delays completed or corrected exhibition inputs',async t=>{
+  const race=makeRace('exhibition-refresh',3,{deadline:'2026-11-22T03:20:00Z',exhibition_ready:true});
+  const entries=entriesFor(race,true),partialEntries=structuredClone(entries);
+  partialEntries[5].exhibition_time=null;
+  const previousAt=new Date(NOW-60000).toISOString();
+  const partial={...buildRaceForecast({race,entries:partialEntries,stage:'FINAL',now:previousAt}).record,
+    id:'saved-partial',created_date:previousAt};
+  assert.equal(partial.exhibition_complete,false);
+  const state=setup(t,{races:[race],entries,forecasts:[partial]});
+  const completed=await runV8LiveCapture(state.client);
+  assert.equal(completed.final,1);
+  assert.equal(state.tables.V8RaceForecast.at(-1).exhibition_complete,true);
+  const unchanged=await runV8LiveCapture(state.client);
+  assert.equal(unchanged.created,0);assert.equal(unchanged.existing,1);
+
+  t.mock.timers.tick(30000);
+  state.tables.RaceEntry[0].exhibition_time=6.59;
+  state.tables.RaceEntry[0].updated_date=new Date(Date.now()).toISOString();
+  const corrected=await runV8LiveCapture(state.client);
+  assert.equal(corrected.final,1);
+  assert.equal(state.tables.V8RaceForecast.at(-1).boats[0].exhibition_time,6.59);
+  assert.deepEqual(state.tables.V8RaceForecast[0],partial);
+
+  state.tables.RaceEntry[0].updated_date=new Date(Date.now()+1000).toISOString();
+  const future=await runV8LiveCapture(state.client);
+  assert.equal(future.created,0);assert.equal(future.reasons.ENTRY_SOURCE_TIME_INVALID,1);
+  assert.equal(state.tables.V8RaceForecast.length,3);
 });
 
 test('V8 live capture excludes closed, cutoff and confirmed-result races',async t=>{
@@ -144,7 +153,18 @@ test('past dates are rejected by the live pipeline without touching the database
   assert.equal(result.ok,false);assert.equal(result.error,'INVALID_LIVE_DATE');assert.equal(state.calls.length,0);
 });
 
-test('a failed V8 forecast write makes the combined run fail while a budget-only pause remains successful',async t=>{
+test('a manual refresh saves only the requested V8 race and rejects an empty scope',async t=>{
+  const a=makeRace('selected',10),b=makeRace('other',11);
+  const state=setup(t,{races:[a,b],entries:[...entriesFor(a),...entriesFor(b)]});
+  const result=await runV8LiveGeneration(state.client,{race_keys:[a.race_key]});
+  assert.equal(result.ok,true);assert.equal(result.v8.created,1);
+  assert.deepEqual(state.tables.V8RaceForecast.map(r=>r.race_id),[a.id]);
+  const rejected=await runV8LiveCapture(state.client,{race_keys:[]});
+  assert.equal(rejected.ok,false);assert.equal(rejected.error,'INVALID_RACE_KEYS');
+  assert.equal(state.tables.V8RaceForecast.length,1);
+});
+
+test('a failed V8 forecast write makes the pipeline fail while a budget-only pause remains successful',async t=>{
   const race=makeRace('write-fails',12);
   const state=setup(t,{races:[race],entries:entriesFor(race),before:({name,method})=>{
     if(name==='V8RaceForecast'&&method==='create')throw new Error('simulated storage failure');

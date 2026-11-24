@@ -63,7 +63,16 @@ export async function runV8LiveCapture(client,options={}){
       const records=byRace.get(race.id)||[];
       if(stage!=='FINAL'&&saved.has(FORECAST_REVISION+':'+race.race_key+':'+stage)){summary.existing++;continue;}
       const lastFinal=records.filter(r=>r.stage==='FINAL').sort(chronological).at(-1);
-      if(stage==='FINAL'&&lastFinal&&Date.now()-utcMs(lastFinal.generated_at)<180000){summary.existing++;continue;}
+      const lastFinalAt=utcMs(lastFinal?.generated_at);
+      const lastFinalComplete=lastFinal?.quality==='CAPTURED'&&lastFinal.exhibition_complete===true
+        &&Array.isArray(lastFinal.research_tickets)&&lastFinal.research_tickets.length===8;
+      const unchangedInputs=[race,...entries].every(row=>{
+        const at=utcMs(row.updated_date||row.created_date);
+        return at!=null&&lastFinalAt!=null&&at<=lastFinalAt;
+      });
+      // Throttle only complete, unchanged forecasts. Exhibition corrections and
+      // newly completed inputs must reach the existing source-time/cutoff checks now.
+      if(stage==='FINAL'&&lastFinalComplete&&unchangedInputs&&Date.now()-lastFinalAt<180000){summary.existing++;continue;}
       try{
         const fresh=await sr.Race.get(race.id);
         if(!fresh||fresh.race_key!==race.race_key||['finished','cancelled'].includes(fresh.status)||utcMs(fresh.deadline)<=Date.now()+90000){hold('RACE_CHANGED_OR_CLOSED');continue;}
@@ -114,4 +123,3 @@ export async function runV8LiveCapture(client,options={}){
   }catch(error){if(expired()){stopForBudget();return finish();}console.error('[V8_CAPTURE] fatal',String(error?.message||error).slice(0,160));return {...finish(),ok:false,error:'FORECAST_READ_OR_SAVE_FAILED',details:String(error?.message||error).slice(0,120)};}
   finally{if(lock)await releaseLock(client,lock).catch(()=>{});}
 }
-

@@ -68,6 +68,34 @@ export function displayDecision(forecast, now=Date.now(), race=null) {
     WAIT:{key:'WAIT',label:'情報待ち',tone:'slate'},
   }[status] || {key:'WAIT',label:'判定待ち',tone:'slate'};
 }
+// V8 display state describes its own saved forecast, independently of legacy
+// decision/BUY fields. READY means saved exhibition tickets, never a BUY signal.
+export function displayForecastStatus(forecast, now=Date.now(), race=null, {ambiguous=false, unavailable=false}={}) {
+  const wait=label=>({key:'WAIT',label,tone:'amber'});
+  if (unavailable) return wait('保存状況の確認待ち');
+  if (ambiguous) return wait('レース情報の再確認待ち');
+  const sourceDeadline=timeMs(forecast?.deadline),currentDeadline=timeMs(race?.deadline);
+  const deadline=currentDeadline ?? sourceDeadline;
+  const effective=forecast?.effective_status || forecast?.decision?.effective_status;
+  if (race?.status==='cancelled' || effective==='CANCELLED') return {key:'CANCELLED',label:'中止',tone:'slate'};
+  if (forecast && race && ((race.id && forecast.race_id!==race.id) || (race.race_key && forecast.race_key!==race.race_key) || currentDeadline==null || sourceDeadline!==currentDeadline)) return wait('レース情報の再確認待ち');
+  const closed=()=>({key:'CLOSED',label:deadline!=null&&now<deadline&&race?.status!=='finished'?'締切直前':'締切済',tone:'slate'});
+  if (!forecast) return race?.status==='finished'||(deadline!=null&&now>=deadline-60000)?closed():{key:'WAIT',label:'V8予想の保存待ち',tone:'slate'};
+  const generated=timeMs(forecast.generated_at),created=timeMs(forecast.created_date);
+  if (!forecast.id || !forecast.race_id || !forecast.race_key || !['DAY_BEFORE','PRE','FINAL'].includes(forecast.stage) || deadline==null || generated==null || created==null || generated>now || created>now || created<generated) return wait('保存記録の再確認待ち');
+  const tickets=forecast.research_tickets;
+  const ticketsValid=Array.isArray(tickets)&&tickets.length>0&&new Set(tickets).size===tickets.length&&tickets.every(ticket=>typeof ticket==='string'&&/^[1-6]-[1-6]-[1-6]$/.test(ticket)&&new Set(ticket.split('-')).size===3);
+  if (isReplay(forecast)) {
+    if (generated<deadline || !ticketsValid) return wait('事後検証記録の確認待ち');
+    return {key:'REPLAY',label:'事後検証・保存済み',tone:'sky'};
+  }
+  if ((forecast.record_mode!=null&&forecast.record_mode!=='LIVE') || generated>=deadline-60000 || created>=deadline-60000) return wait('保存時刻の再確認待ち');
+  if (race?.status==='finished' || effective==='CLOSED' || now>=deadline-60000) return closed();
+  if (!ticketsValid) return wait('V8買い目の保存待ち');
+  if (forecast.quality==='PARTIAL' || (forecast.stage==='FINAL'&&forecast.exhibition_complete!==true)) return {key:'PARTIAL',label:'展示・入力情報の確認待ち',tone:'amber'};
+  if (forecast.stage!=='FINAL') return {key:'PRE',label:'事前保存・展示待ち',tone:'sky'};
+  return {key:'READY',label:'V8買い目・保存済み',tone:'emerald'};
+}
 async function readV8Dashboard(parameters) {
   try {
     const response=await base44.functions.invoke('v8ReadDashboard',parameters);

@@ -1,6 +1,6 @@
-// V7 feature observation: pure, deterministic snapshot builder.
+// Shared feature observation: pure, deterministic snapshot builder.
 // No hindsight, no model weights, no synthetic qualifying ranks. Missing values remain null.
-// Does NOT change predictions or current BUY logic.
+// V8_INPUT_ONLY records raw evidence without reading or relabelling a V7 prediction.
 import { selectV7RaceEntries } from "./v7RaceEntrySelector.js";
 
 export const FEATURE_REVISION = "V7_FEATURE_OBSERVATION_1";
@@ -103,25 +103,41 @@ function oddsFor(keys, snapshot) {
     .map(k=>[k,Number(map[k])]));
 }
 const COMBO=/^[1-6]-[1-6]-[1-6]$/;
+const validTicket=t=>typeof t==='string'&&COMBO.test(t)&&new Set(t.split('-')).size===3;
 function selectEight(prediction) {
   const tickets=prediction?.plans?.hit_8?.tickets;
   return Array.isArray(tickets)&&tickets.length===8&&new Set(tickets).size===8
     && tickets.every(t=>COMBO.test(t)&&new Set(t.split("-")).size===3)?tickets:[];
 }
 
-export function buildV7FeatureObservation({race,entries=[],odds=[],pre=null,final=null,stage,observedAt}) {
+export function buildV7FeatureObservation({race,entries=[],odds=[],pre=null,final=null,stage,observedAt,sourceMode='V7_PREDICTION'}) {
+  if(!['V7_PREDICTION','V8_INPUT_ONLY'].includes(sourceMode))return {ok:false,reason:'invalid_source_mode'};
+  const inputOnly=sourceMode==='V8_INPUT_ONLY';
   const now=utcMs(observedAt);
   const deadline=utcMs(race?.deadline);
-  if (!race?.id || !race?.race_key || now==null || deadline==null || now>=deadline-60000) {
+  if (!race?.id || !race?.race_key || now==null || deadline==null || now>=deadline-60000
+    || ['finished','cancelled'].includes(race.status)) {
     return {ok:false,reason:"invalid_race_or_late"};
   }
   if (!["PRE","FINAL","LOCK"].includes(stage)) return {ok:false,reason:"invalid_stage"};
-  const prePred=pre && utcMs(pre.created_date)!=null && utcMs(pre.created_date)<=now ? pre:null;
-  const finalPred=final && utcMs(final.created_date)!=null && utcMs(final.created_date)<=now ? final:null;
+  if(!Array.isArray(entries)||!Array.isArray(odds))return {ok:false,reason:'invalid_source_shape'};
+  if(inputOnly){
+    const raceAt=utcMs(race.updated_date||race.created_date),storedAt=utcMs(race.created_date);
+    if(raceAt==null||raceAt>now||(race.created_date!=null&&(storedAt==null||storedAt>now)))return {ok:false,reason:'race_source_time_invalid'};
+    if(stage!=='PRE'&&race.exhibition_ready!==true)return {ok:false,reason:'exhibition_not_ready'};
+  }
+  const prePred=!inputOnly && pre && utcMs(pre.created_date)!=null && utcMs(pre.created_date)<=now ? pre:null;
+  const finalPred=!inputOnly && final && utcMs(final.created_date)!=null && utcMs(final.created_date)<=now ? final:null;
   const chosen=stage==="PRE" ? prePred : finalPred;
   const missing=[];
-  const validEntries=entries.filter(e=>utcMs(e.updated_date || e.created_date)!=null && utcMs(e.updated_date || e.created_date)<=now);
+  const validEntries=entries.filter(e=>utcMs(e.updated_date || e.created_date)!=null && utcMs(e.updated_date || e.created_date)<=now
+    &&(!inputOnly||e.created_date==null||(utcMs(e.created_date)!=null&&utcMs(e.created_date)<=now)));
   const result=selectV7RaceEntries(validEntries,race);
+  if(inputOnly&&result.reason)return {ok:false,reason:'entries_'+result.reason};
+  if(inputOnly&&stage==='PRE'&&(race.exhibition_ready===true||result.entries.some(e=>
+    ['exhibition_time','exhibition_st','exhibition_st_raw','exhibition_course'].some(key=>e[key]!=null&&e[key]!=='')))){
+    return {ok:false,reason:'exhibition_already_available'};
+  }
   if(result.reason)missing.push("ENTRIES_"+result.reason.toUpperCase());
   const boats=result.entries.map(boatSnapshot);
   const expectedFields=[
@@ -148,17 +164,22 @@ export function buildV7FeatureObservation({race,entries=[],odds=[],pre=null,fina
   };
   const weatherComplete=!!weather.weather&&!!weather.wind_dir&&weather.wind_speed!=null;
   if(!weatherComplete)missing.push("WEATHER_OR_WIND_MISSING");
-  if(!chosen)missing.push("PREDICTION_"+stage+"_NOT_YET_AVAILABLE");
+  if(inputOnly)missing.push('PREDICTION_NOT_USED_V8_INPUT_ONLY');
+  else if(!chosen)missing.push("PREDICTION_"+stage+"_NOT_YET_AVAILABLE");
   // Odds are allowed only if captured before this observation, before deadline,
   // and marked as their actual capture stage. No post-race "final odds" backfill.
   const histories=odds.filter(z=>z?.race_id===race.id &&
     ["EARLY","PRE","FINAL"].includes(z.stage) && utcMs(z.captured_at)!=null &&
-    utcMs(z.captured_at)<=now && utcMs(z.captured_at)<deadline-60000
+    utcMs(z.captured_at)<=now && utcMs(z.captured_at)<deadline-60000 &&
+    (!inputOnly||(z.id&&utcMs(z.created_date)!=null&&utcMs(z.created_date)<=now&&utcMs(z.created_date)<deadline-60000))
   ).sort((a,b)=>utcMs(a.captured_at)-utcMs(b.captured_at));
   const old=histories.find(z=>z.stage==="EARLY"||z.stage==="PRE")||histories[0]||null;
   const fresh=[...histories].reverse().find(z=>z.stage==="FINAL")||null;
-  const current=stage==="PRE"?(old||fresh):(fresh||old);
+  const current=inputOnly?histories.at(-1)||null:stage==="PRE"?(old||fresh):(fresh||old);
   const tickets=selectEight(chosen);
+  const observedQuotes=inputOnly?oddsFor(Object.keys(current?.odds_map||{}).filter(validTicket),current):null;
+  if(inputOnly&&!current)missing.push('ODDS_SNAPSHOT_NOT_YET_AVAILABLE');
+  else if(inputOnly&&!Object.keys(observedQuotes).length)missing.push('OBSERVED_ODDS_EMPTY');
   const earliestOdds=oddsFor(tickets,old);
   const latestOdds=oddsFor(tickets,current);
   const comparable=tickets.filter(k=>earliestOdds[k]!=null&&latestOdds[k]!=null);
@@ -180,6 +201,8 @@ export function buildV7FeatureObservation({race,entries=[],odds=[],pre=null,fina
     // Odds are not probabilities. The inverse-sum is a market-implied composite quote only.
     composite_odds:tickets.length===8&&tickets.every(t=>latestOdds[t]!=null)
       ?round(1/tickets.reduce((s,t)=>s+1/latestOdds[t],0)):null,
+    // Unselected source quotes stay separate from model tickets and BUY decisions.
+    ...(inputOnly?{observed_quotes:observedQuotes,observed_quote_count:Object.keys(observedQuotes).length}:{}),
   };
   if(tickets.length===8&&Object.keys(latestOdds).length<8)missing.push("SELECTED_ODDS_INCOMPLETE");
   const topChanged=!!prePred&&!!finalPred&&prePred.top_combination&&finalPred.top_combination
@@ -208,24 +231,25 @@ export function buildV7FeatureObservation({race,entries=[],odds=[],pre=null,fina
       phase:type,series_day:seriesDay??undefined,
       race_type:race.race_type||undefined,series_name:race.series_name||undefined,
       gender_model:gender,observed_at:observedAt,deadline:race.deadline,
-      prediction_id:chosen?.id||undefined,prediction_hash:chosen?.record_hash||undefined,
-      prediction_stage:chosen?.stage||undefined,
+      prediction_id:chosen?.id||(inputOnly?null:undefined),prediction_hash:chosen?.record_hash||(inputOnly?null:undefined),
+      prediction_stage:chosen?.stage||(inputOnly?null:undefined),
       prediction_created_at:chosen?.created_date
-        ?new Date(utcMs(chosen.created_date)).toISOString():undefined,
-      current_judgment:chosen?.plans?.hit_8?.judgment||undefined,
-      pre_top_combination:prePred?.top_combination||undefined,
-      final_top_combination:finalPred?.top_combination||undefined,
+        ?new Date(utcMs(chosen.created_date)).toISOString():(inputOnly?null:undefined),
+      current_judgment:chosen?.plans?.hit_8?.judgment||(inputOnly?null:undefined),
+      pre_top_combination:prePred?.top_combination||(inputOnly?null:undefined),
+      final_top_combination:finalPred?.top_combination||(inputOnly?null:undefined),
       ...(topChanged!=null?{top_changed:topChanged}:{}),
       ...Object.fromEntries(Object.entries(weather).filter(([,value])=>value!=null)),
       weather_complete:weatherComplete,
       qualifying_rank_complete:boats.length===6&&boats.every(b=>b.qualifying_rank!=null&&b.qualifying_point_rate!=null),
       boats,market:snapshotOdds,signals,missing,
       provenance:{
-        source:"BASE44_RACE_RACEENTRY_ODDSSNAPSHOT_PREDICTIONV7",
+        source:inputOnly?'BASE44_RACE_RACEENTRY_ODDSSNAPSHOT':"BASE44_RACE_RACEENTRY_ODDSSNAPSHOT_PREDICTIONV7",
+        source_mode:sourceMode,prediction_used:!!chosen,prediction_required:!inputOnly,
         captured_at:observedAt,
         entry_ids:result.entries.map(z=>z.id),latest_odds_id:current?.id||null,
         earliest_odds_id:old?.id||null,
-        race_updated_at:race.updated_date||null,
+        race_updated_at:race.updated_date||race.created_date||null,
         prediction_hash:chosen?.record_hash||null,
         data_after_observation_excluded:true,
       },

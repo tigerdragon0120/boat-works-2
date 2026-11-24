@@ -1,5 +1,5 @@
-// Automatic admin-only V7 feature capture. Independent append-only observation pipeline.
-// Reads Race/RaceEntry/PredictionV7/OddsSnapshot and writes ONLY V7FeatureSnapshot.
+// Append-only feature capture. V8_INPUT_ONLY reads raw Race/RaceEntry/OddsSnapshot;
+// the legacy mode additionally reads PredictionV7. Both retain V7FeatureSnapshot keys.
 // In-flight and after-race backfills cannot create prediction-time observations.
 import { acquireLock, releaseLock } from "./concurrencyLock.js";
 import { readResearchPaged } from "./v8ResearchRead.js";
@@ -8,7 +8,7 @@ import { buildV7FeatureObservation, FEATURE_REVISION, utcMs } from "./v7FeatureO
 const MAX_NEW_PER_RUN=24;
 const DAY=()=>new Date().toLocaleDateString("sv-SE",{timeZone:"Asia/Tokyo"});
 const STAGES=["PRE","FINAL","LOCK"];
-function targetsForRace(race, pred, now, saved) {
+function targetsForRace(race, pred, now, saved, inputOnly) {
   const deadline=utcMs(race.deadline);
   if(deadline==null || !race.race_key || !race.id || ["finished","cancelled"].includes(race.status))return [];
   const left=(deadline-now)/60000;
@@ -17,18 +17,23 @@ function targetsForRace(race, pred, now, saved) {
   const out=[];
   const pre=pred?.PRE||null;
   const final=pred?.FINAL||null;
-  if(left>=15&&left<=120&&race.exhibition_ready!==true&&pre&&!saved.has(base+"PRE"))out.push("PRE");
-  if(left>=5&&left<=45&&final&&!saved.has(base+"FINAL"))out.push("FINAL");
-  if(left>=2&&left<=9&&final&&!saved.has(base+"LOCK"))out.push("LOCK");
+  const beforeReady=inputOnly||!!pre;
+  const finalReady=inputOnly?race.exhibition_ready===true:!!final;
+  if(left>=15&&left<=120&&race.exhibition_ready!==true&&beforeReady&&!saved.has(base+"PRE"))out.push("PRE");
+  if(left>=5&&left<=45&&finalReady&&!saved.has(base+"FINAL"))out.push("FINAL");
+  if(left>=2&&left<=9&&finalReady&&!saved.has(base+"LOCK"))out.push("LOCK");
   return out;
 }
 
 export async function runV7CaptureFeatures(client, options = {}) {
+  const sourceMode=options.sourceMode||'V7_PREDICTION';
+  if(!['V7_PREDICTION','V8_INPUT_ONLY'].includes(sourceMode))return Response.json({ok:false,error:'INVALID_SOURCE_MODE'},{status:400});
+  const inputOnly=sourceMode==='V8_INPUT_ONLY';
   const dryRun=options.dryRun===true;
   const stopAt=Number.isFinite(options.deadlineMs)?options.deadlineMs:Infinity;
   const sr=client.asServiceRole.entities;
   const day=DAY();
-  const summary    ={ok:true,day,dry_run:dryRun,revision:FEATURE_REVISION,races:0,candidates:0,created:0,
+  const summary    ={ok:true,day,dry_run:dryRun,revision:FEATURE_REVISION,source_mode:sourceMode,races:0,candidates:0,created:0,
     partial:0,skipped_existing:0,skipped_source:0,errors:0,late_saves:0,model_changes:0};
   let lockId    =null;
   try{
@@ -37,7 +42,7 @@ export async function runV7CaptureFeatures(client, options = {}) {
     const budget=Math.min(Date.now()+35000,stopAt);
     const [racePage,predPage,savedPage]=await Promise.all([
       readResearchPaged((q    ,o    )=>sr.Race.filter(q,o),{race_date:day},{pageSize:200,maxPages:3,deadlineMs:budget}),
-      readResearchPaged((q    ,o    )=>sr.PredictionV7.filter(q,o),{race_date:day},{pageSize:200,maxPages:4,deadlineMs:budget}),
+      inputOnly?Promise.resolve({rows:[],complete:true}):readResearchPaged((q    ,o    )=>sr.PredictionV7.filter(q,o),{race_date:day},{pageSize:200,maxPages:4,deadlineMs:budget}),
       readResearchPaged((q    ,o    )=>sr.V7FeatureSnapshot.filter(q,o),{race_date:day},{pageSize:200,maxPages:7,deadlineMs:budget}),
     ]);
     if(!racePage.complete||!predPage.complete||!savedPage.complete){
@@ -60,7 +65,7 @@ export async function runV7CaptureFeatures(client, options = {}) {
       const finalCandidates=byRace.get(race.race_key+"|FINAL")||[];
       if(preCandidates.length>1||finalCandidates.length>1)continue;
       const pred={PRE:preCandidates[0]||null,FINAL:finalCandidates[0]||null};
-      const stages=targetsForRace(race,pred,now,saved);
+      const stages=targetsForRace(race,pred,now,saved,inputOnly);
       for(const stage of stages)jobs.push({race,pred,stage});
     }
     jobs.sort((a,b)=>{
@@ -83,13 +88,15 @@ export async function runV7CaptureFeatures(client, options = {}) {
         if(!Array.isArray(entries)||!Array.isArray(odds)||entries.length>=40||odds.length>=60){
           summary.skipped_source++;continue;
         }
+        if(Date.now()>=stopAt){summary.budget_exhausted=true;break;}
         const observedAt=new Date().toISOString();
         const output=buildV7FeatureObservation({
-          race,entries,odds,pre:pred.PRE,final:pred.FINAL,stage,observedAt,
+          race,entries,odds,pre:pred.PRE,final:pred.FINAL,stage,observedAt,sourceMode,
         });
         if(!output.ok){summary.skipped_source++;continue}
         // One more deadline check before immutable write.
         if(utcMs(race.deadline)-Date.now()<90000){summary.skipped_source++;continue}
+        if(Date.now()>=stopAt){summary.budget_exhausted=true;break;}
         if(dryRun){summary.model_changes++;continue}
         // The key is already read at start and held under a feature-only process lock.
         // Never update/delete previous snapshots even if source data is corrected.

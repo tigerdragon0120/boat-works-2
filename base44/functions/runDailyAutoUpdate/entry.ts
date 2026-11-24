@@ -1,4 +1,4 @@
-// V7の共通取得処理はページ形式({items,next_cursor,has_more})を使うため0.8.60で実行する
+// 共通取得処理はページ形式({items,next_cursor,has_more})を使うため0.8.60で実行する
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.60';
 import { fetchHtml, parseRaceIndex, parseRaceCard, parseDeadlineTimes, parseSeriesName, parseResult, parseBeforeInfo, parseOdds3t, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 import { upsertRace, upsertEntry, dedupRace, dedupEntriesForRace, upsertResultOnly, upsertBoatcastResultAndVerify, collapseDuplicateRaceResults } from '../../shared/predictionService.js';
@@ -6,8 +6,6 @@ import { isWomensRace } from '../../shared/womensRace.js';
 import { resolveRaceResult } from '../../shared/resultResolver.js';
 import { computeLanePast10Stats } from '../../shared/lanePast10Engine.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
-// V7: 定期更新で展示を保存したレースも、FINAL予想の生成につなぐ
-import { runV7AutoGeneration } from '../../shared/v7AutoGeneration.js';
 import { runV8LiveGeneration } from '../../shared/v8LiveGeneration.js';
 import { selectLiveInputRaces, isSavedExhibitionComplete } from '../../shared/liveInputPriority.js';
 import { readV8Rows } from '../../shared/v8Repository.js';
@@ -471,7 +469,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
       }
     }
 
-    // V7/V8 settlement is handled by the shared all-race verification queue.
+    // V8 settlement is handled by the shared all-race verification queue.
 
     await sleep(300);
   }
@@ -491,7 +489,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
   const races = options.liveOnly ? selectLiveInputRaces(allRaces, startTime) : allRaces;
   let fetched = 0;
   // 展示が揃ったレースは、この回の最後にV7のFINAL判定へ回す
-  const v7ReadyKeys = new Set<string>();
+  const forecastReadyKeys = new Set<string>();
 
   for (const race of races) {
     if (Date.now() - startTime > timeBudgetMs) break;
@@ -600,7 +598,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       }
     }
     // Recheck complete saved values even when the source has not changed.
-    if (complete && raceSaved && deadlineMs > Date.now() + 90000) v7ReadyKeys.add(race.race_key);
+    if (complete && raceSaved && deadlineMs > Date.now() + 90000) forecastReadyKeys.add(race.race_key);
     if (updated > 0 || complete) {
       fetched++;
       logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新 / 保存済み${complete?'全艇確認':'一部不足'} (取得${realCount}/${activeBoatCount})`);
@@ -609,20 +607,17 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     await sleep(300);
   }
 
-  // 展示保存を起点に、V7のFINAL予想を生成する。
-  // 締切・開催状態の再確認と同一レース×段階の登録制御は共通保存処理(v7PredictionStore)が保存の瞬間に行う。
-  let v7Saved = 0;
-  if (v7ReadyKeys.size && !options.deferV7) {
-    try {
-      const v7 = await runV7AutoGeneration(base44, { race_date: raceDate, race_keys: [...v7ReadyKeys] });
-      v7Saved = Number(v7?.saved_final || 0);
-      logs.push(`V7: 展示保存を起点にFINAL ${v7Saved}R生成 / PRE ${Number(v7?.saved_pre || 0)}R`);
-    } catch (e: any) {
-      errors.push(`V7 FINAL生成: ${e?.message || e}`);
-    }
+  // Scheduled collection continues directly into the V8 workflow step.
+  // Manual exhibition collection uses only its remaining budget for saved V8 forecasts.
+  let v8: any = null;
+  if (forecastReadyKeys.size && !options.deferForecasts) {
+    v8 = await runV8LiveGeneration(base44, {
+      race_keys: [...forecastReadyKeys], deadlineMs: startTime + timeBudgetMs,
+    });
+    logs.push(`V8: 展示後予想 ${Number(v8?.v8?.final || 0)}R保存`);
+    if (v8.ok === false) errors.push(`V8予想保存: ${v8.error || 'failed'}`);
   }
-
-  return { total: races.length, fetched, ready_keys: [...v7ReadyKeys], v7_saved: v7Saved, errors };
+  return { total: races.length, fetched, ready_keys: [...forecastReadyKeys], forecasts: v8, errors };
 }
 
 // =====================================================
@@ -650,7 +645,7 @@ async function checkCompleteness(base44: any, raceDate: string, logs: string[]) 
   }
 
   const finishedCount = races.filter((r: any) => raceIdsWithResult.has(r.id)).length;
-  // V7/V8 no longer maintain the retired Race.has_pre flag.
+  // V8 no longer maintain the retired Race.has_pre flag.
   // Count persisted V8 hypotheses so the admin status matches the current forecast store.
   const savedPre = await readV8Rows(sr.V8RaceForecast,
     {race_date: raceDate, stage: {$in: ['DAY_BEFORE', 'PRE']}},
@@ -765,7 +760,7 @@ async function precomputeLanePast10(base44: any, raceDate: string, timeBudgetMs:
 // =====================================================
 // メイン: Autoモード
 // =====================================================
-// Live V7/V8 pricing only. Legacy prediction expansion is not part of this path.
+// Live V8 pricing only. Legacy prediction expansion is not part of this path.
 async function fetchLiveOdds(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
   const sr = base44.asServiceRole.entities, started = Date.now();
   const races = selectLiveInputRaces(uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 500)), started, { horizonMinutes: 25 });
@@ -797,9 +792,9 @@ async function fetchLiveOdds(base44: any, raceDate: string, timeBudgetMs: number
         saved++;
       }
       if (race.exhibition_ready === true) ready.add(race.race_key);
-    } catch (e: any) { errors.push(`${race.race_key}: V7/V8オッズ保存 ${e?.message || e}`); }
+    } catch (e: any) { errors.push(`${race.race_key}: V8オッズ保存 ${e?.message || e}`); }
   }
-  logs.push(`V7/V8: 締切前オッズ ${saved}R保存`);
+  logs.push(`V8: 締切前オッズ ${saved}R保存`);
   return { saved, ready_keys: [...ready] };
 }
 
@@ -811,8 +806,8 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
 
   // Time-sensitive inputs come first. V1-V6 PRE/FINAL expansion is retired from AUTO.
   if (todayRaces.length && jstHour >= 8 && jstHour <= 22) {
-    logs.push('AUTO: 締切前の展示・オッズを最優先で取得（V7/V8）');
-    const exhibition = await fetchAndSaveExhibition(base44, today, Math.min(30000, remaining()), logs, errors, {liveOnly:true,deferV7:true});
+    logs.push('AUTO: 締切前の展示・オッズを最優先で取得（V8）');
+    const exhibition = await fetchAndSaveExhibition(base44, today, Math.min(30000, remaining()), logs, errors, {liveOnly:true,deferForecasts:true});
     steps.push(`exhibition: ${exhibition.fetched}R`);
     const odds = remaining() > 3000
       ? await fetchLiveOdds(base44, today, Math.min(18000, remaining()), logs, errors)
@@ -879,12 +874,12 @@ export default async function(req: Request) {
         break;
       case 'pre_predictions':
       case 'main_pre':
-        // Existing admin actions now use the same V7/V8 engine as scheduled generation.
+        // Existing admin actions now use the same V8 engine as scheduled generation.
         if (body.race_date && ![today, tomorrow].includes(body.race_date)) {
           return Response.json({ok:false,error:'過去日の予想は全レース検証の再現処理を使用してください。'}, {status:400});
         }
         result = await runV8LiveGeneration(base44, {timeBudgetMs: TIME_BUDGET});
-        logs.push('V7/V8の事前・展示後予想を保存');
+        logs.push('V8の事前・展示後予想を保存');
         break;
       case 'exhibition':
         result = await fetchAndSaveExhibition(base44, today, TIME_BUDGET, logs, errors);
@@ -922,10 +917,10 @@ export default async function(req: Request) {
     // Carry phase failures into the admin status instead of reporting a partial run as success.
     const phaseErrors = result?.errors || result?.forecasts?.errors || [];
     if (Array.isArray(phaseErrors)) for (const item of phaseErrors) {
-      const message = typeof item === 'string' ? item : `${item?.phase || 'V7/V8'}: ${item?.reason || item?.error || '処理未完了'}`;
+      const message = typeof item === 'string' ? item : `${item?.phase || 'V8'}: ${item?.reason || item?.error || '処理未完了'}`;
       if (!errors.includes(message)) errors.push(message);
     }
-    if (result?.ok === false && errors.length === 0) errors.push(result.error || 'V7/V8予想の一部が未完了です。');
+    if (result?.ok === false && errors.length === 0) errors.push(result.error || 'V8予想の一部が未完了です。');
 
     // ステータス更新
     await updateAutoUpdateStatus(base44, today, tomorrow, step, { ...result, errors });

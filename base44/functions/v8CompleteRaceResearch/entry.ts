@@ -1,3 +1,4 @@
+// V8-only replay engine; preserve LIVE/REPLAY verification separation.
 // Persistent whole-day recovery: official inputs -> missing hypotheses -> result verification.
 import {createClientFromRequest} from 'npm:@base44/sdk@0.8.60';
 import {acquireLock,releaseLock} from '../../shared/concurrencyLock.js';

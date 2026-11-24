@@ -1,8 +1,8 @@
-// V7の共通取得処理はページ形式({items,next_cursor,has_more})を使うため0.8.60で実行する
+// 共通取得処理はページ形式({items,next_cursor,has_more})を使うため0.8.60で実行する
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.60';
-import { upsertResultAndVerify, getSettings, runAndSavePrediction } from '../../shared/predictionService.js';
+import { upsertResultAndVerify } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
-import { runV7AutoGeneration } from '../../shared/v7AutoGeneration.js';
+import { runV8LiveGeneration } from '../../shared/v8LiveGeneration.js';
 import { fetchHtml, parseBeforeInfo, parseResult, parseOdds3t, parseRaceCard, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 
 const num = (v: any) => {
@@ -130,20 +130,17 @@ async function processExhibition(base44: any, race: any, parsed: any) {
   if (parsed.wave_height != null) raceUpdate.wave_height = parsed.wave_height;
   await sr.Race.update(race.id, raceUpdate);
 
-  // 展示データの保存を起点に、V7のFINALを判定する。
-  // 締切・開催状態・二重登録の制御は共通の保存処理(v7PredictionStore)が保存の瞬間に行う。
-  let v7: any = null;
-  if (realCount >= activeBoatCount) {
-    v7 = await runV7AutoGeneration(base44, { race_date: race.race_date, race_keys: [race.race_key] })
-      .catch((e: any) => ({ error: e?.message || String(e) }));
-  }
+  // Save V8's own forecast immediately after this race's exhibition is saved.
+  const forecasts = realCount >= activeBoatCount
+    ? await runV8LiveGeneration(base44, { race_keys: [race.race_key], timeBudgetMs: 30000 })
+    : null;
 
   return {
     entries_updated: updated,
     exhibition_ready: realCount >= activeBoatCount,
     real_exhibition_count: realCount,
     active_boat_count: activeBoatCount,
-    v7_final: v7 ? { saved: v7.saved_final ?? 0, reasons: v7.reasons || {} } : null,
+    forecasts,
   };
 }
 
@@ -161,40 +158,11 @@ async function processOdds(base44: any, race: any, parsed: any) {
     captured_at: new Date().toISOString(), source: 'LOCAL',
   });
 
-  // TrifectaPredictionのactual_odds更新(既存FINALがある場合)
-  // bulkUpdateで一括更新し、DB API呼び出しを削減(レート制限回避)
-  const preds = await sr.RacePrediction.filter({ race_id: race.id, stage: 'FINAL' }, '-computed_at', 1);
-  if (preds && preds[0]) {
-    const trifectas = await sr.TrifectaPrediction.filter({ prediction_id: preds[0].id }, 'rank', 120);
-    const updates = trifectas.map((t: any) => {
-      const actualOdds = oddsMap[t.combination] || null;
-      const ev = actualOdds ? Math.round(t.probability * actualOdds * 10) / 10 : null;
-      return { id: t.id, actual_odds: actualOdds, current_odds: actualOdds, expected_value: ev };
-    });
-    if (updates.length) await sr.TrifectaPrediction.bulkUpdate(updates);
-  }
-
-  // FINAL生成条件: 展示データあり + 6艇 + オッズ120組(全組)あり
-  // 展示取得済みでFINAL未生成の場合、FINAL予想を生成
-  if (race.exhibition_ready && !race.has_final && oddsCount >= 120) {
-    const entryRows = await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []);
-    const entries = uniqueEntriesByBoat(entryRows);
-    if (entries.length >= 6) {
-      try {
-        const settings = await getSettings(base44);
-        const profiles = await sr.RacerPerformanceProfile.filter({}, '-updated_at', 5000).catch(() => []);
-        const profileByReg = new Map(profiles.map((p: any) => [p.registration_number, p]));
-        const rolling = await sr.RacerRollingStats.filter({}, '-calculated_at', 5000).catch(() => []);
-        const rollingByReg = new Map(rolling.map((r: any) => [r.registration_number, r]));
-        await runAndSavePrediction(base44, race, entries, settings, 'FINAL', oddsMap, profileByReg, rollingByReg);
-        return { odds_count: oddsCount, final_generated: true };
-      } catch (e: any) {
-        return { odds_count: oddsCount, final_error: e.message };
-      }
-    }
-  }
-
-  return { odds_count: oddsCount };
+  // Legacy predictions are retired. V8 reads the persisted quote as reference.
+  const forecasts = race.exhibition_ready
+    ? await runV8LiveGeneration(base44, { race_keys: [race.race_key], timeBudgetMs: 30000 })
+    : null;
+  return { odds_count: oddsCount, forecasts };
 }
 
 // === レース結果処理(決定論的パーサー出力 → RaceResult + RacerRaceHistory) ===

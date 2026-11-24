@@ -14,7 +14,7 @@ export default function BuyAlerts() {
             <h1 className="text-lg font-black text-[#123d9c] sm:text-xl">予想アラート</h1>
             <span className="rounded-md bg-sky-100 px-2 py-0.5 text-xs font-bold text-sky-800">V8</span>
           </div>
-          <p className="mt-1 text-xs leading-5 text-slate-500">事前の展開予想から、展示後のBUY判定まで。</p>
+          <p className="mt-1 text-xs leading-5 text-slate-500">V8の事前・展示後の買い目と保存状況を確認。</p>
         </div>
       </header>
       <V8DailyBoard />

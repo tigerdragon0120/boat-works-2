@@ -135,8 +135,9 @@ export function buildTheoryTrial(snapshot,nowText){
   baseline_top:snapshot.snapshot_stage==='PRE'?snapshot.pre_top_combination:snapshot.final_top_combination,
   baseline_tickets:baselineTickets,
   status:models.some(m=>m.status==='READY')?'RESEARCH_READY':'INSUFFICIENT',
-  missing:[...new Set([...models.flatMap(x=>x.missing||[]),...(baseline&&!baselineTickets.length?['BASELINE_TICKETS_INVALID']:[])])],
+  missing:[...new Set([...models.flatMap(x=>x.missing||[]),...(baseline?.length>0&&!baselineTickets.length?['BASELINE_TICKETS_INVALID']:[])])],
   provenance:{source:'V7FeatureSnapshot',no_post_deadline_inputs:true,
+   source_mode:snapshot.provenance?.source_mode||'V7_PREDICTION',
    original_v7_unchanged:true,no_buy_action:true,model_weights:'HYPOTHESIS_UNTRAINED',
    taro_official_formula_reproduced:false,odds_used_for_judgment:false,
    pre_exhibition_fields_excluded:snapshot.snapshot_stage==='PRE',exhibition_st_rule:'F_ZERO_CONTRIBUTION_NOT_SPEED'}

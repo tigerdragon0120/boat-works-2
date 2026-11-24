@@ -34,7 +34,8 @@ const baseline = () => ({
 const ticketSet = ['1-2-3', '1-2-4', '1-2-5', '1-2-6', '1-3-2', '1-3-4', '1-3-5', '1-3-6'];
 const pricing = (id, at, amount = 20) => ({
   id, race_id: race.id, stage: 'FINAL', captured_at: at, created_date: at,
-  odds_map: Object.fromEntries(ticketSet.map(ticket => [ticket, amount])),
+  odds_map: Object.fromEntries([1,2,3,4,5,6].flatMap(a => [1,2,3,4,5,6].flatMap(b => [1,2,3,4,5,6]
+    .filter(c => new Set([a,b,c]).size === 3).map(c => [[a,b,c].join('-'), amount])))),
 });
 const prediction = () => ({
   id: 'v7-final', race_id: race.id, race_key: race.race_key,
@@ -139,36 +140,48 @@ test('partial exhibition cannot produce BUY, and duplicate observed courses are 
   const duplicate = buildRaceForecast({ ...args, entries: args.entries.map(entry => ({ ...entry, exhibition_course: 1 })) }).record;
   assert.equal(duplicate.decision.status, 'WAIT');
 });
-test('research BUY requires stored prior hypothesis, existing server BUY and preserved current price conditions', () => {
-  const record = buildRaceForecast(finalArgs()).record;
-  assert.equal(record.decision.status, 'BUY');
+test('V8 records its own eight tickets independently of V7 predictions and never invents a BUY', () => {
+  const args = finalArgs();
+  const record = buildRaceForecast({ ...args, prediction: null }).record;
+  assert.equal(record.decision.status, 'WATCH');
   assert.equal(record.decision.research_only, true);
-  assert.equal(record.decision.source_prediction_id, 'v7-final');
-  assert.equal(record.decision.reference_odds_id, 'odds-original');
-  assert.equal(record.decision.reference_price_basis, 'LATEST_AVAILABLE_AT_PREDICTION_TIME_NOT_PROVEN_INPUT');
-  assert.equal(Object.hasOwn(record.decision, 'original_odds_id'), false);
+  assert.equal(record.decision.strategy, 'V8_OWN_FORECAST_1');
+  assert.equal(record.decision.source_prediction_id, null);
+  assert.equal(record.provenance.prediction_id, null);
+  assert.deepEqual(record.decision.tickets, record.research_tickets);
+  assert.equal(record.decision.tickets.length, 8);
   assert.equal(record.decision.odds_snapshot_id, 'odds-current');
   assert.equal(record.decision.price_checked, true);
   assert.equal(record.decision.valid_until, '2026-11-22T04:44:00.000Z');
-  assert.equal(buildRaceForecast({ ...finalArgs(), baseline: null }).record.decision.status, 'WAIT');
-  const unsigned = prediction(); unsigned.source = 'BROWSER';
-  assert.equal(buildRaceForecast({ ...finalArgs(), prediction: unsigned }).record.decision.status, 'WAIT');
-  const skip = prediction(); skip.plans.hit_8.judgment = 'SKIP';
-  assert.equal(buildRaceForecast({ ...finalArgs(), prediction: skip }).record.decision.status, 'SKIP');
+  assert.equal(buildRaceForecast({ ...args, baseline: null }).record.decision.status, 'WATCH');
+  for (const judgment of ['BUY', 'SKIP', 'WATCH']) {
+    const legacy = prediction(); legacy.plans.hit_8.judgment = judgment;
+    assert.deepEqual(buildRaceForecast({ ...args, prediction: legacy }).record, record);
+  }
+  const invalid = { ...prediction(), id: 'other', race_id: 'wrong-race', source: 'BROWSER', generated_at: '2099-01-01T00:00:00Z' };
+  assert.deepEqual(buildRaceForecast({ ...args, prediction: invalid }).record, record);
+  assert.equal(JSON.stringify(record).includes('V7'), false);
 });
-test('freshness, missing quotes and historical-price provenance fail closed', () => {
-  const args = finalArgs();
-  assert.equal(buildRaceForecast({ ...args, odds: pricing('stale', '2026-11-22T04:34:59Z') }).record.decision.status, 'WAIT');
-  assert.equal(buildRaceForecast({ ...args, odds: pricing('future', '2026-11-22T04:41:00Z') }).record.decision.status, 'WAIT');
-  const noPrices = prediction(); delete noPrices.pricing_snapshot;
-  assert.equal(buildRaceForecast({ ...args, prediction: noPrices }).record.decision.status, 'WATCH');
-  const wrongSource = prediction(); wrongSource.pricing_snapshot.race_id = 'other';
-  assert.equal(buildRaceForecast({ ...args, prediction: wrongSource }).record.decision.status, 'WATCH');
-  const hindsight = prediction(); hindsight.pricing_snapshot.captured_at = '2026-11-22T04:36:00Z';
-  assert.equal(buildRaceForecast({ ...args, prediction: hindsight }).record.decision.status, 'WATCH');
-  const laterInserted = prediction(); laterInserted.pricing_snapshot.created_date = '2026-11-22T04:36:00Z';
-  assert.equal(buildRaceForecast({ ...args, prediction: laterInserted }).record.decision.status, 'WATCH');
-  assert.equal(buildRaceForecast({ ...args, odds: pricing('down', '2026-11-22T04:39:00Z', 19.9) }).record.decision.status, 'WATCH');
+test('invalid or missing optional prices never alter the V8 tickets or admit future odds', () => {
+  const args = finalArgs(), original = buildRaceForecast(args).record;
+  const missingTicket = pricing('partial', '2026-11-22T04:39:00Z');
+  delete missingTicket.odds_map[original.research_tickets[0]];
+  const invalidQuotes = [null,
+    pricing('stale', '2026-11-22T04:34:59Z'),
+    pricing('future', '2026-11-22T04:41:00Z'),
+    { ...pricing('wrong-race', '2026-11-22T04:39:00Z'), race_id: 'other' },
+    { ...pricing('future-save', '2026-11-22T04:39:00Z'), created_date: '2026-11-22T04:41:00Z' },
+    missingTicket,
+  ];
+  for (const odds of invalidQuotes) {
+    const record = buildRaceForecast({ ...args, odds }).record;
+    assert.equal(record.decision.status, 'WATCH');
+    assert.equal(record.decision.price_checked, false);
+    assert.deepEqual(record.decision.odds, {});
+    assert.deepEqual(record.research_tickets, original.research_tickets);
+    assert.deepEqual(record.decision.tickets, original.research_tickets);
+    assert.ok(Date.parse(record.input_as_of) <= Date.parse(record.generated_at));
+  }
 });
 test('future or wrongly labelled baselines cannot establish prospective evidence', () => {
   const args = finalArgs();
