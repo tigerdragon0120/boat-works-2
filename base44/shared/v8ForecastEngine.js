@@ -271,64 +271,39 @@ function compare(baseline, boats, scenarios, complete, stage) {
     entrant_changed: changedEntrants, entry_changed: changedCourses.length > 0, checkpoint_results: checks,
   };
 }
-function decide({ race, stage, now, baseline, comparison, complete, prediction, odds, scenarios, meaningful }) {
+function decide({ race, stage, now, baseline, comparison, complete, odds, meaningful, tickets }) {
+  const ownTickets = validTickets(tickets, 8) ? [...tickets] : [];
   const out = {
-    status: 'WAIT', reasons: [], tickets: [], odds: {}, source_prediction_id: null,
-    source_judgment: null, price_checked: false, valid_until: null, score_type: 'V7_RESEARCH_GATE',
-    research_only: true, strategy: 'V7_SAVED_BUY_WITH_TWO_STAGE_EVIDENCE',
+    status: 'WAIT', reasons: [], tickets: ownTickets, odds: {}, source_prediction_id: null,
+    source_judgment: null, price_checked: false, valid_until: null, score_type: 'UNCALIBRATED_RESEARCH_SCORE',
+    research_only: true, strategy: 'V8_OWN_FORECAST_1',
   };
-  if (stage !== 'FINAL') { out.status = meaningful ? 'WATCH' : 'WAIT'; out.reasons.push('事前仮説を保存。展示・オッズ確認前のためBUYは判定しません'); return out; }
-  if (!complete || !meaningful) { out.reasons.push(!complete ? '6艇の展示進入・ST・タイムが揃っていません' : '比較できる事前評価項目が不足しています'); return out; }
-  if (!baseline || comparison.entrant_changed) { out.reasons.push(!baseline ? '保存済みの事前仮説がないため統合BUYを保留' : '出走選手が変わり事前仮説との対応を再確認する必要があります'); return out; }
-  const deadline = forecastTime(race.deadline), at = forecastTime(prediction?.generated_at), stored = forecastTime(prediction?.created_date);
-  const serverRecord = prediction?.source === 'SERVER' && typeof prediction?.record_hash === 'string' && prediction.record_hash.startsWith('server:');
-  if (!prediction?.id || prediction.race_id !== race.id || prediction.race_key !== race.race_key
-    || prediction.stage !== 'FINAL' || !serverRecord || at == null || stored == null
-    || at > now || stored > now || at >= deadline - CUTOFF_MS || stored >= deadline - CUTOFF_MS) {
-    out.reasons.push('締切前に保存されたサーバーV7最終予想を待っています'); return out;
+  if (!meaningful || !ownTickets.length) {
+    out.reasons.push('V8の買い目を作るための評価項目が不足しています'); return out;
   }
-  const plan = prediction.plans?.hit_8;
-  out.source_prediction_id = prediction.id;
-  out.source_judgment = typeof plan?.judgment === 'string' ? plan.judgment : null;
-  if (!validTickets(plan?.tickets, 8)) { out.reasons.push('V7の8点買い目を検証できません'); return out; }
-  out.tickets = [...plan.tickets];
-  if (plan.judgment !== 'BUY') { out.status = plan.judgment === 'SKIP' ? 'SKIP' : 'WATCH'; out.reasons.push('保存済みV7の研究判定は' + (plan.judgment || '未確定')); return out; }
-  const quoteAt = forecastTime(odds?.captured_at), quoteStored = forecastTime(odds?.created_date);
+  if (stage !== 'FINAL') {
+    out.status = 'WATCH';
+    out.reasons.push('V8の事前予想を記録し、展示取得後に買い目の変化を比較します'); return out;
+  }
+  if (!complete) { out.reasons.push('6艇の展示進入・ST・タイムが揃っていません'); return out; }
+  // WATCH denotes a recorded research candidate, never a calibrated purchase signal.
+  // V8's tickets and settlement do not depend on another engine or on available odds.
+  out.status = 'WATCH';
+  out.reasons.push('V8の展示後予想の8点を記録し、確定結果と照合します');
+  if (!baseline) out.reasons.push('事前予想がないため、展示前後の比較は未完了です');
+  else if (comparison.entrant_changed) out.reasons.push('出走選手が変わったため、展示前後の比較を保留しています');
+  const deadline = forecastTime(race.deadline), quoteAt = forecastTime(odds?.captured_at), quoteStored = forecastTime(odds?.created_date);
   if (!odds?.id || odds.race_id !== race.id || quoteAt == null || quoteAt > now
     || quoteStored == null || quoteStored > now || quoteStored >= deadline - CUTOFF_MS
-    || quoteAt >= deadline - CUTOFF_MS || now - quoteAt >= FINAL_ODDS_MAX_AGE_MS) {
-    out.reasons.push('5分以内に取得した締切前オッズを待っています'); return out;
-  }
-  const quotes = Object.fromEntries(plan.tickets.map(ticket => [ticket, bounded(odds.odds_map?.[ticket], 1, 1000000)]));
-  if (Object.values(quotes).some(value => value == null)) { out.reasons.push('8点すべてのオッズが揃っていません'); return out; }
+    || quoteAt >= deadline - CUTOFF_MS || now - quoteAt >= FINAL_ODDS_MAX_AGE_MS) return out;
+  const quotes = Object.fromEntries(ownTickets.map(ticket => [ticket, bounded(odds.odds_map?.[ticket], 1, 1000000)]));
+  if (Object.values(quotes).some(value => value == null)) return out;
   out.odds = quotes;
   out.odds_snapshot_id = odds.id;
   out.odds_captured_at = odds.captured_at;
   out.valid_until = new Date(Math.min(deadline - CUTOFF_MS, quoteAt + FINAL_ODDS_MAX_AGE_MS)).toISOString();
-  const originalSnapshot = prediction.pricing_snapshot;
-  const originalAt = forecastTime(originalSnapshot?.captured_at);
-  const originalStored = forecastTime(originalSnapshot?.created_date);
-  const original = originalSnapshot?.odds_map || null;
-  if (!originalSnapshot?.id || originalSnapshot.race_id !== race.id || originalAt == null
-    || originalStored == null || originalStored > at || originalStored >= deadline - CUTOFF_MS
-    || originalAt > at || originalAt >= deadline - CUTOFF_MS || !original
-    || plan.tickets.some(ticket => bounded(original[ticket], 1, 1000000) == null)) {
-    out.status = 'WATCH'; out.reasons.push('V7生成前に取得・保存された参照オッズが不足しているため、独立の価格条件を保留'); return out;
-  }
-  // The nearest previously stored snapshot is a reference price, not proven V7 input.
-  out.reference_odds_id = originalSnapshot.id;
-  out.reference_odds_captured_at = originalSnapshot.captured_at;
-  out.reference_price_basis = 'LATEST_AVAILABLE_AT_PREDICTION_TIME_NOT_PROVEN_INPUT';
   out.price_checked = true;
-  out.price_rule = 'EACH_SELECTED_ODDS_AT_LEAST_PRE_PREDICTION_REFERENCE';
-  const declined = plan.tickets.filter(ticket => quotes[ticket] < original[ticket]);
-  if (declined.length) { out.status = 'WATCH'; out.reasons.push(declined.length + '点でV7生成前の参照オッズを下回るため、独立の価格条件を保留'); return out; }
-  const leaders = new Set(plan.tickets.map(ticket => Number(ticket[0])));
-  if (!scenarios[0] || !leaders.has(scenarios[0].leader)) {
-    out.status = 'WATCH'; out.reasons.push('展開仮説の本線とV7買い目の1着候補が一致しないため保留'); return out;
-  }
-  out.status = 'BUY';
-  out.reasons.push('事前仮説との比較と6艇の展示確認が完了', '保存済みV7研究BUYと展開本線の1着候補が一致', '8点すべての現在オッズがV7生成前の参照オッズ以上。参照値とV7が使った入力との一致は未確認');
+  out.price_rule = 'RECORDED_REFERENCE_ONLY_NO_BUY_THRESHOLD';
   return out;
 }
 function conditionsSnapshot(race, weather, stage, now, missing) {
@@ -358,7 +333,7 @@ function fingerprint(value) {
   for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
-function buildForecast({ race, entries = [], stage, now: nowText, baseline = null, prediction = null, odds = null, weather = null }, replay = false) {
+function buildForecast({ race, entries = [], stage, now: nowText, baseline = null, odds = null, weather = null }, replay = false) {
   const now = forecastTime(nowText), deadline = forecastTime(race?.deadline);
   if (!STAGES.includes(stage)) return { ok: false, reason: 'INVALID_STAGE' };
   if (!race?.id || !/^\d{4}-\d{2}-\d{2}_\d{2}_\d{2}$/.test(race?.race_key || '')
@@ -405,19 +380,19 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   const scenarios = evaluated.meaningful && enoughBoats ? buildScenarios(evaluated.boats, complete) : [];
   const savedBaseline = useBaseline(baseline, race, now, replay);
   const comparison = compare(savedBaseline, allEvaluated, scenarios, complete, stage);
+  const researchTickets = candidateTickets(evaluated.boats, scenarios);
   const decision = replay ? {
     status: 'REPLAY', reasons: ['取得済み入力から再構成した事後検証用の展開予想'],
     tickets: [], odds: {}, price_checked: false, valid_until: null, research_only: true,
     strategy: 'REPLAY_RESEARCH_ONLY', source_prediction_id: null,
-  } : decide({ race, stage, now, baseline: savedBaseline, comparison, complete, prediction, odds, scenarios, meaningful: evaluated.meaningful });
+  } : decide({ race, stage, now, baseline: savedBaseline, comparison, complete, odds, meaningful: evaluated.meaningful, tickets: researchTickets });
   const conditions = conditionsSnapshot(race, weather, stage, now, missing);
   const maxSourceAt = Math.max(sourceTime(race), ...sorted.map(sourceTime),
     forecastTime(decision.odds_captured_at) || 0,
-    forecastTime(conditions.observed_at) || 0,
-    decision.source_prediction_id ? forecastTime(prediction.generated_at) || 0 : 0);
+    forecastTime(conditions.observed_at) || 0);
   const priorIdentity = stage === 'FINAL' ? savedBaseline?.id || null : null;
   const contentHash = fingerprint({ boats: allEvaluated, baseline_id: priorIdentity,
-    prediction_id: stage === 'FINAL' ? prediction?.id || null : null, odds_id: stage === 'FINAL' ? odds?.id || null : null,
+    odds_id: stage === 'FINAL' ? decision.odds_snapshot_id || null : null,
     odds: decision.odds, decision, conditions });
   return { ok: true, record: {
     forecast_key: FORECAST_REVISION + ':' + race.race_key + ':' + stage + (stage === 'FINAL' ? ':' + contentHash : ''),
@@ -425,21 +400,21 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     venue_code: String(race.venue_code).padStart(2, '0'), venue_name: race.venue_name || '',
     race_number: Number(race.race_number), deadline: race.deadline, stage, generated_at: new Date(now).toISOString(),
     input_as_of: new Date(maxSourceAt).toISOString(), boats: allEvaluated,
-    scenarios, top_scenario_key: scenarios[0]?.key || null, research_tickets: candidateTickets(evaluated.boats, scenarios),
+    scenarios, top_scenario_key: scenarios[0]?.key || null, research_tickets: researchTickets,
     comparison, decision, priority_score: round(scenarios[0]?.score ?? 0),
     quality: !evaluated.meaningful || (stage === 'FINAL' && !complete) || !enoughBoats ? 'PARTIAL' : 'CAPTURED',
     missing: [...new Set(missing)], conditions, exhibition_complete: complete,
     score_type: 'UNCALIBRATED_RESEARCH_SCORE', model_label: '展開仮説 V8',
     gender_model: race.is_womens === true ? 'WOMENS' : race.is_womens === false ? 'OPEN' : 'UNKNOWN',
     provenance: {
-      source: 'Race_RaceEntry_PredictionV7_OddsSnapshot', input_revision: FORECAST_REVISION,
+      source: 'Race_RaceEntry_OddsSnapshot', input_revision: FORECAST_REVISION,
       entry_ids: sorted.map(entry => entry.id), race_updated_at: race.updated_date || race.created_date,
-      baseline_id: priorIdentity, prediction_id: decision.source_prediction_id,
+      baseline_id: priorIdentity, prediction_id: null, decision_revision: 'V8_OWN_FORECAST_1',
       odds_snapshot_id: stage === 'FINAL' ? decision.odds_snapshot_id || null : null,
       source_times_checked: true, future_inputs_excluded: true,
       exhibition_used: stage === 'FINAL', odds_used: stage === 'FINAL' && decision.price_checked,
       weather_used_for_scoring: false, tide_used_for_scoring: false,
-      original_v7_unchanged: true, research_only: true, content_fingerprint: contentHash,
+      research_only: true, content_fingerprint: contentHash,
       fingerprint_kind: 'FNV1A_CHANGE_DETECTION_NOT_SIGNATURE',
     },
   } };
@@ -448,5 +423,6 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
 
 // The prospective entry point keeps its cutoff and original source-time checks.
 export const buildRaceForecast = input => buildForecast(input, false);
-// Only the whitelisting replay adapter uses this entry point. It never supplies odds or V7 BUY.
+// Only the whitelisting replay adapter uses this entry point. It never supplies live odds.
 export const buildReplayHypothesis = input => buildForecast(input, true);
+
