@@ -1,3 +1,4 @@
+// Changed exhibition inputs bypass the unchanged-input throttle.
 // V8-only scheduled generation: own saved tickets, no legacy prediction dependency.
 import {createClientFromRequest} from 'npm:@base44/sdk@0.8.60';
 import {runV8LiveGeneration} from '../../shared/v8LiveGeneration.js';

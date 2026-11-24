@@ -1,3 +1,4 @@
+// Changed exhibition inputs bypass the unchanged-input throttle.
 // V8-only standalone capture; scheduled consolidation calls the same shared runner.
 import {createClientFromRequest} from 'npm:@base44/sdk@0.8.60';
 import {runV8LiveCapture} from '../../shared/v8LiveCapture.js';
