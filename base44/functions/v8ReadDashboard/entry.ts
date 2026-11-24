@@ -3,6 +3,7 @@ import {createClientFromRequest} from 'npm:@base44/sdk@0.8.60';
 import {jstDate,dateValid,readV8Rows,canonicalForecasts,canonicalReplayForecasts,latestForecasts,firstBuyForecasts,currentDecision,groupBy,publicRow,buildRaceProgress,isCompleteFinalForecast} from '../../shared/v8Repository.js';
 import {utcMs} from '../../shared/v7FeatureObservation.js';
 import {SETTLEMENT_REVISION} from '../../shared/v8Settlement.js';
+import {selectDisplayOddsSnapshot} from '../../shared/v8DisplayOdds.js';
 
 const compactRace=(r:any)=>({id:r.id,race_key:r.race_key,race_date:r.race_date,venue_code:r.venue_code,venue_name:r.venue_name||r.venue,race_number:r.race_number,deadline:r.deadline,status:r.status,exhibition_ready:r.exhibition_ready,is_womens:r.is_womens,series_name:r.series_name});
 const safeReadCode=(error:any)=>{
@@ -52,11 +53,18 @@ export default async function(req:Request):Promise<Response>{
       query={race_date:{$in:dates}};raceQuery=query;
       races=await readEntity('Race',raceQuery,{budget,maxPages:16});
     }
-    const [raw,externalRaw,verificationRaw,theories]=await Promise.all([
+    const [raw,externalRaw,verificationRaw,theories,displayOdds]=await Promise.all([
       readEntity('V8RaceForecast',query,{budget,maxPages:90}),
       admin&&mode!=='day'?readEntity('V8ExternalPrediction',query,{budget,maxPages:30}):Promise.resolve([]),
       readEntity('V8ForecastVerification',{...query,...(!admin?{source_kind:{$in:['FORECAST','REPLAY']}}:{})},{budget,maxPages:90}),
-      admin&&mode==='race'?readEntity('V8TheoryTrial',query,{budget,maxPages:6}):Promise.resolve([])
+      admin&&mode==='race'?readEntity('V8TheoryTrial',query,{budget,maxPages:6}):Promise.resolve([]),
+      // Optional display data travels with the existing race request. It does not
+      // create another paid function invocation or make forecast reads depend on odds.
+      mode==='race'&&races.length===1
+        ?readEntity('OddsSnapshot',{race_id:races[0].id},{budget:Math.min(budget,Date.now()+6000),maxPages:4,sort:'-captured_at'})
+          .then(rows=>{const snapshot=selectDisplayOddsSnapshot(rows,races[0],now);return {status:snapshot?'AVAILABLE':'MISSING',snapshot};})
+          .catch(()=>({status:'UNAVAILABLE',snapshot:null}))
+        :Promise.resolve({status:'MISSING',snapshot:null})
     ]);
     const allRaceKeys=new Set(races.map(r=>r.race_key).filter(Boolean));
     const raceGroups=groupBy(races,'race_key');
@@ -90,6 +98,7 @@ export default async function(req:Request):Promise<Response>{
     const publicForecast=(f:any)=>({...publicRow(f),effective_status:currentDecision(f,racesById.get(f.race_id),now)});
     return Response.json({ok:true,mode,generated_at:new Date(now).toISOString(),race_date:dates[0]||races[0]?.race_date,
       races:races.map(compactRace),forecasts:[...selected.values()].map(publicForecast),
+      ...(mode==='race'?{display_odds:displayOdds}:{}),
       replay_forecasts:[...replaySelected.values()].map(row=>({...publicRow(row),effective_status:'REPLAY'})),replay_verifications:replayVerified.map(publicRow),race_progress:progress.rows,
       buy_forecasts:buys.map(publicForecast),
       verifications:verified.map(publicRow),buy_verifications:settlements.filter(v=>v.source_kind==='FORECAST'&&buyIds.has(v.forecast_id)).map(publicRow),

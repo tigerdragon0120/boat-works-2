@@ -6,12 +6,13 @@ import {stripTypeScriptTypes} from 'node:module';
 import * as repository from '../base44/shared/v8Repository.js';
 import {utcMs} from '../base44/shared/v7FeatureObservation.js';
 import {SETTLEMENT_REVISION} from '../base44/shared/v8Settlement.js';
+import {selectDisplayOddsSnapshot} from '../base44/shared/v8DisplayOdds.js';
 import {isReplay} from '../src/components/liveV8/v8StudyView.js';
 
 const handlerSource=readFileSync(new URL('../base44/functions/v8ReadDashboard/entry.ts',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
 const executable=stripTypeScriptTypes(handlerSource).replace('export default async function','return async function');
 const names=['jstDate','dateValid','readV8Rows','canonicalForecasts','canonicalReplayForecasts','latestForecasts','firstBuyForecasts','currentDecision','groupBy','publicRow','buildRaceProgress','isCompleteFinalForecast'];
-const factory=new Function('createClientFromRequest',...names,'utcMs','SETTLEMENT_REVISION',executable);
+const factory=new Function('createClientFromRequest',...names,'utcMs','SETTLEMENT_REVISION','selectDisplayOddsSnapshot',executable);
 const clientSource=readFileSync(new URL('../src/components/liveV8/v8Client.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
 const displayDecision=new Function('isReplay',clientSource+'\nreturn displayDecision;')(isReplay);
 const NOW=Date.parse('2026-11-23T05:30:00.000Z');
@@ -25,11 +26,11 @@ const forecast=(stage='FINAL')=>({
 });
 const matches=(record,query)=>Object.entries(query).every(([key,value])=>value&&typeof value==='object'&&'$in' in value?value.$in.includes(record[key]):record[key]===value);
 
-async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],forecasts=[forecast()],verifications=[],failRaceCursor=false,raceReadErrors=[],raceLookupError=null,mockReadTimers=false}={}){
+async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],forecasts=[forecast()],verifications=[],odds=[],oddsReadError=null,failRaceCursor=false,raceReadErrors=[],raceLookupError=null,mockReadTimers=false}={}){
   t.mock.timers.enable({apis:mockReadTimers?['Date','setTimeout']:['Date'],now:NOW});
   t.mock.method(console,'error',()=>{});
   const calls=[];
-  const rowsByEntity={Race:raceRows,V8RaceForecast:forecasts,V8ExternalPrediction:[],V8ForecastVerification:verifications,V8TheoryTrial:[]};
+  const rowsByEntity={Race:raceRows,V8RaceForecast:forecasts,V8ExternalPrediction:[],V8ForecastVerification:verifications,V8TheoryTrial:[],OddsSnapshot:odds};
   const sr={};
   for(const [name,rows] of Object.entries(rowsByEntity)){
     sr[name]={
@@ -37,6 +38,7 @@ async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],fo
       async filter(query,options){
         calls.push({entity:name,query:structuredClone(query),options:structuredClone(options)});
         assert.equal(typeof options,'object');
+        if(name==='OddsSnapshot'&&oddsReadError)throw oddsReadError;
         if(name==='Race'&&raceReadErrors.length)throw raceReadErrors.shift();
         if(name==='Race'&&options.cursor&&failRaceCursor)throw new Error('read failed on second page');
         const selected=rows.filter(row=>matches(row,query));
@@ -47,7 +49,7 @@ async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],fo
     };
   }
   const client={auth:{me:async()=>null},asServiceRole:{entities:sr}};
-  const handler=factory(()=>client,...names.map(name=>repository[name]),utcMs,SETTLEMENT_REVISION);
+  const handler=factory(()=>client,...names.map(name=>repository[name]),utcMs,SETTLEMENT_REVISION,selectDisplayOddsSnapshot);
   const response=await handler(new Request('https://test.invalid/dashboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
   return {response,body:await response.json(),calls};
 }
@@ -76,6 +78,52 @@ test('race detail uses the same ambiguity hold as the day board',async(t)=>{
   assert.deepEqual(out.body.buy_forecasts,[]);
   assert.equal(out.body.race_date,race.race_date);
   assert.deepEqual(out.calls.find(call=>call.entity==='Race').query,{race_key:race.race_key});
+  assert.equal(out.calls.some(call=>call.entity==='OddsSnapshot'),false);
+});
+
+const oddsSnapshot=(extra={})=>({id:'odds-old',race_id:race.id,stage:'FINAL',captured_at:'2026-11-23T05:25:00Z',created_date:'2026-11-23T05:25:00.100Z',odds_map:{'1-2-3':10,'1-3-2':20},...extra});
+
+test('race API adds a single latest eligible odds snapshot without changing saved V8 records',async t=>{
+  const saved=forecast('PRE'),before=structuredClone(saved);
+  const latest=oddsSnapshot({id:'odds-current',captured_at:'2026-11-23T05:29:00Z',created_date:'2026-11-23T05:29:00.100Z',
+    odds_map:{'1-2-3':'12.5','1-3-2':0,'1-1-2':15,'1-2-4':false},created_by:'private@example.test',secret:'private-token'});
+  const out=await exercise(t,{forecasts:[saved],odds:[oddsSnapshot(),latest,
+    oddsSnapshot({id:'future',captured_at:'2026-11-23T05:31:00Z',created_date:'2026-11-23T05:31:00.100Z'}),
+    oddsSnapshot({id:'wrong-race',race_id:'race-other'}),oddsSnapshot({id:'unconfirmed',created_date:null})]});
+  assert.equal(out.response.status,200);
+  assert.equal(out.body.display_odds.status,'AVAILABLE');
+  assert.equal(out.body.display_odds.snapshot.id,latest.id);
+  assert.deepEqual(out.body.display_odds.snapshot.odds_map,{'1-2-3':12.5});
+  assert.equal(out.calls.filter(call=>call.entity==='OddsSnapshot').length,1);
+  assert.deepEqual(saved,before);
+  assert.equal(out.body.forecasts[0].decision.odds,undefined);
+  assert.doesNotMatch(JSON.stringify(out.body.display_odds),/private|secret|token/);
+});
+
+test('an odds read failure leaves saved forecasts visible and exposes no provider error details',async t=>{
+  const out=await exercise(t,{oddsReadError:sourceError(403)});
+  assert.equal(out.response.status,200);
+  assert.equal(out.body.ok,true);assert.equal(out.body.forecasts.length,1);
+  assert.deepEqual(out.body.display_odds,{status:'UNAVAILABLE',snapshot:null});
+  assert.equal(out.calls.filter(call=>call.entity==='OddsSnapshot').length,1);
+  assert.doesNotMatch(JSON.stringify(out.body),/private|credential|secret|authorization|token/);
+});
+
+test('day overview does not issue any new odds reads or include display-only odds',async t=>{
+  const out=await exercise(t,{body:{mode:'day',race_date:race.race_date},odds:[oddsSnapshot()]});
+  assert.equal(out.response.status,200);
+  assert.equal(out.calls.some(call=>call.entity==='OddsSnapshot'),false);
+  assert.equal(Object.hasOwn(out.body,'display_odds'),false);
+});
+
+test('closed-race odds selection keeps the last pre-deadline snapshot and never merges missing prices',()=>{
+  const latest=oddsSnapshot({id:'latest-partial',captured_at:'2026-11-23T05:55:00Z',created_date:'2026-11-23T05:55:00.100Z',odds_map:{'1-2-3':12}});
+  const rows=[oddsSnapshot(),latest,oddsSnapshot({id:'after-close',captured_at:'2026-11-23T06:01:00Z',created_date:'2026-11-23T06:01:00.100Z'}),
+    oddsSnapshot({id:'stored-after-close',captured_at:'2026-11-23T05:59:00Z',created_date:'2026-11-23T06:01:00Z'})];
+  const before=structuredClone(rows);
+  const selected=selectDisplayOddsSnapshot(rows,race,Date.parse('2026-11-23T06:15:00Z'));
+  assert.equal(selected.id,latest.id);assert.deepEqual(selected.odds_map,{'1-2-3':12});
+  assert.deepEqual(rows,before);
 });
 test('race identity check consumes every cursor page, including a duplicate on page two',async(t)=>{
   const duplicateRows=Array.from({length:201},(_,index)=>({...race,id:index===0?race.id:'race-duplicate-'+index}));

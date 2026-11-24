@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useState} from 'react';
 import {useAuth} from '@/lib/AuthContext';
 import RaceScenarioDiagram from './RaceScenarioDiagram';
 import V8ExternalPanel from './V8ExternalPanel';
+import {buildTicketOdds} from './v8TicketOdds';
 import {isReplay, latestStudyStage, studyStageLabel, studySettlementIndex, studyProgressLabel} from './v8StudyView';
 import {BUTTON_CLASS, displayForecastStatus, formatTime, latestStage, timeMs, useClock, useV8Dashboard} from './v8Client';
 
@@ -20,8 +21,24 @@ function ConditionsPanel({forecast}) {
 }
 
 const TICKET_COLORS=['','bg-white text-slate-900 border-slate-400','bg-slate-900 text-white border-slate-900','bg-red-600 text-white border-red-600','bg-blue-600 text-white border-blue-600','bg-yellow-400 text-slate-900 border-yellow-400','bg-emerald-600 text-white border-emerald-600'];
-function TicketList({tickets=[]}) {
-  return <ol role="list" aria-label="三連単の買い目" className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-2 sm:gap-3">
+function TicketList({tickets=[],displayOdds,race,now,blocked=false}) {
+  const odds=buildTicketOdds({tickets,displayOdds,race,now,blocked});
+  if(!tickets.length)return null;
+  const unavailable=['UNAVAILABLE','INVALID'].includes(odds.status);
+  const quoteLabel=odds.historical?'締切前の参考値':odds.stale?'更新待ち・前回取得値':'取得時点の参考値';
+  return <div className="space-y-3">
+    <div className="rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-3 sm:px-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <span className="text-xs font-bold text-sky-900">合成オッズ（{tickets.length}点）</span>
+        <strong className="text-2xl font-black tabular-nums text-sky-900">{odds.composite==null?'—':odds.composite.toLocaleString('ja-JP',{minimumFractionDigits:2,maximumFractionDigits:2})}{odds.composite!=null&&<span className="ml-1 text-xs font-semibold">倍</span>}</strong>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-5">
+        <span className="font-semibold text-slate-600">{unavailable?'オッズの確認待ち':`${odds.available}/${odds.total}点取得${odds.composite==null?'・全点取得後に計算':''}`}</span>
+        {odds.capturedAt&&<span className={odds.stale?'font-semibold text-amber-800':'text-slate-500'}>オッズ取得 {formatTime(odds.capturedAt,true)} · {quoteLabel}</span>}
+      </div>
+      <p className="mt-2 text-[10px] leading-5 text-slate-500">払戻額をそろえる配分での参考倍率です。検証成績は各買い目100円で計算します。</p>
+    </div>
+    <ol role="list" aria-label="三連単の買い目と取得オッズ" className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-2 sm:gap-3">
     {tickets.map((ticket,index)=>{
       const value=String(ticket), boats=value.split('-');
       const valid=/^[1-6]-[1-6]-[1-6]$/.test(value)&&new Set(boats).size===3;
@@ -39,11 +56,16 @@ function TicketList({tickets=[]}) {
             </React.Fragment>)}
           </div>:<strong className="min-w-0 break-all text-xl">{value}</strong>}
         </div>
+        <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-2 text-xs">
+          <span className="text-slate-500">オッズ</span>
+          <strong className="tabular-nums text-slate-800">{odds.quotes[value]==null?<span className="font-medium text-slate-400">{unavailable?'確認待ち':'未取得'}</span>:<>{odds.quotes[value].toLocaleString('ja-JP',{minimumFractionDigits:1,maximumFractionDigits:1})}<span className="ml-1 text-[10px] font-medium text-slate-500">倍</span></>}</strong>
+        </div>
       </li>;
     })}
-  </ol>;
+    </ol>
+  </div>;
 }
-function ForecastCard({forecast,title,subtitle,step,empty,emptyDetail='出走表・選手情報を確認して予想を保存します。締切後の補完分も検証用の記録として蓄積します。'}) {
+function ForecastCard({forecast,title,subtitle,step,empty,displayOdds,race,now,oddsBlocked,emptyDetail='出走表・選手情報を確認して予想を保存します。締切後の補完分も検証用の記録として蓄積します。'}) {
   const [selected,setSelected]=useState(null);
   useEffect(()=>setSelected(forecast?.top_scenario_key || null),[forecast?.id,forecast?.top_scenario_key]);
   const scenarios=forecast?.scenarios || [], active=scenarios.find(row=>row.key===selected) || scenarios[0];
@@ -53,13 +75,13 @@ function ForecastCard({forecast,title,subtitle,step,empty,emptyDetail='出走表
       <RaceScenarioDiagram scenario={active} boats={forecast.boats} stage={forecast.stage}/>
       <div className="mt-3 grid grid-cols-2 gap-2">{scenarios.slice(0,6).map(scenario=><button type="button" key={scenario.key} onClick={()=>setSelected(scenario.key)} aria-pressed={active?.key===scenario.key} className={`rounded-lg border px-2.5 py-2 text-left transition ${active?.key===scenario.key?'border-sky-500 bg-sky-50 ring-1 ring-sky-100':'border-slate-200 bg-white hover:border-sky-300'}`}><span className="block text-xs font-bold text-slate-800">{scenario.label}</span><span className="mt-1 block text-[10px] text-slate-500">展開評価 {score(scenario.score) ?? '—'} / 100</span></button>)}</div>
       {active&&<div className="mt-3 rounded-lg bg-slate-50 p-3"><p className="text-xs font-semibold leading-6 text-slate-800">{active.reason}</p>{!!active.checkpoints?.length&&<><p className="mt-2 text-[11px] font-bold text-sky-700">{forecast.stage==='FINAL'?'判断の確認項目':'展示で確認すること'}</p><ul className="mt-1 space-y-1 text-[11px] leading-5 text-slate-600">{active.checkpoints.map((text,index)=><li key={index}>・{typeof text==='string'?text:text.label || text.description || '確認項目'}</li>)}</ul></>}</div>}
-      {!!forecast.research_tickets?.length&&<details open className="mt-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">V8の買い目・保存済み（{forecast.research_tickets.length}点）</summary><div className="mt-2"><TicketList tickets={forecast.research_tickets}/></div></details>}
+      {!!forecast.research_tickets?.length&&<details open className="mt-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">V8の買い目・保存済み（{forecast.research_tickets.length}点）</summary><div className="mt-2"><TicketList tickets={forecast.research_tickets} displayOdds={displayOdds} race={race} now={now} blocked={oddsBlocked}/></div></details>}
       <p className="mt-3 text-[10px] leading-5 text-slate-400">展開評価は未校正の比較スコアです。発生確率・的中率ではありません。</p>
     </>}
   </article>;
 }
 
-function TheoryComparison({rows=[],admin}) {
+function TheoryComparison({rows=[],admin,displayOdds,race,now,oddsBlocked}) {
   const latest=[...rows].sort((a,b)=>(timeMs(b.generated_at) || 0)-(timeMs(a.generated_at) || 0));
   const final=latest.find(row=>['FINAL','LOCK'].includes(row.stage)), pre=latest.find(row=>row.stage==='PRE');
   const [stage,setStage]=useState('FINAL'), record=stage==='FINAL'?final:pre;
@@ -67,7 +89,7 @@ function TheoryComparison({rows=[],admin}) {
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-bold text-slate-900">同じレースを、複数の見方で比較</h4><p className="mt-1 text-xs leading-5 text-slate-500">各ロジックの買い目を独立して保存し、一致と違いを比較します。</p></div><div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">{[['PRE','展示を使わない評価'],['FINAL','展示後']].map(([key,label])=><button type="button" key={key} onClick={()=>setStage(key)} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${stage===key?'bg-white text-sky-700 shadow-sm':'text-slate-500'}`}>{label}</button>)}</div></div>
     {!record?<p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">{admin?'この時点のロジック比較は、まだ保存されていません。':'詳細なロジック比較は管理者の研究画面で確認できます。'}</p>:<>
       <p className="text-[11px] text-slate-500">保存：{formatTime(record.generated_at,true)} · モデル版 {record.revision || '—'}</p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{(record.models||[]).map(model=><article key={model.key} className="rounded-xl border border-slate-200 bg-white p-4"><div className="flex items-start justify-between gap-2"><h5 className="text-sm font-bold text-slate-900">{THEORIES[model.key] || model.label}</h5><span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${model.status==='READY'?'bg-sky-50 text-sky-700':'bg-slate-100 text-slate-500'}`}>{model.status==='READY'?'比較可能':'情報不足'}</span></div>{model.key==='EXHIBITION_RELATIVE'&&<p className="mt-2 text-[11px] leading-5 text-slate-500">公開アイデアを参考にした独自式。本人公式のSUM・シンSUMの再現ではありません。</p>}<div className="mt-3"><TicketList tickets={model.tickets || []}/></div>{typeof model.score==='number'&&<p className="mt-3 text-xs text-slate-600">比較評価 <span className="font-bold text-slate-900">{(model.score<=1?model.score*100:model.score).toFixed(1)}</span><span className="ml-1 text-[10px] text-slate-400">未校正</span></p>}</article>)}</div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{(record.models||[]).map(model=><article key={model.key} className="rounded-xl border border-slate-200 bg-white p-4"><div className="flex items-start justify-between gap-2"><h5 className="text-sm font-bold text-slate-900">{THEORIES[model.key] || model.label}</h5><span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${model.status==='READY'?'bg-sky-50 text-sky-700':'bg-slate-100 text-slate-500'}`}>{model.status==='READY'?'比較可能':'情報不足'}</span></div>{model.key==='EXHIBITION_RELATIVE'&&<p className="mt-2 text-[11px] leading-5 text-slate-500">公開アイデアを参考にした独自式。本人公式のSUM・シンSUMの再現ではありません。</p>}<div className="mt-3"><TicketList tickets={model.tickets || []} displayOdds={displayOdds} race={race} now={now} blocked={oddsBlocked}/></div>{typeof model.score==='number'&&<p className="mt-3 text-xs text-slate-600">比較評価 <span className="font-bold text-slate-900">{(model.score<=1?model.score*100:model.score).toFixed(1)}</span><span className="ml-1 text-[10px] text-slate-400">未校正</span></p>}</article>)}</div>
     </>}
   </div>;
 }
@@ -84,6 +106,7 @@ export default function V8RaceJourney({race}) {
   const baseline=baseMode==='DAY_BEFORE'?dayBefore:baseMode==='PRE'?pre:linked || dayBefore || pre;
   const currentRace=(data?.races || []).find(row=>row.id===race?.id || (row.race_key && row.race_key===race?.race_key)) || race;
   const ambiguous=(data?.ambiguous_race_keys || []).includes(currentRace?.race_key);
+  const oddsBlocked=!!error||!data||data.complete===false||ambiguous;
   const progress=(data?.race_progress || []).find(row=>row.race_id===currentRace?.id);
   const chosen=final || baseline;
   const decision=displayForecastStatus(chosen,now,currentRace,{ambiguous,unavailable:!!error||!data||data.complete===false});
@@ -112,12 +135,12 @@ export default function V8RaceJourney({race}) {
     <div className="space-y-4 p-3 sm:p-5">
       {error&&<p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm leading-6 text-rose-800">{error}</p>}
       {!!data?.errors?.length&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">一部の記録を確認できていません。取得済みの記録のみを表示しています。</p>}
-      {loading&&!data&&!error?<div role="status" className="grid animate-pulse gap-4 sm:grid-cols-2"><div className="h-64 rounded-xl bg-slate-100"/><div className="h-64 rounded-xl bg-slate-100"/><span className="sr-only">保存済み予想を読み込み中</span></div>:tab==='EXTERNAL'?<V8ExternalPanel race={race} rows={data?.external || []} admin={admin} onSaved={refresh}/>:tab==='THEORIES'?<TheoryComparison rows={data?.theories || []} admin={admin}/>:<>
+      {loading&&!data&&!error?<div role="status" className="grid animate-pulse gap-4 sm:grid-cols-2"><div className="h-64 rounded-xl bg-slate-100"/><div className="h-64 rounded-xl bg-slate-100"/><span className="sr-only">保存済み予想を読み込み中</span></div>:tab==='EXTERNAL'?<V8ExternalPanel race={race} rows={data?.external || []} admin={admin} onSaved={refresh}/>:tab==='THEORIES'?<TheoryComparison rows={data?.theories || []} admin={admin} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked}/>:<>
         {(isReplay(baseline)||isReplay(final))&&<div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs leading-6 text-violet-800"><strong>事後検証の記録を含みます。</strong> 締切後に取得・再計算した分も、予想と結果の比較に使います。保存時刻を残し、締切前に出した予想の成績と分けて集計します。</div>}
         {priorChoiceCount>1&&<div className="flex flex-wrap items-center gap-2"><span className="text-xs text-slate-500">表示する事前記録</span>{[['AUTO','照合に使った記録'],['DAY_BEFORE','前日'],['PRE','当日・展示前']].map(([key,label])=><button type="button" key={key} onClick={()=>setBaseMode(key)} className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${baseMode===key?'border-sky-300 bg-sky-50 text-sky-800':'border-slate-200 text-slate-500'}`}>{label}</button>)}</div>}
         <div className="grid items-start gap-3 lg:grid-cols-2">
-          <ForecastCard forecast={baseline} title="事前の展開予想" subtitle="展示情報を使わない展開の読み" step="1" empty="事前情報からの予想を補完します"/>
-          <ForecastCard forecast={final} title="展示後の展開予想" subtitle="進入・ST・タイムを加えて照合" step="2" empty={finalEmpty.title} emptyDetail={finalEmpty.detail}/>
+          <ForecastCard forecast={baseline} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="事前の展開予想" subtitle="展示情報を使わない展開の読み" step="1" empty="事前情報からの予想を補完します"/>
+          <ForecastCard forecast={final} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="展示後の展開予想" subtitle="進入・ST・タイムを加えて照合" step="2" empty={finalEmpty.title} emptyDetail={finalEmpty.detail}/>
         </div>
         {final&&<div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-bold text-slate-900">展示で何が変わったか</h4><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${comparison?.status==='SUPPORTED'?'bg-emerald-100 text-emerald-800':comparison?.status==='CHANGED'?'bg-amber-100 text-amber-900':'bg-white text-slate-500'}`}>{COMPARE[comparison?.status] || '照合記録を確認中'}</span></div>{linked?<p className="mt-2 text-[11px] text-slate-500">比較元：{studyStageLabel(linked)}{isReplay(linked)?'（事後検証）':''} {formatTime(linked.generated_at,true)} 保存{baseline?.id!==linked.id?'（現在左側に表示中の版とは異なります）':''}</p>:<p className="mt-2 text-xs leading-5 text-amber-800">この展示後予想に紐づく事前記録を確認中です。補完が済むと、展示を加える前後で結果を比較できます。</p>}<ul className="mt-2 space-y-1 text-xs leading-6 text-slate-700">{(comparison?.changes || []).map((text,index)=><li key={index}>・{text}</li>)}</ul></div>}
         <div className={`rounded-xl border p-4 sm:p-5 ${TONES[decision.tone]}`}>
