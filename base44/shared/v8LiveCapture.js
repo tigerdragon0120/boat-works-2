@@ -12,6 +12,9 @@ const hasExhibition=(entries)=>entries.some(e=>['exhibition_time','exhibition_st
 // Retrying appends only missing immutable keys, using the same standalone lock.
 export async function runV8LiveCapture(client,options={}){
   const sr=client.asServiceRole.entities,started=Date.now(),today=jstDate(),tomorrow=jstDate(1);
+  const raceKeys=Array.isArray(options.race_keys)?[...new Set(options.race_keys.filter(k=>typeof k==='string'&&/^\d{4}-\d{2}-\d{2}_\d{2}_\d{2}$/.test(k)))]:null;
+  if(raceKeys&&raceKeys.length===0)return {ok:false,error:'INVALID_RACE_KEYS',created:0};
+  const scope={race_date:{$in:[today,tomorrow]},...(raceKeys?{race_key:{$in:raceKeys}}:{})};
   const requestedBudget=Number.isFinite(options.timeBudgetMs)?Math.max(0,options.timeBudgetMs):80000;
   const deadlineMs=Math.min(started+requestedBudget,Number.isFinite(options.deadlineMs)?options.deadlineMs:Infinity);
   const phaseBudget=milliseconds=>Math.min(deadlineMs,Date.now()+milliseconds);
@@ -28,8 +31,8 @@ export async function runV8LiveCapture(client,options={}){
     if(expired()){stopForBudget();return finish();}
     const budget=phaseBudget(30000);
     const [races,prior,racerDatasetRead]=await Promise.all([
-      readV8Rows(sr.Race,{race_date:{$in:[today,tomorrow]}},{budget,maxPages:8}),
-      readV8Rows(sr.V8RaceForecast,{race_date:{$in:[today,tomorrow]}},{budget,maxPages:40}),
+      readV8Rows(sr.Race,scope,{budget,maxPages:8}),
+      readV8Rows(sr.V8RaceForecast,scope,{budget,maxPages:40}),
       loadLatestRacerDataset(sr,{budget:phaseBudget(15000)})
         .then(dataset=>({dataset,status:dataset?'READY':'ABSENT'}))
         .catch(error=>{console.warn('[V8_RACER_TERM] optional dataset unavailable',String(error?.message||error).slice(0,120));return {dataset:null,status:'READ_FAILED'};})
@@ -67,18 +70,15 @@ export async function runV8LiveCapture(client,options={}){
         const results=await readV8Rows(sr.RaceResult,{race_id:race.id},{budget:phaseBudget(8000),maxPages:2});
         if(expired()){stopForBudget();break;}
         if(results.some(r=>r.is_finished||r.result_status==='RESULT_FINAL')){hold('RESULT_ALREADY_AVAILABLE');continue;}
-        let prediction=null,odds=null,weather=null;
+        let odds=null,weather=null;
         if(stage==='FINAL'){
           const readBudget=phaseBudget(15000);
-          const [predictions,quotes,weathers]=await Promise.all([
-            readV8Rows(sr.PredictionV7,{race_id:race.id,stage:'FINAL',source:'SERVER'},{budget:readBudget,maxPages:2}),
+          const [quotes,weathers]=await Promise.all([
             readV8Rows(sr.OddsSnapshot,{race_id:race.id},{budget:readBudget,maxPages:3,sort:'-captured_at'}),
             readV8Rows(sr.V7WeatherObservation,{race_id:race.id,kind:'PRE_REFERENCE'},{budget:readBudget,maxPages:2})
           ]);
-          if(predictions.length===1)prediction=predictions[0];
           const eligibleQuotes=quotes.filter(q=>utcMs(q.captured_at)!=null&&utcMs(q.created_date)!=null&&utcMs(q.captured_at)<=Date.now()&&utcMs(q.created_date)<=Date.now()).sort((a,b)=>utcMs(b.captured_at)-utcMs(a.captured_at));
           odds=eligibleQuotes[0]||null;
-          if(prediction)prediction={...prediction,pricing_snapshot:eligibleQuotes.find(q=>utcMs(q.captured_at)<=utcMs(prediction.generated_at)&&utcMs(q.created_date)<=utcMs(prediction.generated_at))||null};
           weather=weathers.filter(w=>utcMs(w.observed_at)<=Date.now()&&utcMs(w.observed_at)<utcMs(fresh.deadline)-60000).sort((a,b)=>utcMs(b.observed_at)-utcMs(a.observed_at))[0]||null;
         }
         if(expired()){stopForBudget();break;}
@@ -86,7 +86,7 @@ export async function runV8LiveCapture(client,options={}){
         const generatedAt=new Date().toISOString();
         const racerEvidence=enrichLatestRacerEntries({race:fresh,entries,stage,asOf:generatedAt,dataset:racerDatasetRead.dataset});
         racerEvidence.provenance.dataset_read_status=racerDatasetRead.status;
-        const output=buildRaceForecast({race:fresh,entries:racerEvidence.entries,stage,now:generatedAt,baseline,prediction,odds,weather});
+        const output=buildRaceForecast({race:fresh,entries:racerEvidence.entries,stage,now:generatedAt,baseline,odds,weather});
         if(!output.ok){hold(output.reason||'BUILD_HELD');continue;}
         output.record.provenance.racer_term_evidence=racerEvidence.provenance;
         if(racerEvidence.provenance.applied_boats>0){
@@ -114,3 +114,4 @@ export async function runV8LiveCapture(client,options={}){
   }catch(error){if(expired()){stopForBudget();return finish();}console.error('[V8_CAPTURE] fatal',String(error?.message||error).slice(0,160));return {...finish(),ok:false,error:'FORECAST_READ_OR_SAVE_FAILED',details:String(error?.message||error).slice(0,120)};}
   finally{if(lock)await releaseLock(client,lock).catch(()=>{});}
 }
+
