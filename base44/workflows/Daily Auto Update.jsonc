@@ -1,6 +1,6 @@
 {
   "name": "Daily Auto Update",
-  "description": "\u5c55\u793a\u30fb\u30aa\u30c3\u30ba\u30fb\u7d50\u679c\u30fb\u5f53\u65e5/\u7fcc\u65e5\u51fa\u8d70\u8868\u306e\u53ce\u96c6\u5c02\u7528\u3002\u4e88\u60f3\u751f\u6210\u306fV8 Two Stage Forecasts\u306b\u96c6\u7d04\u3057\u3001V6\u4ee5\u524d\u306e\u4e88\u60f3/\u63a1\u70b9\u3092\u81ea\u52d5\u5b9f\u884c\u3057\u306a\u3044\u3002\u6bce\u65e506:00\u301c23:55 JST\u3002",
+  "description": "5\u5206\u3054\u3068\u306b\u5c55\u793a\u30fb\u30aa\u30c3\u30ba\u30fb\u7d50\u679c\u30fb\u756a\u7d44\u3092\u53ce\u96c6\u3057\u3001\u5b8c\u4e86\u76f4\u5f8c\u306bV7\u2192V8\u306e\u4e88\u60f3\u3092\u4fdd\u5b58\u3002\u53d6\u5f970\u4ef6\u3067\u3082\u4fdd\u5b58\u6e08\u307f\u30c7\u30fc\u30bf\u304b\u3089\u4e8b\u524d\u30fb\u5c55\u793a\u5f8c\u4e88\u60f3\u3092\u88dc\u5b8c\u3059\u308b\u3002\u6bce\u65e506:00\u301c23:55 JST\u3002",
   "trigger": {
     "condition": null,
     "config": {
@@ -22,7 +22,7 @@
     "document": {
       "dsl": "1.0.0",
       "name": "daily_auto_update",
-      "version": "1.0",
+      "version": "1.1.0",
       "namespace": "base44"
     },
     "do": [
@@ -35,10 +35,24 @@
               "step": "auto"
             }
           },
+          "then": "capture_forecasts",
+          "x-base44": {
+            "title": "\u5c55\u793a\u30fb\u30aa\u30c3\u30ba\u3092\u53d6\u5f97",
+            "description": "5\u5206\u3054\u3068\u306b\u516c\u5f0f\u30c7\u30fc\u30bf\u3092\u53d6\u5f97\u3057\u3001\u5b8c\u4e86\u5f8c\u306f\u5f85\u6a5f\u3092\u631f\u307e\u305aV7/V8\u4e88\u60f3\u3078\u9032\u3080\u3002"
+          }
+        }
+      },
+      {
+        "capture_forecasts": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v8GenerateLiveForecasts",
+            "args": {}
+          },
           "then": "end",
           "x-base44": {
-            "title": "\u6bce\u65e5\u81ea\u52d5\u66f4\u65b0",
-            "description": "\u516c\u5f0f\u30c7\u30fc\u30bf\u81ea\u52d5\u53d6\u5f97\u30fb\u4e88\u60f3\u751f\u6210(5\u5206\u6bce)"
+            "title": "\u53d6\u5f97\u5f8c\u3059\u3050V7\u2192V8\u4e88\u60f3\u3092\u4fdd\u5b58",
+            "description": "\u53d6\u5f97\u6e08\u307f\u30c7\u30fc\u30bf\u3067\u524d\u65e5\u30fb\u5c55\u793a\u524d\u30fb\u5c55\u793a\u5f8c\u4e88\u60f3\u3092\u4fdd\u5b58\u3059\u308b\u3002\u65b0\u898f\u53d6\u5f970\u4ef6\u3067\u3082\u65e2\u5b58\u30c7\u30fc\u30bf\u304b\u3089\u88dc\u5b8c\u3059\u308b\u3002"
           }
         }
       }
