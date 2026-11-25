@@ -4,6 +4,8 @@ import RaceScenarioDiagram from './RaceScenarioDiagram';
 import V8ExternalPanel from './V8ExternalPanel';
 import {buildTicketOdds} from './v8TicketOdds';
 import V8SumPanel, {SumTheoryModelDetails} from './V8SumPanel';
+import V8RacerEvidencePanel from './V8RacerEvidencePanel';
+import {selectJourneyBaseline} from './v8RacerEvidenceView';
 import {originalTimingSummary, savedSumView, SUM_LABELS, sumModelStatus, sumTimeText} from './v8SumView';
 import {isReplay, latestStudyStage, studyStageLabel, studySettlementIndex, studyProgressLabel} from './v8StudyView';
 import {scenarioViews, scenarioSelectionContext, selectedScenarioView} from './v8ScenarioView';
@@ -105,7 +107,7 @@ function ForecastCard({forecast,verification,selectionMode='',title,subtitle,ste
   return <article aria-label={title} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
     <header className="mb-3 flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sm font-black text-sky-700">{step}</span><div className="min-w-0"><h4 className="font-bold text-slate-900">{title}</h4><p className="mt-0.5 text-[11px] leading-5 text-slate-500">{forecast?`${studyStageLabel(forecast)} · ${formatTime(forecast.generated_at,true)} 保存`:subtitle}</p>{forecast&&<span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${isReplay(forecast)?'bg-violet-50 text-violet-700':'bg-sky-50 text-sky-700'}`}>{isReplay(forecast)?'事後検証・補完した予想':'締切前に保存'}</span>}</div></header>
     {!forecast?<div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 text-center"><span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl text-slate-400">○</span><p className="text-sm font-semibold text-slate-600">{empty}</p><p className="mt-2 max-w-xs text-xs leading-6 text-slate-500">{emptyDetail}</p></div>:<>
-      <RaceScenarioDiagram scenario={active} boats={forecast.boats} stage={forecast.stage}/>
+      <RaceScenarioDiagram scenario={active} boats={forecast.boats} stage={forecast.stage==='FINAL'&&forecast.racer_evidence?.course_basis==='EXPECTED'?'PRE':forecast.stage}/>
       <p className="mt-3 text-[11px] leading-5 text-slate-600">展開を選ぶと、その展開の買い目と合成オッズに切り替わります。</p>
       <div role="group" aria-label={`${title}の展開選択`} className="mt-2 grid grid-cols-2 gap-2">{views.map(view=>{
         const scenario=view.scenario, chosen=active?.key===scenario.key;
@@ -117,6 +119,7 @@ function ForecastCard({forecast,verification,selectionMode='',title,subtitle,ste
         </button>;
       })}</div>
       {active&&<div className="mt-3 rounded-lg bg-slate-50 p-3"><p className="text-xs font-semibold leading-6 text-slate-800">{active.reason}</p>{!!active.checkpoints?.length&&<><p className="mt-2 text-[11px] font-bold text-sky-700">{forecast.stage==='FINAL'?'判断の確認項目':'展示で確認すること'}</p><ul className="mt-1 space-y-1 text-[11px] leading-5 text-slate-600">{active.checkpoints.map((text,index)=><li key={index}>・{typeof text==='string'?text:text.label || text.description || '確認項目'}</li>)}</ul></>}</div>}
+      <V8RacerEvidencePanel forecast={forecast} scenario={active}/>
       <V8SumPanel forecast={forecast}/>
       {activeView&&<section aria-label="選択した展開の買い目" data-scenario-key={active.key} className="mt-4 rounded-xl border border-sky-200 bg-sky-50/30 p-3 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -162,7 +165,7 @@ export default function V8RaceJourney({race}) {
   const dayBefore=latestStage(liveRecords,'DAY_BEFORE'), pre=latestStage(liveRecords,'PRE') || latestStage(replayRecords,'PRE'), final=latestStudyStage(liveRecords,'FINAL') || latestStudyStage(replayRecords,'FINAL');
   const referenceId=final?.comparison?.baseline_id || final?.baseline_id;
   const linked=records.find(row=>row.id===referenceId) || null;
-  const baseline=baseMode==='DAY_BEFORE'?dayBefore:baseMode==='PRE'?pre:linked || dayBefore || pre;
+  const baseline=selectJourneyBaseline({mode:baseMode,linked,pre,dayBefore});
   const currentRace=(data?.races || []).find(row=>row.id===race?.id || (row.race_key && row.race_key===race?.race_key)) || race;
   const ambiguous=(data?.ambiguous_race_keys || []).includes(currentRace?.race_key);
   const oddsBlocked=!!error||!data||data.complete===false||ambiguous;
@@ -188,7 +191,7 @@ export default function V8RaceJourney({race}) {
   return <section className="overflow-hidden rounded-2xl border border-sky-200 bg-white shadow-sm" aria-label="事前展開と展示後の比較">
     <header className="border-b border-slate-100 bg-gradient-to-r from-sky-50 via-white to-white p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-extrabold tracking-[0.2em] text-sky-700">BOAT WORKS 2 · RACE JOURNEY</p><h3 className="mt-1 text-lg font-black text-slate-900 sm:text-xl">事前の読みから、展示・結果の検証へ</h3><p className="mt-1 text-xs leading-6 text-slate-500">全レースの予想を蓄積し、展示で変わった読みを結果と照合する。</p></div><button type="button" disabled={loading} onClick={()=>void refresh()} className={BUTTON_CLASS} aria-label="展開予想を再読込">{loading?'読込中…':'再読込'}</button></div>
-      <ol className="mt-4 grid grid-cols-3 gap-2 text-center">{[{label:'事前の展開',ready:!!(dayBefore || pre),detail:baseline?isReplay(baseline)?'事後補完済み':dayBefore?'前日保存あり':'展示前を保存':'補完待ち'},{label:'展示で照合',ready:!!final,detail:final?isReplay(final)?'事後補完済み':COMPARE[comparison?.status] || '展示後を保存':finalEmpty.step},{label:'結果で検証',ready:!!(finalSettlement&&baselineSettlement),detail:finalSettlement&&baselineSettlement?'2段階を照合済み':finalSettlement||baselineSettlement?'一部照合済み':progress?studyProgressLabel(progress):'結果照合待ち'}].map((step,index)=><li key={step.label} className={`rounded-lg px-2 py-2 ${step.ready?'bg-sky-50':'bg-slate-50'}`}><span className={`block text-xs font-bold ${step.ready?'text-sky-800':'text-slate-500'}`}>{index+1}. {step.label}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{step.detail}</span></li>)}</ol>
+      <ol className="mt-4 grid grid-cols-3 gap-2 text-center">{[{label:'事前の展開',ready:!!(dayBefore || pre),detail:baseline?isReplay(baseline)?'事後補完済み':baseline.stage==='DAY_BEFORE'?'前日保存あり':'展示前を保存':'補完待ち'},{label:'展示で照合',ready:!!final,detail:final?isReplay(final)?'事後補完済み':COMPARE[comparison?.status] || '展示後を保存':finalEmpty.step},{label:'結果で検証',ready:!!(finalSettlement&&baselineSettlement),detail:finalSettlement&&baselineSettlement?'2段階を照合済み':finalSettlement||baselineSettlement?'一部照合済み':progress?studyProgressLabel(progress):'結果照合待ち'}].map((step,index)=><li key={step.label} className={`rounded-lg px-2 py-2 ${step.ready?'bg-sky-50':'bg-slate-50'}`}><span className={`block text-xs font-bold ${step.ready?'text-sky-800':'text-slate-500'}`}>{index+1}. {step.label}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{step.detail}</span></li>)}</ol>
     </header>
     <div className="flex overflow-x-auto border-b border-slate-100 px-3 sm:px-5" role="tablist" aria-label="予想の比較内容">{[['JOURNEY','展開・結果検証'],['THEORIES','ロジック別'],['EXTERNAL','現地予想屋']].map(([key,label])=><button type="button" role="tab" aria-selected={tab===key} key={key} onClick={()=>setTab(key)} className={`shrink-0 border-b-2 px-3 py-3 text-sm font-bold transition sm:px-4 ${tab===key?'border-sky-600 text-sky-800':'border-transparent text-slate-500 hover:text-slate-800'}`}>{label}</button>)}</div>
     <div className="space-y-4 p-3 sm:p-5">
@@ -196,7 +199,7 @@ export default function V8RaceJourney({race}) {
       {!!data?.errors?.length&&<p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">一部の記録を確認できていません。取得済みの記録のみを表示しています。</p>}
       {loading&&!data&&!error?<div role="status" className="grid animate-pulse gap-4 sm:grid-cols-2"><div className="h-64 rounded-xl bg-slate-100"/><div className="h-64 rounded-xl bg-slate-100"/><span className="sr-only">保存済み予想を読み込み中</span></div>:tab==='EXTERNAL'?<V8ExternalPanel race={race} rows={data?.external || []} admin={admin} onSaved={refresh}/>:tab==='THEORIES'?<TheoryComparison rows={data?.theories || []} admin={admin} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked}/>:<>
         {(isReplay(baseline)||isReplay(final))&&<div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs leading-6 text-violet-800"><strong>事後検証の記録を含みます。</strong> 締切後に取得・再計算した分も、予想と結果の比較に使います。保存時刻を残し、締切前に出した予想の成績と分けて集計します。</div>}
-        {priorChoiceCount>1&&<div className="flex flex-wrap items-center gap-2"><span className="text-xs text-slate-500">表示する事前記録</span>{[['AUTO','照合に使った記録'],['DAY_BEFORE','前日'],['PRE','当日・展示前']].map(([key,label])=><button type="button" key={key} onClick={()=>setBaseMode(key)} className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${baseMode===key?'border-sky-300 bg-sky-50 text-sky-800':'border-slate-200 text-slate-500'}`}>{label}</button>)}</div>}
+        {priorChoiceCount>1&&<div className="flex flex-wrap items-center gap-2"><span className="text-xs text-slate-500">表示する事前記録</span>{[['AUTO',linked?'照合に使った記録':'最新の事前記録'],['DAY_BEFORE','前日'],['PRE','当日・展示前']].map(([key,label])=><button type="button" key={key} onClick={()=>setBaseMode(key)} className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${baseMode===key?'border-sky-300 bg-sky-50 text-sky-800':'border-slate-200 text-slate-500'}`}>{label}</button>)}</div>}
         <div className="grid items-start gap-3 lg:grid-cols-2">
           <ForecastCard forecast={baseline} verification={baselineSettlement} selectionMode={baseMode} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="事前の展開予想" subtitle="展示情報を使わない展開の読み" step="1" empty="事前情報からの予想を補完します"/>
           <ForecastCard forecast={final} verification={finalSettlement} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="展示後の展開予想" subtitle="進入・ST・タイムを加えて照合" step="2" empty={finalEmpty.title} emptyDetail={finalEmpty.detail}/>

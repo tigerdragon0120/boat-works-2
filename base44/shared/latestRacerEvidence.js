@@ -1,6 +1,7 @@
 // Pure, prospective-only bridge from an immutable official term dataset to the
 // existing V7/V8 inputs. It never writes RaceEntry or changes model coefficients.
 export const LATEST_RACER_EVIDENCE_REVISION = 'OFFICIAL_TERM_EVIDENCE_1';
+export const V8_RACER_PROFILE_REVISION = 'V8_RACER_PROFILE_1';
 
 const numeric = value => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -21,10 +22,76 @@ const firstValid = (row, keys, min, max) => {
   return null;
 };
 
+const rankNames = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
+const wholeCount = (value, max = 100000) => {
+  const n = numeric(value); return Number.isInteger(n) && n >= 0 && n <= max ? n : null;
+};
+const rawCourse = (record, course) => {
+  if (!Array.isArray(record?.course_stats)) return record?.course_stats?.[String(course)];
+  const matches = record.course_stats.filter(row => courseNumber(row?.course ?? row?.course_number) === course);
+  return matches.length === 1 ? matches[0] : null;
+};
+const rateOf = (count, n) => n > 0 && count !== null ? count * 100 / n : null;
+
+// These are observed-course statistics, not boat-number statistics. Preserve
+// missing values instead of turning an absent observation into a zero rate.
+function racerCourseProfile(record, course) {
+  const raw = rawCourse(record, course), n = wholeCount(raw?.entries);
+  const counts = rankNames.map(rank => {
+    const value = raw?.[rank + '_count'];
+    return n === 0 && (value == null || value === '') ? 0 : n === null ? null : wholeCount(value, n);
+  });
+  const invalidCount = rankNames.some((rank, index) => {
+    const value = raw?.[rank + '_count'];
+    return value != null && value !== '' && counts[index] === null;
+  }) || (n !== null && counts.reduce((sum, value) => sum + (value ?? 0), 0) > n);
+  if (invalidCount) counts.fill(null);
+  const sumCounts = (limit) => counts.slice(0, limit).every(value => value !== null)
+    ? counts.slice(0, limit).reduce((sum, value) => sum + value, 0) : null;
+  const l0 = n === null ? null : n === 0 && (raw?.l0_count == null || raw.l0_count === '') ? 0 : wholeCount(raw?.l0_count, n);
+  const l1 = n === null ? null : n === 0 && (raw?.l1_count == null || raw.l1_count === '') ? 0 : wholeCount(raw?.l1_count, n);
+  const l = l0 !== null && l1 !== null && l0 + l1 <= n ? l0 + l1 : null;
+  const output = {
+    course, sample_size: n,
+    ...Object.fromEntries(rankNames.map((rank, index) => [rank + '_count', counts[index]])),
+    first_rate: rateOf(counts[0], n), second_rate: rateOf(counts[1], n), third_rate: rateOf(counts[2], n),
+    top2_rate: rateOf(sumCounts(2), n), top3_rate: rateOf(sumCounts(3), n),
+    avg_st: n > 0 ? bounded(raw?.avg_st, 0, 1) : null,
+    avg_st_rank: n > 0 ? bounded(raw?.avg_st_rank, 1, 6) : null,
+    f_count: n === null ? null : n === 0 && (raw?.f_count == null || raw.f_count === '') ? 0 : wholeCount(raw?.f_count, n),
+    l_count: l,
+  };
+  return output;
+}
+
+function emptyCoursePrior() {
+  return {sample_size: null, first_rate: null, second_rate: null, third_rate: null,
+    top2_rate: null, top3_rate: null, avg_st: null, avg_st_rank: null};
+}
+
+// Every value uses the same complete dataset. A missing metric is not silently
+// averaged over a smaller, unidentified subset while showing the full sample.
+function datasetCoursePriors(records, validIdentity) {
+  const result = {};
+  for (let course = 1; course <= 6; course++) {
+    const prior = emptyCoursePrior(); result[String(course)] = prior;
+    if (!validIdentity) continue;
+    const rows = records.map(record => racerCourseProfile(record, course));
+    if (rows.some(row => row.sample_size === null)) continue;
+    prior.sample_size = rows.reduce((sum, row) => sum + row.sample_size, 0);
+    const observed = rows.filter(row => row.sample_size > 0);
+    if (!prior.sample_size) continue;
+    for (const metric of ['first_rate', 'second_rate', 'third_rate', 'top2_rate', 'top3_rate', 'avg_st', 'avg_st_rank']) {
+      if (observed.every(row => row[metric] !== null)) {
+        prior[metric] = observed.reduce((sum, row) => sum + row[metric] * row.sample_size, 0) / prior.sample_size;
+      }
+    }
+  }
+  return result;
+}
+
 function courseCounts(record, course) {
-  const raw = Array.isArray(record.course_stats)
-    ? record.course_stats.find(row => courseNumber(row?.course ?? row?.course_number) === course)
-    : record.course_stats?.[String(course)];
+  const raw = rawCourse(record, course);
   const n = numeric(raw?.entries), counts = ['first_count', 'second_count', 'third_count'].map(key => numeric(raw?.[key]));
   if (!Number.isInteger(n) || n < 1 || n > 100000 || counts.some(value => !Number.isInteger(value) || value < 0)
     || counts.reduce((sum, value) => sum + value, 0) > n) return null;
@@ -38,11 +105,17 @@ const existingCourseMap = entry => Array.isArray(entry.course_stats)
 export function enrichLatestRacerEntries({race, entries = [], stage, asOf, dataset, recordMode = 'LIVE'}) {
   // Return fresh entry objects even when no dataset can be used. Nested objects
   // are replaced before enrichment; callers' archived inputs remain untouched.
-  const enriched = Array.isArray(entries) ? entries.map(row => ({...row})) : [];
+  const enriched = Array.isArray(entries) ? entries.map(row => {
+    const fresh = {...row};
+    // A caller-supplied profile cannot bypass this dataset's availability and
+    // identity checks, even when enrichment is unavailable on this attempt.
+    delete fresh.v8_racer_profile;
+    return fresh;
+  }) : [];
   const provenance = {
     revision: LATEST_RACER_EVIDENCE_REVISION, race_key: race?.race_key || null, stage,
     as_of: asOf, status: 'NOT_APPLIED', reason: null, source: null,
-    matched_boats: 0, applied_boats: 0, missing_registration_numbers: [], boats: [],
+    matched_boats: 0, applied_boats: 0, profiled_boats: 0, missing_registration_numbers: [], boats: [],
   };
   const skip = reason => ({entries: enriched, provenance: {...provenance, reason}});
   const at = timestamp(asOf), deadline = timestamp(race?.deadline);
@@ -72,6 +145,11 @@ export function enrichLatestRacerEntries({race, entries = [], stage, asOf, datas
     if (byRegistration.has(reg)) duplicates.add(reg);
     byRegistration.set(reg, record);
   }
+  const samePeriod = record => record?.term_key === meta.term_key
+    && record.term_start_date === meta.term_start_date && record.term_end_date === meta.term_end_date;
+  const validDatasetIdentity = duplicates.size === 0 && byRegistration.size === dataset.records.length
+    && dataset.records.every(samePeriod);
+  const coursePriors = datasetCoursePriors(dataset.records, validDatasetIdentity);
   for (const entry of enriched) {
     const reg = registration(entry), record = byRegistration.get(reg), boat = courseNumber(entry.boat_number);
     if (!record || duplicates.has(reg) || record.term_key !== meta.term_key
@@ -79,6 +157,15 @@ export function enrichLatestRacerEntries({race, entries = [], stage, asOf, datas
       provenance.missing_registration_numbers.push(reg); continue;
     }
     provenance.matched_boats++;
+    const profileCourses = Object.fromEntries(Array.from({length: 6}, (_, index) => [String(index + 1), racerCourseProfile(record, index + 1)]));
+    entry.v8_racer_profile = {
+      revision: V8_RACER_PROFILE_REVISION, registration_number: reg,
+      player_name: typeof record.racer_name === 'string' && record.racer_name.trim() ? record.racer_name.trim() : null,
+      source: {...Object.fromEntries(['dataset_key', 'term_key', 'source_url', 'source_file', 'term_start_date', 'term_end_date', 'checksum']
+        .map(key => [key, meta[key] ?? null])), available_at: provenance.source.available_at},
+      courses: profileCourses, course_priors: structuredClone(coursePriors),
+    };
+    provenance.profiled_boats++;
     const sourceRef = 'official-term:' + meta.dataset_key + ':' + reg;
     const perBoat = {boat_number: boat, registration_number: reg, term_key: record.term_key, fields: {}, courses: {}};
     let applied = false;
@@ -105,7 +192,7 @@ export function enrichLatestRacerEntries({race, entries = [], stage, asOf, datas
       if (validDate(old?.term_end_date) && old.term_end_date > meta.term_end_date) continue;
       const evidence = {...counts, source_ref: sourceRef, acquired_at: provenance.source.available_at,
         term_key: meta.term_key, term_end_date: meta.term_end_date};
-      courses[String(course)] = {win_percent: counts.rank_counts[0] / counts.n * 100, starts: counts.n,
+      courses[String(course)] = {...profileCourses[String(course)], win_percent: counts.rank_counts[0] / counts.n * 100, starts: counts.n,
         term_key: meta.term_key, term_end_date: meta.term_end_date, source_ref: sourceRef, acquired_at: provenance.source.available_at};
       if (course === selectedV8) { perBoat.courses.v8 = {...evidence, win_percent: courses[String(course)].win_percent}; applied = true; }
       if (course !== selectedV7) continue;

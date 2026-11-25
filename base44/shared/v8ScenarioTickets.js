@@ -1,6 +1,8 @@
 // Conditional ticket sets built only from a forecast's frozen boat/scenario inputs.
 // Ranking weights express BOAT WORKS 2's scenario assumptions, not probabilities.
-export const SCENARIO_TICKET_REVISION = 'V8_SCENARIO_TICKETS_1';
+import {roleAdjustedBoatScore} from './v8RacerParameters.js';
+export const SCENARIO_TICKET_REVISION = 'V8_SCENARIO_TICKETS_2_RACER_PARAMETERS';
+const SAVED_TICKET_REVISIONS = new Set(['V8_SCENARIO_TICKETS_1',SCENARIO_TICKET_REVISION]);
 export const SCENARIO_TICKET_BASIS = 'FORECAST_SNAPSHOT';
 const METHODS = new Set(['ESCAPE', 'SASHI', 'MAKURI', 'MAKURISASHI']);
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -18,7 +20,7 @@ function scenarioInputs({scenario, boats, stage, exhibitionComplete}) {
   if (active.length < 3 || active.length > 6 || active.some(boat => !finite(boat.score) || boat.score < 0 || boat.score > 100)) return null;
   const courseKey = stage === 'FINAL' && exhibitionComplete === true ? 'observed_course' : 'expected_course';
   if (active.some(boat => !boatNumber(boat[courseKey])) || new Set(active.map(boat => boat[courseKey])).size !== active.length) return null;
-  const ordered = active.map(boat => ({boat_number:boat.boat_number, score:boat.score, course:boat[courseKey]}))
+  const ordered = active.map(boat => ({boat_number:boat.boat_number, score:boat.score, course:boat[courseKey],racer_parameters:boat.racer_parameters}))
     .sort((a,b) => a.course - b.course || a.boat_number - b.boat_number);
   const leader = ordered.find(boat => boat.boat_number === scenario.leader);
   return leader ? {ordered, leader} : null;
@@ -60,7 +62,7 @@ export function buildScenarioTickets({scenario, boats, stage, exhibitionComplete
     if (second.boat_number === third.boat_number) continue;
     candidates.push({
       ticket:[leader.boat_number,second.boat_number,third.boat_number].join('-'),
-      score:second.score * .62 + third.score * .38 + methodSupport(second) + methodSupport(third) * .55
+      score:roleAdjustedBoatScore(second,2) * .62 + roleAdjustedBoatScore(third,3) * .38 + methodSupport(second) + methodSupport(third) * .55
         + beneficiaryScore(second) * 3 + beneficiaryScore(third) + pairSupport(second,third),
     });
   }
@@ -83,11 +85,11 @@ export function scenarioTicketView(forecast, scenarioKey) {
   const active = new Set(input.ordered.map(boat => boat.boat_number));
   const expected = Math.min(8,(active.size - 1) * (active.size - 2));
   const hasStoredFields = ['tickets','ticket_revision','ticket_basis'].some(key => Object.hasOwn(scenario,key))
-    || forecast.revision === 'V8_FORECAST_3_SCENARIOS'
+    || /^V8_FORECAST_(?:[3-9]|\d{2,})_/.test(forecast.revision||'')
     || Object.hasOwn(forecast.provenance || {},'scenario_ticket_revision');
   if (hasStoredFields) {
     // A damaged new-format record must not silently become a different prediction.
-    if (scenario.ticket_revision !== SCENARIO_TICKET_REVISION || scenario.ticket_basis !== SCENARIO_TICKET_BASIS
+    if (!SAVED_TICKET_REVISIONS.has(scenario.ticket_revision) || scenario.ticket_basis !== SCENARIO_TICKET_BASIS
       || !Array.isArray(scenario.tickets) || scenario.tickets.length !== expected
       || new Set(scenario.tickets).size !== expected || scenario.tickets.some(ticket => !validTicket(ticket)
         || Number(ticket[0]) !== scenario.leader || ticket.split('-').some(value => !active.has(Number(value))))) return base;

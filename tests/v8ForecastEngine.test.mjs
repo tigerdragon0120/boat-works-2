@@ -207,10 +207,10 @@ test('final content identity is deterministic, changes with quotes and preserves
 });
 test('new forecasts persist independent ticket sets for every scenario in both stages', () => {
   for (const record of [buildRaceForecast({race,entries,stage:'PRE',now:preNow}).record,buildRaceForecast(finalArgs()).record]) {
-    assert.equal(record.revision,'V8_FORECAST_3_SCENARIOS');
+    assert.equal(record.revision,'V8_FORECAST_4_RACER_PARAMETERS');
     assert.ok(record.scenarios.length>=6);
     for (const scenario of record.scenarios) {
-      assert.equal(scenario.ticket_revision,'V8_SCENARIO_TICKETS_1');
+      assert.equal(scenario.ticket_revision,'V8_SCENARIO_TICKETS_2_RACER_PARAMETERS');
       assert.equal(scenario.ticket_basis,'FORECAST_SNAPSHOT');
       assert.equal(scenario.tickets.length,8);
       assert.equal(new Set(scenario.tickets).size,8);
@@ -218,7 +218,7 @@ test('new forecasts persist independent ticket sets for every scenario in both s
     }
     assert.equal(record.research_tickets.length,8);
     assert.deepEqual(record.decision.tickets,record.research_tickets);
-    assert.equal(record.provenance.scenario_ticket_revision,'V8_SCENARIO_TICKETS_1');
+    assert.equal(record.provenance.scenario_ticket_revision,'V8_SCENARIO_TICKETS_2_RACER_PARAMETERS');
   }
 });
 test('post-race weather is not accepted as pre-race evidence', () => {

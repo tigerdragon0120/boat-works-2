@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {stripTypeScriptTypes} from 'node:module';
-import {enrichLatestRacerEntries, LATEST_RACER_EVIDENCE_REVISION} from '../base44/shared/latestRacerEvidence.js';
+import {enrichLatestRacerEntries, LATEST_RACER_EVIDENCE_REVISION, V8_RACER_PROFILE_REVISION} from '../base44/shared/latestRacerEvidence.js';
 import {buildSnapshot} from '../base44/shared/liveV7Snapshot.js';
 import {unifiedV7} from '../base44/shared/liveV7Unified.js';
 import {buildRaceForecast} from '../base44/shared/v8ForecastEngine.js';
@@ -15,6 +15,7 @@ import {loadOfficialResultsByRace} from '../base44/shared/officialResultRead.js'
 import {selectV7RaceEntries} from '../base44/shared/v7RaceEntrySelector.js';
 import {utcMs} from '../base44/shared/v7FeatureObservation.js';
 import {jstDate,groupBy,chronological,canonicalForecasts} from '../base44/shared/v8Repository.js';
+import {loadRacerFrameTendencies,emptyFrameTendencies} from '../base44/shared/v8RacerTendencies.js';
 
 export const NOW = '2026-11-22T04:00:00.000Z';
 export const race = {id:'race-1',race_key:'2026-11-22_01_08',race_date:'2026-11-22',venue_code:'01',race_number:8,
@@ -130,16 +131,99 @@ test('absent dataset preserves the original prediction input exactly',()=>{
   const out=adapt({dataset:null});assert.deepEqual(out.entries,entries());assert.equal(out.provenance.reason,'DATASET_UNAVAILABLE');
 });
 
+function detailedDataset() {
+  const data=dataset();
+  data.records.forEach((record,index)=>{
+    record.racer_name='選手'+(index+1);
+    Object.values(record.course_stats).forEach(course=>Object.assign(course,{
+      fourth_count:0,fifth_count:0,sixth_count:course.entries-course.first_count-course.second_count-course.third_count,
+      avg_st:.16,avg_st_rank:2.5,f_count:0,l0_count:0,l1_count:0,
+    }));
+  });
+  return data;
+}
+const zeroCourse=()=>({entries:0,first_count:0,second_count:0,third_count:0,fourth_count:0,fifth_count:0,sixth_count:0,
+  avg_st:0,avg_st_rank:0,f_count:0,l0_count:0,l1_count:0});
+
+test('V8 profiles retain six observed-course parameters and immutable official source metadata',()=>{
+  const data=detailedDataset(),input=entries(),beforeData=structuredClone(data),beforeInput=structuredClone(input);
+  const out=adapt({dataset:data,entries:input}),profile=out.entries[0].v8_racer_profile;
+  assert.equal(profile.revision,V8_RACER_PROFILE_REVISION);assert.equal(profile.registration_number,'4501');
+  assert.equal(profile.player_name,'選手1');assert.deepEqual(Object.keys(profile.courses),['1','2','3','4','5','6']);
+  assert.deepEqual(profile.courses['1'],{course:1,sample_size:100,first_count:40,second_count:10,third_count:5,
+    fourth_count:0,fifth_count:0,sixth_count:45,first_rate:40,second_rate:10,third_rate:5,top2_rate:50,top3_rate:55,
+    avg_st:.16,avg_st_rank:2.5,f_count:0,l_count:0});
+  assert.deepEqual(profile.source,{dataset_key:data.metadata.dataset_key,term_key:data.metadata.term_key,
+    source_url:data.metadata.source_url,source_file:data.metadata.source_file,term_start_date:data.metadata.term_start_date,
+    term_end_date:data.metadata.term_end_date,checksum:data.metadata.checksum,available_at:data.metadata.activated_at});
+  assert.equal(out.provenance.profiled_boats,6);
+  assert.equal(out.entries[0].course_stats['1'].avg_st_rank,2.5);
+  assert.equal(out.entries[0].course_stats['1'].top3_rate,55);
+  profile.courses['1'].first_count=999;profile.course_priors['1'].sample_size=999;
+  assert.notEqual(out.entries[1].v8_racer_profile.course_priors['1'].sample_size,999);
+  assert.deepEqual(data,beforeData);assert.deepEqual(input,beforeInput);
+});
+test('course priors weight the full dataset by observations rather than by racer or displayed entrants',()=>{
+  const data=detailedDataset();
+  data.records.forEach(record=>{record.course_stats['1']=zeroCourse();});
+  Object.assign(data.records[0].course_stats['1'],{entries:20,first_count:4,second_count:5,third_count:3,
+    fourth_count:2,fifth_count:3,sixth_count:3,avg_st:.16,avg_st_rank:2.5});
+  Object.assign(data.records[1].course_stats['1'],{entries:80,first_count:16,second_count:24,third_count:8,
+    fourth_count:8,fifth_count:12,sixth_count:12,avg_st:.2,avg_st_rank:3.5});
+  const out=adapt({dataset:data,entries:[entries()[0]]}),prior=out.entries[0].v8_racer_profile.course_priors['1'];
+  assert.equal(prior.sample_size,100);
+  assert.deepEqual([prior.first_rate,prior.second_rate,prior.third_rate,prior.top2_rate,prior.top3_rate],[20,29,11,49,60]);
+  assert.ok(Math.abs(prior.avg_st-.192)<1e-12);assert.equal(prior.avg_st_rank,3.3);
+});
+test('a known zero course sample differs from a missing course and never becomes a zero performance rate',()=>{
+  const data=detailedDataset();data.records[0].course_stats['1']=zeroCourse();delete data.records[0].course_stats['2'];
+  const profile=adapt({dataset:data}).entries[0].v8_racer_profile;
+  assert.equal(profile.courses['1'].sample_size,0);assert.equal(profile.courses['1'].first_count,0);
+  for(const metric of ['first_rate','second_rate','third_rate','top2_rate','top3_rate','avg_st','avg_st_rank'])assert.equal(profile.courses['1'][metric],null);
+  assert.equal(profile.courses['2'].sample_size,null);assert.equal(profile.courses['2'].first_count,null);
+  assert.equal(profile.course_priors['2'].sample_size,null);
+});
+test('invalid and missing profile values remain null and cannot silently bias a complete-dataset prior',()=>{
+  const data=detailedDataset(),raw=data.records[0].course_stats['1'];
+  delete raw.second_count;raw.avg_st='NaN';raw.avg_st_rank=7;raw.f_count=101;raw.l0_count=80;raw.l1_count=30;
+  const profile=adapt({dataset:data}).entries[0].v8_racer_profile,course=profile.courses['1'],prior=profile.course_priors['1'];
+  assert.equal(course.first_rate,40);assert.equal(course.second_count,null);assert.equal(course.top2_rate,null);assert.equal(course.top3_rate,null);
+  for(const metric of ['avg_st','avg_st_rank','f_count','l_count'])assert.equal(course[metric],null);
+  assert.equal(prior.sample_size,600);assert.equal(prior.top2_rate,null);assert.equal(prior.avg_st,null);assert.equal(prior.avg_st_rank,null);
+  raw.second_count=10;raw.third_count=101;
+  const contradictory=adapt({dataset:data}).entries[0].v8_racer_profile.courses['1'];
+  assert.equal(contradictory.first_count,null);assert.equal(contradictory.first_rate,null);assert.equal(contradictory.top3_rate,null);
+});
+test('profile availability is established anew and cannot be inherited from an unverified caller object',()=>{
+  const input=entries();input[0].v8_racer_profile={registration_number:'9999',source:{available_at:NOW}};
+  const original=structuredClone(input);
+  for(const change of [{dataset:null},{recordMode:'REPLAY'},{asOf:race.deadline}]){
+    const out=adapt({...change,entries:input});assert.equal(out.entries[0].v8_racer_profile,undefined);
+  }
+  const future=detailedDataset();future.metadata.first_seen_at='2026-11-22T04:00:01Z';
+  assert.equal(adapt({entries:input,dataset:future}).entries[0].v8_racer_profile,undefined);
+  assert.deepEqual(input,original);
+});
+test('duplicate or wrong-period dataset identities do not produce apparently complete priors',()=>{
+  for(const corrupt of [data=>{data.records[0].registration_number=data.records[1].registration_number;},
+    data=>{data.records[0].term_start_date='2026-01-01';}]){
+    const data=detailedDataset();corrupt(data);
+    const out=adapt({dataset:data});assert.equal(out.entries[0].v8_racer_profile,undefined);
+    const other=out.entries[2].v8_racer_profile;
+    assert.ok(other);assert.equal(other.course_priors['1'].sample_size,null);assert.equal(other.course_priors['1'].first_rate,null);
+  }
+});
+
 // Exercise the actual scheduled generation functions and the real V7 saver.
 // Only platform/network dependencies are replaced; no production mutations occur.
 const withoutImports = source => source.replace(/^import .*;\r?\n/gm,'');
 const autoSource=withoutImports(readFileSync(new URL('../base44/shared/v7AutoGeneration.js',import.meta.url),'utf8')).replace('export async function','async function');
-const captureRunnerSource=withoutImports(readFileSync(new URL('../base44/shared/v8LiveCapture.js',import.meta.url),'utf8')).replace('export async function','async function');
+const captureRunnerSource=withoutImports(readFileSync(new URL('../base44/shared/v8LiveCapture.js',import.meta.url),'utf8')).replace(/^export /gm,'');
 const captureSource=stripTypeScriptTypes(withoutImports(readFileSync(new URL('../base44/functions/v8CaptureForecasts/entry.ts',import.meta.url),'utf8')))
   .replace('export default async function','return async function');
 function fakePlatform({shown=false}={}) {
   const r={...race,exhibition_ready:shown}, table={Race:[r],RaceEntry:entries().map(e=>shown?{...e,exhibition_course:7-e.boat_number,exhibition_st:.15,exhibition_time:6.7}:e),
-    RaceResult:[],OddsSnapshot:[],OnlineFetchLog:[],PredictionV7:[],V7GenerationTrace:[],V8RaceForecast:[],V7WeatherObservation:[],
+    RaceResult:[],OddsSnapshot:[],OnlineFetchLog:[],PredictionV7:[],V7GenerationTrace:[],V8RaceForecast:[],V7WeatherObservation:[],V8PatternEvidence:[],
     V7StageClaim:['PRE','FINAL'].map(stage=>({id:'claim-'+stage,claim_key:race.race_key+'::'+stage,state:'free'}))};
   const matches=(row,query)=>Object.entries(query).every(([key,value])=>value&&typeof value==='object'&&'$in' in value?value.$in.includes(row[key]):row[key]===value);
   const sr=Object.fromEntries(Object.entries(table).map(([name,rows])=>[name,{name,rows,
@@ -162,7 +246,7 @@ function v7Runner(state,load) {
 function v8Handler(state,load) {
   const dependencies={createClientFromRequest:()=>state.client,acquireLock:async()=> 'lock',releaseLock:async()=>{},selectV7RaceEntries,utcMs,
     buildRaceForecast,FORECAST_REVISION,jstDate,readV8Rows:async(entity,query)=>entity.filter(query),groupBy,chronological,canonicalForecasts,
-    loadLatestRacerDataset:load,enrichLatestRacerEntries};
+    loadLatestRacerDataset:load,enrichLatestRacerEntries,loadRacerFrameTendencies,emptyFrameTendencies};
   return new Function(...Object.keys(dependencies),captureRunnerSource+'\n'+captureSource)(...Object.values(dependencies));
 }
 test('V7 scheduled generation reads once, stores real term provenance, and never updates an existing prediction',async t=>{
