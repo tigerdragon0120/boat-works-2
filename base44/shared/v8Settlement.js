@@ -1,6 +1,7 @@
 // Independent settlement for prospective forecasts and explicitly labelled replays.
 import {CUTOFF_MS, evidenceTime, jstDay, validTicket, validateTickets} from './v8ExternalEvidence.js';
 import {eligibleReplayForecast} from './v8Repository.js';
+import {deriveScenarioVerification, SCENARIO_VERIFICATION_REVISION} from './v8ScenarioSettlement.js';
 
 export const SETTLEMENT_REVISION = 'V8_SETTLEMENT_2';
 const fail = (reason) => ({ok: false, reason});
@@ -154,6 +155,12 @@ function settle({source, sourceKind, result: resultInput, provenance, now, exclu
     record.status='EXCLUDED_REFUND';record.buy_selected=false;record.buy_tickets=[];record.buy_stake=0;
     for(const key of ['research_hit','research_return','buy_hit','buy_return','net_return','scenario_leader_hit','winning_method_hit'])delete record[key];
     record.provenance.exclusion_reason='REFUND_OR_CANCELLATION_REQUIRES_REVIEW';
+  }
+  if(sourceKind !== 'EXTERNAL'){
+    record.scenario_verification_revision = SCENARIO_VERIFICATION_REVISION;
+    record.scenario_results = deriveScenarioVerification(source, record);
+    record.provenance.scenario_result_count = record.scenario_results.length;
+    record.provenance.scenario_totals_in_combined_statistics = false;
   }
   return {ok:true,record};
 }

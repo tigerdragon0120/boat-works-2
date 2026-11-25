@@ -6,6 +6,7 @@ import {buildTicketOdds} from './v8TicketOdds';
 import V8SumPanel, {SumTheoryModelDetails} from './V8SumPanel';
 import {originalTimingSummary, savedSumView, SUM_LABELS, sumModelStatus, sumTimeText} from './v8SumView';
 import {isReplay, latestStudyStage, studyStageLabel, studySettlementIndex, studyProgressLabel} from './v8StudyView';
+import {scenarioViews, scenarioSelectionContext, selectedScenarioView} from './v8ScenarioView';
 import {BUTTON_CLASS, displayForecastStatus, formatTime, latestStage, timeMs, useClock, useV8Dashboard} from './v8Client';
 
 const TONES={emerald:'border-emerald-200 bg-emerald-50 text-emerald-800',amber:'border-amber-200 bg-amber-50 text-amber-900',sky:'border-sky-200 bg-sky-50 text-sky-800',slate:'border-slate-200 bg-slate-50 text-slate-600'};
@@ -92,18 +93,48 @@ function TicketList({tickets=[],displayOdds,race,now,blocked=false}) {
     </ol>
   </div>;
 }
-function ForecastCard({forecast,title,subtitle,step,empty,displayOdds,race,now,oddsBlocked,emptyDetail='出走表・選手情報を確認して予想を保存します。締切後の補完分も検証用の記録として蓄積します。'}) {
-  const [selected,setSelected]=useState(null);
-  useEffect(()=>setSelected(forecast?.top_scenario_key || null),[forecast?.id,forecast?.top_scenario_key]);
-  const scenarios=forecast?.scenarios || [], active=scenarios.find(row=>row.key===selected) || scenarios[0];
-  return <article className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
+function ForecastCard({forecast,verification,selectionMode='',title,subtitle,step,empty,displayOdds,race,now,oddsBlocked,emptyDetail='出走表・選手情報を確認して予想を保存します。締切後の補完分も検証用の記録として蓄積します。'}) {
+  const [selection,setSelection]=useState(null);
+  const views=useMemo(()=>scenarioViews(forecast,verification),[forecast,verification]);
+  const selectionContext=scenarioSelectionContext(forecast,selectionMode);
+  useEffect(()=>{
+    if(selection&&(selection.context!==selectionContext||!views.some(view=>view.scenario.key===selection.key)))setSelection(null);
+  },[selection,selectionContext,views]);
+  const activeView=selectedScenarioView(views,selection,forecast,selectionMode);
+  const active=activeView?.scenario;
+  return <article aria-label={title} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
     <header className="mb-3 flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sky-100 text-sm font-black text-sky-700">{step}</span><div className="min-w-0"><h4 className="font-bold text-slate-900">{title}</h4><p className="mt-0.5 text-[11px] leading-5 text-slate-500">{forecast?`${studyStageLabel(forecast)} · ${formatTime(forecast.generated_at,true)} 保存`:subtitle}</p>{forecast&&<span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${isReplay(forecast)?'bg-violet-50 text-violet-700':'bg-sky-50 text-sky-700'}`}>{isReplay(forecast)?'事後検証・補完した予想':'締切前に保存'}</span>}</div></header>
     {!forecast?<div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 text-center"><span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-white text-xl text-slate-400">○</span><p className="text-sm font-semibold text-slate-600">{empty}</p><p className="mt-2 max-w-xs text-xs leading-6 text-slate-500">{emptyDetail}</p></div>:<>
       <RaceScenarioDiagram scenario={active} boats={forecast.boats} stage={forecast.stage}/>
-      <div className="mt-3 grid grid-cols-2 gap-2">{scenarios.slice(0,6).map(scenario=><button type="button" key={scenario.key} onClick={()=>setSelected(scenario.key)} aria-pressed={active?.key===scenario.key} className={`rounded-lg border px-2.5 py-2 text-left transition ${active?.key===scenario.key?'border-sky-500 bg-sky-50 ring-1 ring-sky-100':'border-slate-200 bg-white hover:border-sky-300'}`}><span className="block text-xs font-bold text-slate-800">{scenario.label}</span><span className="mt-1 block text-[10px] text-slate-500">展開評価 {score(scenario.score) ?? '—'} / 100</span></button>)}</div>
+      <p className="mt-3 text-[11px] leading-5 text-slate-600">展開を選ぶと、その展開の買い目と合成オッズに切り替わります。</p>
+      <div role="group" aria-label={`${title}の展開選択`} className="mt-2 grid grid-cols-2 gap-2">{views.map(view=>{
+        const scenario=view.scenario, chosen=active?.key===scenario.key;
+        return <button type="button" key={scenario.key} onClick={()=>setSelection({context:selectionContext,key:scenario.key})} aria-pressed={chosen} className={`min-w-0 rounded-lg border px-2.5 py-2 text-left transition ${chosen?'border-sky-500 bg-sky-50 ring-1 ring-sky-100':'border-slate-200 bg-white hover:border-sky-300'}`}>
+          <span className="block text-xs font-bold text-slate-800">{scenario.label}</span>
+          <span className="mt-1 block text-[10px] text-slate-500">展開評価 {score(scenario.score) ?? '—'} / 100</span>
+          <span className="mt-1 block text-[10px] font-semibold leading-4 text-sky-800">{view.available?`${view.tickets.length}点 · ${view.sourceLabel}`:view.sourceLabel}</span>
+          {view.result&&<span className={`mt-1 block text-[10px] font-bold ${view.settled&&view.result.hit?'text-emerald-700':'text-slate-600'}`}>{view.resultLabel}</span>}
+        </button>;
+      })}</div>
       {active&&<div className="mt-3 rounded-lg bg-slate-50 p-3"><p className="text-xs font-semibold leading-6 text-slate-800">{active.reason}</p>{!!active.checkpoints?.length&&<><p className="mt-2 text-[11px] font-bold text-sky-700">{forecast.stage==='FINAL'?'判断の確認項目':'展示で確認すること'}</p><ul className="mt-1 space-y-1 text-[11px] leading-5 text-slate-600">{active.checkpoints.map((text,index)=><li key={index}>・{typeof text==='string'?text:text.label || text.description || '確認項目'}</li>)}</ul></>}</div>}
       <V8SumPanel forecast={forecast}/>
-      {!!forecast.research_tickets?.length&&<details open className="mt-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">V8の買い目・保存済み（{forecast.research_tickets.length}点）</summary><div className="mt-2"><TicketList tickets={forecast.research_tickets} displayOdds={displayOdds} race={race} now={now} blocked={oddsBlocked}/></div></details>}
+      {activeView&&<section aria-label="選択した展開の買い目" data-scenario-key={active.key} className="mt-4 rounded-xl border border-sky-200 bg-sky-50/30 p-3 sm:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h5 className="text-sm font-black text-slate-900">{active.label}の買い目{activeView.available?`（${activeView.tickets.length}点）`:''}</h5>
+          <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${activeView.reconstructed?'bg-amber-50 text-amber-800':'bg-white text-sky-800'}`}>{activeView.sourceLabel}</span>
+        </div>
+        <p className="mt-1 text-[11px] leading-5 text-slate-600">{active.leader}号艇が「{({ESCAPE:'逃げ',SASHI:'差し',MAKURI:'まくり',MAKURISASHI:'まくり差し'})[active.method] || active.method}」で1着になる展開の組み合わせです。</p>
+        {activeView.reconstructed&&<p className="mt-2 text-[11px] leading-5 text-amber-800">当時保存したデータから展開別の買い目を計算しています。当時の保存済み買い目とは区別して表示します。</p>}
+        {activeView.available?<>
+          <div className="mt-3"><TicketList tickets={activeView.tickets} displayOdds={displayOdds} race={race} now={now} blocked={oddsBlocked}/></div>
+          <div className="mt-3 rounded-lg bg-white px-3 py-2">
+            <p className={`text-xs font-bold ${activeView.settled&&activeView.result.hit?'text-emerald-700':'text-slate-700'}`}>この展開の買い目：{activeView.resultLabel}</p>
+            {activeView.settled&&<p className="mt-1 text-[11px] leading-5 text-slate-500">検証額 {activeView.result.stake.toLocaleString()}円 / 払戻 {activeView.result.returned.toLocaleString()}円 · 1点100円</p>}
+            {activeView.excluded&&<p className="mt-1 text-[11px] leading-5 text-slate-500">返還等があるため、的中率・回収率の集計対象外です。</p>}
+          </div>
+        </>:<p className="mt-3 rounded-lg bg-white p-3 text-xs leading-6 text-slate-500">この展開の買い目を計算できる保存データが揃っていません。</p>}
+      </section>}
+      {!!forecast.research_tickets?.length&&<details className="mt-4 border-t border-slate-100 pt-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">V8の総合買い目・保存済み（{forecast.research_tickets.length}点）</summary><p className="mt-2 text-[11px] leading-5 text-slate-500">複数の展開をまとめて選んだ買い目です。総合の検証成績はこちらの買い目で集計します。</p><div className="mt-2"><TicketList tickets={forecast.research_tickets} displayOdds={displayOdds} race={race} now={now} blocked={oddsBlocked}/></div></details>}
       <p className="mt-3 text-[10px] leading-5 text-slate-400">展開評価は未校正の比較スコアです。発生確率・的中率ではありません。</p>
     </>}
   </article>;
@@ -167,20 +198,20 @@ export default function V8RaceJourney({race}) {
         {(isReplay(baseline)||isReplay(final))&&<div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-xs leading-6 text-violet-800"><strong>事後検証の記録を含みます。</strong> 締切後に取得・再計算した分も、予想と結果の比較に使います。保存時刻を残し、締切前に出した予想の成績と分けて集計します。</div>}
         {priorChoiceCount>1&&<div className="flex flex-wrap items-center gap-2"><span className="text-xs text-slate-500">表示する事前記録</span>{[['AUTO','照合に使った記録'],['DAY_BEFORE','前日'],['PRE','当日・展示前']].map(([key,label])=><button type="button" key={key} onClick={()=>setBaseMode(key)} className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${baseMode===key?'border-sky-300 bg-sky-50 text-sky-800':'border-slate-200 text-slate-500'}`}>{label}</button>)}</div>}
         <div className="grid items-start gap-3 lg:grid-cols-2">
-          <ForecastCard forecast={baseline} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="事前の展開予想" subtitle="展示情報を使わない展開の読み" step="1" empty="事前情報からの予想を補完します"/>
-          <ForecastCard forecast={final} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="展示後の展開予想" subtitle="進入・ST・タイムを加えて照合" step="2" empty={finalEmpty.title} emptyDetail={finalEmpty.detail}/>
+          <ForecastCard forecast={baseline} verification={baselineSettlement} selectionMode={baseMode} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="事前の展開予想" subtitle="展示情報を使わない展開の読み" step="1" empty="事前情報からの予想を補完します"/>
+          <ForecastCard forecast={final} verification={finalSettlement} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="展示後の展開予想" subtitle="進入・ST・タイムを加えて照合" step="2" empty={finalEmpty.title} emptyDetail={finalEmpty.detail}/>
         </div>
         {final&&<div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-bold text-slate-900">展示で何が変わったか</h4><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${comparison?.status==='SUPPORTED'?'bg-emerald-100 text-emerald-800':comparison?.status==='CHANGED'?'bg-amber-100 text-amber-900':'bg-white text-slate-500'}`}>{COMPARE[comparison?.status] || '照合記録を確認中'}</span></div>{linked?<p className="mt-2 text-[11px] text-slate-500">比較元：{studyStageLabel(linked)}{isReplay(linked)?'（事後検証）':''} {formatTime(linked.generated_at,true)} 保存{baseline?.id!==linked.id?'（現在左側に表示中の版とは異なります）':''}</p>:<p className="mt-2 text-xs leading-5 text-amber-800">この展示後予想に紐づく事前記録を確認中です。補完が済むと、展示を加える前後で結果を比較できます。</p>}<ul className="mt-2 space-y-1 text-xs leading-6 text-slate-700">{(comparison?.changes || []).map((text,index)=><li key={index}>・{text}</li>)}</ul></div>}
         <div className={`rounded-xl border p-4 sm:p-5 ${TONES[decision.tone]}`}>
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-extrabold tracking-widest">V8の保存・検証状況</p><h4 className="mt-1 text-xl font-black">{decision.label}</h4></div><p className="text-[11px]">締切 {formatTime(currentRace?.deadline || final?.deadline)}</p></div>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-extrabold tracking-widest">V8総合買い目の保存・検証状況</p><h4 className="mt-1 text-xl font-black">{decision.label}</h4></div><p className="text-[11px]">締切 {formatTime(currentRace?.deadline || final?.deadline)}</p></div>
           {final?<>
-            <p className="mt-3 text-sm font-bold">展示後のV8買い目 {final.research_tickets.length}点を保存済み</p>
+            <p className="mt-3 text-sm font-bold">展示後のV8総合買い目 {final.research_tickets.length}点を保存済み</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2"><div className="rounded-lg bg-white/70 p-3"><p className="text-[10px] font-semibold opacity-70">保存した時点</p><p className="mt-1 text-sm font-bold">{formatTime(final.generated_at,true)} · {isReplay(final)?'締切後の事後補完':'締切前に保存'}</p></div><div className="rounded-lg bg-white/70 p-3"><p className="text-[10px] font-semibold opacity-70">確定結果との照合</p><p className="mt-1 text-sm font-bold">{finalSettlement?finalSettlement.status==='EXCLUDED_REFUND'?'返還等を確認・成績集計外':'照合済み':'未照合・結果照合待ち'}</p></div></div>
-            <p className="mt-3 text-[11px] leading-6">検証額は1点100円、{final.research_tickets.length}点で{(final.research_tickets.length*100).toLocaleString()}円です。保存したV8の買い目を確定結果と照合します。</p>
+            <p className="mt-3 text-[11px] leading-6">総合の検証額は1点100円、{final.research_tickets.length}点で{(final.research_tickets.length*100).toLocaleString()}円です。展開別の結果は、上の各展開を選ぶと確認できます。</p>
           </>:<p className="mt-3 text-xs leading-6">{finalEmpty.detail}</p>}
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-bold text-slate-900">3. 結果の検証</h4>{(finalSettlement||baselineSettlement)&&<span className="text-xs text-slate-600">確定 <strong className="font-mono text-base text-slate-900">{(finalSettlement||baselineSettlement).result_trifecta || '返還等を確認'}</strong></span>}</div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-bold text-slate-900">3. 総合買い目の結果検証</h4>{(finalSettlement||baselineSettlement)&&<span className="text-xs text-slate-600">確定 <strong className="font-mono text-base text-slate-900">{(finalSettlement||baselineSettlement).result_trifecta || '返還等を確認'}</strong></span>}</div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">{[{label:'事前の展開予想',forecast:baseline,result:baselineSettlement},{label:'展示後の展開予想',forecast:final,result:finalSettlement}].map(item=><div key={item.label} className="rounded-lg bg-slate-50 p-3"><p className="text-xs font-bold text-slate-700">{item.label}{isReplay(item.forecast)&&<span className="ml-2 text-[10px] font-normal text-violet-700">事後検証</span>}</p><p className={`mt-2 text-lg font-black ${item.result?.research_hit?'text-emerald-700':'text-slate-700'}`}>{item.result?item.result.status==='EXCLUDED_REFUND'?'返還等を確認':item.result.research_hit?'的中':'不的中':item.forecast?'結果照合待ち':'予想補完待ち'}</p>{!item.result&&item.forecast&&<p className="mt-1 text-[11px] leading-5 text-slate-500">V8の買い目 {item.forecast.research_tickets?.length || 0}点を保存済み · 1点100円で照合</p>}{item.result?.status==='SETTLED'&&<p className="mt-1 text-[11px] leading-5 text-slate-500">{item.result.research_tickets?.length || 0}点 · 検証額 {Number(item.result.research_stake || 0).toLocaleString()}円 / 払戻 {Number(item.result.research_return || 0).toLocaleString()}円</p>}{item.result?.status==='EXCLUDED_REFUND'&&<p className="mt-1 text-[11px] leading-5 text-slate-500">返還等があるため、的中率・回収率の集計対象外です。</p>}</div>)}</div>
           {finalSettlement?.status==='SETTLED'&&baselineSettlement?.status==='SETTLED'?<p className="mt-3 text-xs font-semibold text-sky-800">展示を加えた変化：{baselineSettlement.research_hit?finalSettlement.research_hit?'どちらも的中':'的中 → 不的中':finalSettlement.research_hit?'不的中 → 的中':'どちらも不的中'}</p>:<p className="mt-3 text-[11px] leading-5 text-slate-500">{finalSettlement&&baselineSettlement?'返還等を含むため、成績比較の対象外として検証記録を保存しました。':'予想と確定結果が揃った段階から照合し、2段階の検証記録を蓄積します。'}</p>}
           {!!settles.length&&<p className="mt-2 text-[10px] text-slate-400">照合 {formatTime(settles[0].settled_at,true)}</p>}

@@ -136,6 +136,17 @@
     "provenance": {
       "type": "object"
     },
+    "scenario_verification_revision": {
+      "type": "string",
+      "description": "展開ごとの買い目照合方式の版。全体買い目の照合版・成績は変更しない。"
+    },
+    "scenario_results": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "各展開の保存買い目、点数、的中、検証額、払戻。全体成績に合算しない。旧記録からの事後計算とREPLAYは参考照合として区別する。"
+    },
     "record_mode": {
       "type": "string",
       "enum": [

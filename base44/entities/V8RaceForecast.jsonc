@@ -95,7 +95,8 @@
       "type": "array",
       "items": {
         "type": "object"
-      }
+      },
+      "description": "展開候補ごとにtickets・ticket_revision・ticket_basisを予想と同時に保存する。全体買い目research_ticketsとは独立。"
     },
     "comparison": {
       "type": "object"

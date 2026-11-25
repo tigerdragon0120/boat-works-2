@@ -2,7 +2,8 @@
 // Ordinal research scores are NOT occurrence probabilities or expected returns.
 // This module is pure and portable between Node and Deno.
 import {buildSumEvidence, selectedSumModel} from './v8SumTheory.js';
-export const FORECAST_REVISION = 'V8_FORECAST_2_SUM';
+import {buildScenarioTickets, SCENARIO_TICKET_REVISION, SCENARIO_TICKET_BASIS} from './v8ScenarioTickets.js';
+export const FORECAST_REVISION = 'V8_FORECAST_3_SCENARIOS';
 export const FINAL_ODDS_MAX_AGE_MS = 5 * 60 * 1000;
 const CUTOFF_MS = 60000;
 const STAGES = ['DAY_BEFORE', 'PRE', 'FINAL'];
@@ -391,7 +392,11 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   const enoughBoats = replay ? active.length >= 3 : active.length === 6;
   sum.evidence.used_for_scoring = stage === 'FINAL' && sum.evidence.status === 'READY' && evaluated.meaningful && enoughBoats;
   if (stage === 'FINAL' && sum.evidence.status !== 'READY') missing.push('SUM_NOT_APPLIED');
-  const scenarios = evaluated.meaningful && enoughBoats ? buildScenarios(evaluated.boats, complete) : [];
+  const scenarios = evaluated.meaningful && enoughBoats ? buildScenarios(evaluated.boats, complete).map(scenario => ({
+    ...scenario,
+    tickets:buildScenarioTickets({scenario,boats:allEvaluated,stage,exhibitionComplete:complete}),
+    ticket_revision:SCENARIO_TICKET_REVISION, ticket_basis:SCENARIO_TICKET_BASIS,
+  })) : [];
   const savedBaseline = useBaseline(baseline, race, now, replay);
   const comparison = compare(savedBaseline, allEvaluated, scenarios, complete, stage);
   const researchTickets = candidateTickets(evaluated.boats, scenarios);
@@ -408,7 +413,8 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   const priorIdentity = stage === 'FINAL' ? savedBaseline?.id || null : null;
   const contentHash = fingerprint({ boats: allEvaluated, baseline_id: priorIdentity,
     odds_id: stage === 'FINAL' ? decision.odds_snapshot_id || null : null,
-    odds: decision.odds, decision, conditions, sum_evidence: sum.evidence, original_exhibition: sum.original_exhibition });
+    odds: decision.odds, decision, conditions, sum_evidence: sum.evidence, original_exhibition: sum.original_exhibition,
+    scenario_tickets:scenarios.map(scenario => ({key:scenario.key,tickets:scenario.tickets,revision:scenario.ticket_revision})) });
   return { ok: true, record: {
     forecast_key: FORECAST_REVISION + ':' + race.race_key + ':' + stage + (stage === 'FINAL' ? ':' + contentHash : ''),
     revision: FORECAST_REVISION, race_id: race.id, race_key: race.race_key, race_date: race.race_date,
@@ -433,6 +439,7 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
       sum_revision: sum.evidence.revision, sum_used_for_scoring: sum.evidence.used_for_scoring,
       sum_model: sum.evidence.selected_model, sum_speed_weight: sum.evidence.used_for_scoring ? .15 : 0,
       sum_replaces_exhibition_speed: sum.evidence.used_for_scoring,
+      scenario_ticket_revision:SCENARIO_TICKET_REVISION,
       taro_official_strategy_reproduced: false,
       research_only: true, content_fingerprint: contentHash,
       fingerprint_kind: 'FNV1A_CHANGE_DETECTION_NOT_SIGNATURE',
