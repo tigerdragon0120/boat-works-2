@@ -1,7 +1,7 @@
 // Append-only V8 model comparison. Reads only immutable pre-deadline V7FeatureSnapshot.
 import {acquireLock,releaseLock} from './concurrencyLock.js';
 import {readResearchPaged} from './v8ResearchRead.js';
-import {buildTheoryTrial,THEORY_REVISION} from './v8TheoryTrial.js';
+import {buildTheoryTrial,theoryTrialKey,THEORY_REVISION} from './v8TheoryTrial.js';
 import {utcMs} from './v7FeatureObservation.js';
 const today=()=>new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
 export async function runV8TheoryTrials(client, options = {}) {
@@ -26,7 +26,7 @@ export async function runV8TheoryTrials(client, options = {}) {
   for(const s of ready){
    if(Date.now()>=stopAt){summary.budget_exhausted=true;break;}
    if(summary.created+summary.model_changes>=24)break;
-   const key=THEORY_REVISION+':'+s.race_key+':'+s.snapshot_stage;
+   const key=theoryTrialKey(s);
    if(keys.has(key)){summary.skipped_existing++;continue}
    if(utcMs(s.deadline)-Date.now()<90000){summary.late++;continue}
    summary.candidates++;

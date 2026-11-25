@@ -3,6 +3,7 @@
 // a forecast that was available before the deadline.
 import {buildReplayHypothesis, FORECAST_REVISION, forecastTime} from './v8ForecastEngine.js';
 import {isSavedExhibitionComplete} from './liveInputPriority.js';
+import {sanitizeOriginalExhibition} from './v8SumTheory.js';
 
 export const REPLAY_REVISION = FORECAST_REVISION + '_REPLAY_1';
 const RACE_FIELDS = ['id','race_key','race_date','venue_code','venue_name','race_number','deadline','status','is_womens','scratched_boats','created_date','updated_date'];
@@ -44,6 +45,7 @@ export function replayInputSnapshot({race,entries,stage,now,archived=null}) {
   });
   return {
     race:raceInput,entries:inputs,archive_id:archiveValid?archived.id:null,
+    original_exhibition:stage==='FINAL'?sanitizeOriginalExhibition(race.original_exhibition):null,
     archived_boats:archivedCount,
     historical_as_of_verified:archiveValid&&archived.record_mode!=='REPLAY'&&archivedCount===inputs.length,
     // Current mutable section/race-result fields are never copied. A section
@@ -58,7 +60,8 @@ export function buildReplayForecast({race,entries=[],stage,now,baseline=null,arc
   if(generated!=null&&deadline!=null&&generated<deadline)return {ok:false,reason:'REPLAY_REQUIRES_CLOSED_RACE'};
   if(stage==='FINAL'&&!isSavedExhibitionComplete(entries,race?.scratched_boats||[]))return {ok:false,reason:'EXHIBITION_INCOMPLETE'};
   const snapshot=replayInputSnapshot({race,entries,stage,now,archived:archived||baseline});
-  const built=buildReplayHypothesis({race:snapshot.race,entries:snapshot.entries,stage,now,baseline});
+  const built=buildReplayHypothesis({race:snapshot.race,entries:snapshot.entries,stage,now,baseline,
+    originalExhibition:snapshot.original_exhibition});
   if(!built.ok)return built;
   if(!built.record.research_tickets.length||!built.record.scenarios.length)return {ok:false,reason:'SCORING_INPUTS_INSUFFICIENT'};
   if(stage==='FINAL'&&!built.record.exhibition_complete)return {ok:false,reason:'EXHIBITION_INCOMPLETE'};

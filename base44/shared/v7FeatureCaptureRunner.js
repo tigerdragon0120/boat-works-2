@@ -3,7 +3,7 @@
 // In-flight and after-race backfills cannot create prediction-time observations.
 import { acquireLock, releaseLock } from "./concurrencyLock.js";
 import { readResearchPaged } from "./v8ResearchRead.js";
-import { buildV7FeatureObservation, FEATURE_REVISION, utcMs } from "./v7FeatureObservation.js";
+import { buildV7FeatureObservation, featureSnapshotKey, FEATURE_REVISION, utcMs } from "./v7FeatureObservation.js";
 
 const MAX_NEW_PER_RUN=24;
 const DAY=()=>new Date().toLocaleDateString("sv-SE",{timeZone:"Asia/Tokyo"});
@@ -13,15 +13,15 @@ function targetsForRace(race, pred, now, saved, inputOnly) {
   if(deadline==null || !race.race_key || !race.id || ["finished","cancelled"].includes(race.status))return [];
   const left=(deadline-now)/60000;
   if(left<=2||left>120)return [];
-  const base=FEATURE_REVISION+":"+race.race_key+":";
+  const key=stage=>featureSnapshotKey(race,stage,inputOnly?'V8_INPUT_ONLY':'V7_PREDICTION',new Date(now).toISOString());
   const out=[];
   const pre=pred?.PRE||null;
   const final=pred?.FINAL||null;
   const beforeReady=inputOnly||!!pre;
   const finalReady=inputOnly?race.exhibition_ready===true:!!final;
-  if(left>=15&&left<=120&&race.exhibition_ready!==true&&beforeReady&&!saved.has(base+"PRE"))out.push("PRE");
-  if(left>=5&&left<=45&&finalReady&&!saved.has(base+"FINAL"))out.push("FINAL");
-  if(left>=2&&left<=9&&finalReady&&!saved.has(base+"LOCK"))out.push("LOCK");
+  if(left>=15&&left<=120&&race.exhibition_ready!==true&&beforeReady&&!saved.has(key('PRE')))out.push("PRE");
+  if(left>=5&&left<=45&&finalReady&&!saved.has(key('FINAL')))out.push("FINAL");
+  if(left>=2&&left<=9&&finalReady&&!saved.has(key('LOCK')))out.push("LOCK");
   return out;
 }
 
@@ -77,7 +77,7 @@ export async function runV7CaptureFeatures(client, options = {}) {
     for(const job of jobs.slice(0,MAX_NEW_PER_RUN)){
       if(Date.now()>=stopAt){summary.budget_exhausted=true;break;}
       const {race,pred,stage}=job;
-      const name=FEATURE_REVISION+":"+race.race_key+":"+stage;
+      const name=featureSnapshotKey(race,stage,sourceMode,new Date().toISOString());
       if(saved.has(name)){summary.skipped_existing++;continue}
       if(utcMs(race.deadline)-Date.now()<90000){summary.skipped_source++;continue}
       try{
@@ -94,6 +94,7 @@ export async function runV7CaptureFeatures(client, options = {}) {
           race,entries,odds,pre:pred.PRE,final:pred.FINAL,stage,observedAt,sourceMode,
         });
         if(!output.ok){summary.skipped_source++;continue}
+        if(saved.has(output.record.snapshot_key)){summary.skipped_existing++;continue}
         // One more deadline check before immutable write.
         if(utcMs(race.deadline)-Date.now()<90000){summary.skipped_source++;continue}
         if(Date.now()>=stopAt){summary.budget_exhausted=true;break;}
@@ -102,7 +103,7 @@ export async function runV7CaptureFeatures(client, options = {}) {
         // Never update/delete previous snapshots even if source data is corrected.
         const created=await sr.V7FeatureSnapshot.create(output.record);
         if(!created?.id){summary.errors++;continue}
-        saved.add(name);
+        saved.add(output.record.snapshot_key);
         summary.created++;
         if(output.record.status==="PARTIAL")summary.partial++;
         const stored=utcMs(created.created_date);

@@ -64,7 +64,7 @@ export async function runV8LiveCapture(client,options={}){
       if(stage!=='FINAL'&&saved.has(FORECAST_REVISION+':'+race.race_key+':'+stage)){summary.existing++;continue;}
       const lastFinal=records.filter(r=>r.stage==='FINAL').sort(chronological).at(-1);
       const lastFinalAt=utcMs(lastFinal?.generated_at);
-      const lastFinalComplete=lastFinal?.quality==='CAPTURED'&&lastFinal.exhibition_complete===true
+      const lastFinalComplete=lastFinal?.revision===FORECAST_REVISION&&lastFinal?.quality==='CAPTURED'&&lastFinal.exhibition_complete===true
         &&Array.isArray(lastFinal.research_tickets)&&lastFinal.research_tickets.length===8;
       const unchangedInputs=[race,...entries].every(row=>{
         const at=utcMs(row.updated_date||row.created_date);
@@ -95,7 +95,8 @@ export async function runV8LiveCapture(client,options={}){
         const generatedAt=new Date().toISOString();
         const racerEvidence=enrichLatestRacerEntries({race:fresh,entries,stage,asOf:generatedAt,dataset:racerDatasetRead.dataset});
         racerEvidence.provenance.dataset_read_status=racerDatasetRead.status;
-        const output=buildRaceForecast({race:fresh,entries:racerEvidence.entries,stage,now:generatedAt,baseline,odds,weather});
+        const output=buildRaceForecast({race:fresh,entries:racerEvidence.entries,stage,now:generatedAt,baseline,odds,weather,
+          originalExhibition:stage==='FINAL'?fresh.original_exhibition:null});
         if(!output.ok){hold(output.reason||'BUILD_HELD');continue;}
         output.record.provenance.racer_term_evidence=racerEvidence.provenance;
         if(racerEvidence.provenance.applied_boats>0){

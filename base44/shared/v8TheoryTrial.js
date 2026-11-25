@@ -2,7 +2,12 @@
 // The "exhibition relative" model is NOT 舟券太郎氏のSUM/シンSUM公式式.
 // All scores are uncalibrated ranking heuristics, NOT hit probabilities.
 import {utcMs} from './v7FeatureObservation.js';
-export const THEORY_REVISION='V8_THEORY_2';
+import {buildSumEvidence,sumObservationKey} from './v8SumTheory.js';
+export const THEORY_REVISION='V8_THEORY_3_SUM';
+export function theoryTrialKey(snapshot){
+ const sumKey=snapshot?.snapshot_stage==='PRE'?null:sumObservationKey(snapshot?.original_exhibition);
+ return THEORY_REVISION+':'+snapshot.race_key+':'+snapshot.snapshot_stage+(sumKey?':SUM:'+sumKey:'');
+}
 const patterns={
  UICHI_MAIN:['1-2-5','1-2-6','1-3-5','1-3-6','1-4-5','1-4-6'],
  UICHI_URA:['1-5-2','1-5-3','1-5-4','1-6-2','1-6-3','1-6-4'],
@@ -73,12 +78,12 @@ function uichiScores(boats,features){
  });
 }
 function exhibition(boats,stage){
- // Source-verified one-lap time is not in this snapshot, so this is NOT SUM.
+ // Retain the old independent comparator; the SUM models are recorded separately.
  const description={key:'EXHIBITION_RELATIVE',logic:'TARO_PUBLIC_IDEA_INSPIRED',
-  label:'舟券太郎参考・展示/スタート相対評価（独自式）',
+  label:'展示/スタート相対評価（従来の独自式）',
   score_type:'UNCALIBRATED_RANKING',
-  limitations:['ONE_LAP_TIME_NOT_COLLECTED','OFFICIAL_FORMULA_NOT_REPRODUCED'],
-  note:'SUM・シンSUM・スリットアラート等の本人公式計算式は未再現'};
+  limitations:['SUM_NOT_USED_BY_THIS_MODEL','OFFICIAL_STRATEGY_NOT_REPRODUCED'],
+  note:'従来の独自式。基本SUM・尼崎の3項SUMは別モデルで比較します。本人の買い目ルールは未再現。'};
  if(stage==='PRE')return {...description,status:'WAIT_EXHIBITION',tickets:[],top:null,score:null,basis:[],missing:['STAGE_PRE']};
  const scored=scoreBoats(boats,[
   ['exhibition_time',.37,true],['exhibition_st',.20,true],
@@ -97,6 +102,22 @@ function exhibition(boats,stage){
   top:candidates[0]?.combination||null,score:candidates[0]?.score??null,
   basis:scored.used,missing};
 }
+function sumComparator(model,evidence){
+ const ready=model.status==='READY'&&model.has_difference===true;
+ const ranked=ready?rankCombos(model.boats,model.boats.map(boat=>boat.relative_score/100)):[];
+ return {key:model.key,logic:'PUBLIC_SUM_ARITHMETIC_OWN_TICKET_RANKING',
+  label:model.label+'・独自買い目',status:model.status==='READY'&&!ready?'INSUFFICIENT':model.status,
+  tickets:ranked.slice(0,8).map(row=>row.combination),top:ranked[0]?.combination||null,
+  score:ranked[0]?.score??null,score_type:'UNCALIBRATED_RANKING',
+  basis:model.status==='READY'?model.fields:[],
+  missing:ready?[]:[...model.missing,...(model.status==='READY'?['SUM_NO_DIFFERENCE']:[])],
+  note:'合算は公開資料に基づきます。上位8点の選び方は独自式で、本人の買い目ルールの再現ではありません。',
+  sum_evidence:{...model,source_url:evidence.source_url,captured_at:evidence.captured_at,
+   exhibition_source_url:evidence.exhibition_source_url,exhibition_captured_at:evidence.exhibition_captured_at,
+   active_count:evidence.active_count,mean_basis:evidence.mean_basis},
+  ticket_weights:{first:.50,second:.31,third:.19},
+  author_strategy_reproduced:false};
+}
 export function buildTheoryTrial(snapshot,nowText){
  const now=utcMs(nowText),deadline=utcMs(snapshot?.deadline);
  const sourceAt=utcMs(snapshot?.created_date),observedAt=utcMs(snapshot?.observed_at);
@@ -112,6 +133,9 @@ export function buildTheoryTrial(snapshot,nowText){
  const all=scoreBoats(boats,activeFields);
  const uichi=uichiScores(boats,all);
  const ex=exhibition(boats,snapshot.snapshot_stage);
+ const sum=buildSumEvidence({race:snapshot,boats,originalExhibition:snapshot.original_exhibition,
+   stage:snapshot.snapshot_stage,now:snapshot.observed_at});
+ const sumModels=[sumComparator(sum.evidence.basic,sum.evidence),sumComparator(sum.evidence.venue_specific,sum.evidence)];
  // Independent all-factor comparator; deliberately no historical results enter this call.
  const f=rankCombos(boats,all.scores);
  const own={key:'V8_ALL_FACTOR',logic:'OWN_MULTIFACTOR',label:'V8独自・選手/モーター/節間統合',
@@ -120,11 +144,11 @@ export function buildTheoryTrial(snapshot,nowText){
    top:all.used.length>=5?f[0]?.combination:null,
    score:all.used.length>=5?f[0]?.score:null,
    score_type:'UNCALIBRATED_RANKING',basis:all.used};
- const models=[...uichi,ex,own];
+ const models=[...uichi,...sumModels,ex,own];
  const baseline=snapshot.market?.selected_tickets;
  const baselineTickets=Array.isArray(baseline)&&baseline.length===8&&baseline.every(valid)&&new Set(baseline).size===8?baseline:[];
  return {ok:true,record:{
-  trial_key:THEORY_REVISION+':'+snapshot.race_key+':'+snapshot.snapshot_stage,
+  trial_key:theoryTrialKey(snapshot),
   revision:THEORY_REVISION,race_key:snapshot.race_key,race_id:snapshot.race_id,
   race_date:snapshot.race_date,venue_code:snapshot.venue_code,
   race_number:snapshot.race_number,stage:snapshot.snapshot_stage,
@@ -140,6 +164,9 @@ export function buildTheoryTrial(snapshot,nowText){
    source_mode:snapshot.provenance?.source_mode||'V7_PREDICTION',
    original_v7_unchanged:true,no_buy_action:true,model_weights:'HYPOTHESIS_UNTRAINED',
    taro_official_formula_reproduced:false,odds_used_for_judgment:false,
+   sum_revision:sum.evidence.revision,sum_arithmetic_status:sum.evidence.status,
+   sum_source_url:sum.evidence.source_url,sum_source_at:sum.evidence.input_as_of,
+   taro_complete_strategy_reproduced:false,
    pre_exhibition_fields_excluded:snapshot.snapshot_stage==='PRE',exhibition_st_rule:'F_ZERO_CONTRIBUTION_NOT_SPEED'}
  }};
 }

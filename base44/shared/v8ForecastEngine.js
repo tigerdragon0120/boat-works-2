@@ -1,7 +1,8 @@
 // Immutable, pre-deadline V8 development hypotheses.
 // Ordinal research scores are NOT occurrence probabilities or expected returns.
 // This module is pure and portable between Node and Deno.
-export const FORECAST_REVISION = 'V8_FORECAST_1';
+import {buildSumEvidence, selectedSumModel} from './v8SumTheory.js';
+export const FORECAST_REVISION = 'V8_FORECAST_2_SUM';
 export const FINAL_ODDS_MAX_AGE_MS = 5 * 60 * 1000;
 const CUTOFF_MS = 60000;
 const STAGES = ['DAY_BEFORE', 'PRE', 'FINAL'];
@@ -117,7 +118,7 @@ const weightedMean = pairs => {
   return present.reduce((sum, [value, weight]) => sum + value * weight, 0)
     / present.reduce((sum, [, weight]) => sum + weight, 0);
 };
-function scoreBoats(boats, stage) {
+function scoreBoats(boats, stage, sumEvidence) {
   const fields = [
     ['national_win_rate', .27, value => value * 10],
     ['local_win_rate', .12, value => value * 10],
@@ -134,14 +135,24 @@ function scoreBoats(boats, stage) {
   const allStarts = stage === 'FINAL' && boats.every(boat => finite(boat.exhibition_st));
   const minTime = allTimes ? Math.min(...boats.map(boat => boat.exhibition_time)) : null;
   const maxTime = allTimes ? Math.max(...boats.map(boat => boat.exhibition_time)) : null;
+  const sum = stage === 'FINAL' ? selectedSumModel(sumEvidence) : null;
   return {
     feature_keys: used.map(([key]) => key),
     meaningful: used.length >= 3 && used.some(([key]) => key === 'national_win_rate' || key === 'national_2rate'),
     boats: boats.map((boat, index) => {
       const speedScore = !allTimes ? null : maxTime === minTime ? 50 : (maxTime - boat.exhibition_time) / (maxTime - minTime) * 100;
+      const sumRow = sum?.boats.find(row => row.boat_number === boat.boat_number);
+      const originalRow = sumRow || sumEvidence?.basic?.boats.find(row => row.boat_number === boat.boat_number);
+      const sumScore = finite(sumRow?.relative_score) ? sumRow.relative_score : null;
       const exhibitionStartScore = !allStarts ? null : boat.exhibition_flying ? 0 : clamp((.3 - boat.exhibition_st) / .3 * 100);
-      const score = weightedMean([[base[index], .75], [speedScore, .15], [exhibitionStartScore, .10]]);
-      return { ...boat, base_score: round(base[index]), score: round(score), exhibition_speed_score: round(speedScore), exhibition_start_score: round(exhibitionStartScore) };
+      // Replace the existing speed term; adding SUM as a second speed feature
+      // would count the shared exhibition measurement twice.
+      const score = weightedMean([[base[index], .75], [sumScore ?? speedScore, .15], [exhibitionStartScore, .10]]);
+      return { ...boat, base_score: round(base[index]), score: round(score), exhibition_speed_score: round(speedScore), exhibition_start_score: round(exhibitionStartScore),
+        lap_time: originalRow?.lap_time ?? null, turn_time: originalRow?.turn_time ?? null,
+        straight_time: originalRow?.straight_time ?? null, sum_total: sumRow?.total ?? null,
+        sum_delta: sumRow?.delta ?? null, sum_speed_score: round(sumScore),
+        speed_feature: sumScore == null ? 'EXHIBITION_TIME' : sum.key };
     }),
   };
 }
@@ -333,7 +344,7 @@ function fingerprint(value) {
   for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
-function buildForecast({ race, entries = [], stage, now: nowText, baseline = null, odds = null, weather = null }, replay = false) {
+function buildForecast({ race, entries = [], stage, now: nowText, baseline = null, odds = null, weather = null, originalExhibition = null }, replay = false) {
   const now = forecastTime(nowText), deadline = forecastTime(race?.deadline);
   if (!STAGES.includes(stage)) return { ok: false, reason: 'INVALID_STAGE' };
   if (!race?.id || !/^\d{4}-\d{2}-\d{2}_\d{2}_\d{2}$/.test(race?.race_key || '')
@@ -372,11 +383,14 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   for (const key of ['national_win_rate', 'motor_2rate', 'avg_st', 'course_win_percent']) {
     if (rawBoats.some(boat => boat[key] == null)) missing.push(key.toUpperCase() + '_INCOMPLETE');
   }
-  const evaluated = scoreBoats(replay ? active : rawBoats, stage);
+  const sum = buildSumEvidence({race, boats: rawBoats, originalExhibition, stage, now: nowText, replay});
+  const evaluated = scoreBoats(replay ? active : rawBoats, stage, sum.evidence);
   const allEvaluated = replay ? rawBoats.map(boat => evaluated.boats.find(row => row.boat_number === boat.boat_number)
     || { ...boat, base_score: null, score: null, exhibition_speed_score: null, exhibition_start_score: null }) : evaluated.boats;
   if (!evaluated.meaningful) missing.push('SCORING_INPUTS_INSUFFICIENT');
   const enoughBoats = replay ? active.length >= 3 : active.length === 6;
+  sum.evidence.used_for_scoring = stage === 'FINAL' && sum.evidence.status === 'READY' && evaluated.meaningful && enoughBoats;
+  if (stage === 'FINAL' && sum.evidence.status !== 'READY') missing.push('SUM_NOT_APPLIED');
   const scenarios = evaluated.meaningful && enoughBoats ? buildScenarios(evaluated.boats, complete) : [];
   const savedBaseline = useBaseline(baseline, race, now, replay);
   const comparison = compare(savedBaseline, allEvaluated, scenarios, complete, stage);
@@ -389,11 +403,12 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   const conditions = conditionsSnapshot(race, weather, stage, now, missing);
   const maxSourceAt = Math.max(sourceTime(race), ...sorted.map(sourceTime),
     forecastTime(decision.odds_captured_at) || 0,
-    forecastTime(conditions.observed_at) || 0);
+    forecastTime(conditions.observed_at) || 0,
+    forecastTime(sum.evidence.input_as_of) || 0);
   const priorIdentity = stage === 'FINAL' ? savedBaseline?.id || null : null;
   const contentHash = fingerprint({ boats: allEvaluated, baseline_id: priorIdentity,
     odds_id: stage === 'FINAL' ? decision.odds_snapshot_id || null : null,
-    odds: decision.odds, decision, conditions });
+    odds: decision.odds, decision, conditions, sum_evidence: sum.evidence, original_exhibition: sum.original_exhibition });
   return { ok: true, record: {
     forecast_key: FORECAST_REVISION + ':' + race.race_key + ':' + stage + (stage === 'FINAL' ? ':' + contentHash : ''),
     revision: FORECAST_REVISION, race_id: race.id, race_key: race.race_key, race_date: race.race_date,
@@ -404,6 +419,7 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     comparison, decision, priority_score: round(scenarios[0]?.score ?? 0),
     quality: !evaluated.meaningful || (stage === 'FINAL' && !complete) || !enoughBoats ? 'PARTIAL' : 'CAPTURED',
     missing: [...new Set(missing)], conditions, exhibition_complete: complete,
+    sum_evidence: sum.evidence, original_exhibition: sum.original_exhibition,
     score_type: 'UNCALIBRATED_RESEARCH_SCORE', model_label: '展開仮説 V8',
     gender_model: race.is_womens === true ? 'WOMENS' : race.is_womens === false ? 'OPEN' : 'UNKNOWN',
     provenance: {
@@ -414,6 +430,10 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
       source_times_checked: true, future_inputs_excluded: true,
       exhibition_used: stage === 'FINAL', odds_used: stage === 'FINAL' && decision.price_checked,
       weather_used_for_scoring: false, tide_used_for_scoring: false,
+      sum_revision: sum.evidence.revision, sum_used_for_scoring: sum.evidence.used_for_scoring,
+      sum_model: sum.evidence.selected_model, sum_speed_weight: sum.evidence.used_for_scoring ? .15 : 0,
+      sum_replaces_exhibition_speed: sum.evidence.used_for_scoring,
+      taro_official_strategy_reproduced: false,
       research_only: true, content_fingerprint: contentHash,
       fingerprint_kind: 'FNV1A_CHANGE_DETECTION_NOT_SIGNATURE',
     },

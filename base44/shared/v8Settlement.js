@@ -142,6 +142,12 @@ function settle({source, sourceKind, result: resultInput, provenance, now, exclu
       external_publisher_verified: sourceKind === 'EXTERNAL' ? source.publisher_verified === true : null,
       all_tickets_charged: true, cancelled_or_refunded_included: false, unit_payout_yen: 100,
       planned_stake_only: true, result_and_source_race_matched: true,
+      ...(sourceKind !== 'EXTERNAL' ? {
+        sum_revision: source.sum_evidence?.revision || null,
+        sum_used_for_scoring: source.sum_evidence?.used_for_scoring === true,
+        sum_model: source.sum_evidence?.used_for_scoring === true ? source.sum_evidence.selected_model : null,
+        sum_input_as_of: source.sum_evidence?.input_as_of || null,
+      } : {}),
     },
   };
   if(excludeRefund){

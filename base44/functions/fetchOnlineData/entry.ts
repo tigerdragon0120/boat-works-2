@@ -3,6 +3,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.60';
 import { upsertResultAndVerify } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 import { runV8LiveGeneration } from '../../shared/v8LiveGeneration.js';
+import { fetchOriginalExhibition } from '../../shared/originalExhibition.js';
 import { fetchHtml, parseBeforeInfo, parseResult, parseOdds3t, parseRaceCard, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 
 const num = (v: any) => {
@@ -82,12 +83,17 @@ async function processSection(base44: any, race: any, parsed: any) {
 
 // === 展示データ処理(決定論的パーサー出力 → RaceEntry更新) ===
 // FINAL予想は展示取得のみでは生成しない。オッズ取得後に生成する。
-async function processExhibition(base44: any, race: any, parsed: any) {
+async function processExhibition(base44: any, race: any, parsed: any, source: any) {
   const sr = base44.asServiceRole.entities;
   const parsedEntries = parsed.entries || [];
   const entryRows = await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []);
   const existingEntries = uniqueEntriesByBoat(entryRows);
   const entryByBoat = new Map(existingEntries.map((e: any) => [Number(e.boat_number), e]));
+  const original = await fetchOriginalExhibition({
+    race, entries: existingEntries, exhibitionEntries: parsedEntries,
+    exhibitionSourceUrl: source.url, exhibitionCapturedAt: source.captured_at,
+    deadlineMs: Date.now() + 2500,
+  });
 
   let updated = 0;
   for (const pe of parsedEntries) {
@@ -120,7 +126,7 @@ async function processExhibition(base44: any, race: any, parsed: any) {
   const storedScratched = Array.isArray(race.scratched_boats) ? race.scratched_boats.map(Number) : [];
   const scratchedBoats = [...new Set([...storedScratched, ...parsedScratched])].filter((n: any) => n >= 1 && n <= 6).sort((a: any,b: any) => a-b);
   const activeBoatCount = parsed.active_boat_count || Math.max(1, 6 - scratchedBoats.length);
-  const raceUpdate: any = {};
+  const raceUpdate: any = { original_exhibition: original.snapshot };
   if (scratchedBoats.length) raceUpdate.scratched_boats = scratchedBoats;
   if (realCount >= activeBoatCount) raceUpdate.exhibition_ready = true;
   if (parsed.weather) raceUpdate.weather = parsed.weather;
@@ -140,6 +146,8 @@ async function processExhibition(base44: any, race: any, parsed: any) {
     exhibition_ready: realCount >= activeBoatCount,
     real_exhibition_count: realCount,
     active_boat_count: activeBoatCount,
+    original_exhibition_status: original.snapshot.status,
+    original_exhibition_reasons: original.snapshot.reasons,
     forecasts,
   };
 }
@@ -296,6 +304,7 @@ export default async function(req: Request) {
       return Response.json({ ok: false, status: fetchRes.status === 0 ? 'failed' : 'no_data', message: fetchRes.error || `HTTP ${fetchRes.status}` });
     }
 
+    const sourceCapturedAt = new Date().toISOString();
     // 決定論的HTML解析(InvokeLLM不使用)
     let parsed: any;
     try {
@@ -334,7 +343,7 @@ export default async function(req: Request) {
           resultData = await processSection(base44, race, parsed);
           break;
         case 'exhibition':
-          resultData = await processExhibition(base44, race, parsed);
+          resultData = await processExhibition(base44, race, parsed, { url, captured_at: sourceCapturedAt });
           break;
         case 'odds':
           resultData = await processOdds(base44, race, parsed);

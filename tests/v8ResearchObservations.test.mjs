@@ -278,3 +278,52 @@ test('research retry cannot extend its cooperative deadline',async t=>{
   assert.equal(response.status,503);assert.equal(attempts,1);assert.equal(rows.V8TheoryTrial.length,0);
   assert.equal(body.diagnostic.existing.error,'retry_budget_exhausted');
 });
+
+test('original timings arriving after FINAL and LOCK create immutable SUM snapshots and trials once',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:NOW});
+  const {client,rows}=fixture();
+  await runV8ResearchObservations(client);
+  const originalFeatures=structuredClone(rows.V7FeatureSnapshot),originalTrials=structuredClone(rows.V8TheoryTrial);
+  const race=rows.Race[0];
+  race.original_exhibition={status:'AVAILABLE',source_kind:'OFFICIAL_ORIGINAL_EXHIBITION',provider:'BOATCAST',
+    race_date:race.race_date,venue_code:'01',race_number:1,captured_at:at(-1000),exhibition_captured_at:at(-2000),
+    source_url:'https://race.boatcast.jp/txt/01/bc_oriten_20261123_01_01.txt',
+    exhibition_source_url:'https://www.boatrace.jp/owpc/pc/race/beforeinfo?hd=20261123&jcd=01&rno=1',
+    entries:rows.RaceEntry.map((row,i)=>({boat_number:i+1,registration_number:row.register_number,
+      exhibition_time:row.exhibition_time,lap_time:36+i*.2,turn_time:8+i*.1,straight_time:7.5+i*.05}))};
+  const updated=await runV8ResearchObservations(client);
+  assert.equal(updated.ok,true);
+  assert.equal(rows.V7FeatureSnapshot.length,4);assert.equal(rows.V8TheoryTrial.length,4);
+  assert.deepEqual(rows.V7FeatureSnapshot.slice(0,2),originalFeatures);
+  assert.deepEqual(rows.V8TheoryTrial.slice(0,2),originalTrials);
+  assert.ok(rows.V8TheoryTrial.slice(2).every(row=>row.models.find(model=>model.key==='SUM_BASIC').status==='READY'));
+  assert.ok(rows.V7FeatureSnapshot.slice(2).every(row=>row.snapshot_key.includes(':SUM:')));
+  // A later read of identical data does not create another logical observation.
+  race.original_exhibition.captured_at=at(-500);
+  race.original_exhibition.exhibition_captured_at=at(-700);
+  await runV8ResearchObservations(client);
+  assert.equal(rows.V7FeatureSnapshot.length,4);assert.equal(rows.V8TheoryTrial.length,4);
+  // Corrected original times must reach the independent model without altering history.
+  race.original_exhibition.entries[0].lap_time=35.7;
+  await runV8ResearchObservations(client);
+  assert.equal(rows.V7FeatureSnapshot.length,6);assert.equal(rows.V8TheoryTrial.length,6);
+  assert.deepEqual(rows.V8TheoryTrial.slice(0,2),originalTrials);
+});
+
+test('an untrusted optional SUM source cannot freeze the key needed by a later valid observation',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:NOW});
+  const {client,rows}=fixture(),race=rows.Race[0];
+  race.original_exhibition={status:'AVAILABLE',source_kind:'OFFICIAL_ORIGINAL_EXHIBITION',provider:'BOATCAST',
+    race_date:race.race_date,venue_code:'01',race_number:1,captured_at:at(-1000),exhibition_captured_at:at(1000),
+    source_url:'https://race.boatcast.jp/txt/01/bc_oriten_20261123_01_01.txt',
+    exhibition_source_url:'https://boatrace.jp/owpc/pc/race/beforeinfo?hd=20261123&jcd=01&rno=1',
+    entries:rows.RaceEntry.map((row,i)=>({boat_number:i+1,registration_number:row.register_number,
+      exhibition_time:row.exhibition_time,lap_time:36+i*.2,turn_time:8,straight_time:7.5}))};
+  await runV8ResearchObservations(client);
+  assert.equal(rows.V7FeatureSnapshot.length,2);
+  assert.ok(rows.V7FeatureSnapshot.every(row=>row.original_exhibition===null&&!row.snapshot_key.includes(':SUM:')));
+  race.original_exhibition.exhibition_captured_at=at(-1000);
+  await runV8ResearchObservations(client);
+  assert.equal(rows.V7FeatureSnapshot.length,4);assert.equal(rows.V8TheoryTrial.length,4);
+  assert.ok(rows.V8TheoryTrial.slice(2).every(row=>row.models.find(model=>model.key==='SUM_BASIC').status==='READY'));
+});

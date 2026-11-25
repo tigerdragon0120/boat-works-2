@@ -16,8 +16,8 @@ const model=(record,key)=>record.models.find(x=>x.key===key);
 
 test('new trials use a new immutable revision key',()=>{
  const out=trial();
- assert.equal(THEORY_REVISION,'V8_THEORY_2');
- assert.equal(out.record.trial_key,'V8_THEORY_2:'+snapshot.race_key+':FINAL');
+ assert.equal(THEORY_REVISION,'V8_THEORY_3_SUM');
+ assert.equal(out.record.trial_key,'V8_THEORY_3_SUM:'+snapshot.race_key+':FINAL');
 });
 test('PRE model outputs are identical with absent or arbitrary complete exhibition',()=>{
  const noExhibition=boats.map(({exhibition_time,exhibition_st,...b})=>b);
@@ -81,10 +81,10 @@ test('baseline must contain eight distinct valid tickets',()=>{
  assert.ok(duplicate.record.missing.includes('BASELINE_TICKETS_INVALID'));
  assert.deepEqual(trial().record.baseline_tickets,tickets);
 });
-test('one-lap absence is a model limitation, not a falsely combined missing exhibition',()=>{
+test('the legacy relative comparator remains distinct from the new SUM arithmetic',()=>{
  const ex=model(trial().record,'EXHIBITION_RELATIVE');
  assert.equal(ex.status,'READY');assert.deepEqual(ex.missing,[]);
- assert.ok(ex.limitations.includes('ONE_LAP_TIME_NOT_COLLECTED'));
+ assert.ok(ex.limitations.includes('SUM_NOT_USED_BY_THIS_MODEL'));
  assert.ok(ex.note.includes('未再現'));
  assert.equal(trial().record.provenance.taro_official_formula_reproduced,false);
 });

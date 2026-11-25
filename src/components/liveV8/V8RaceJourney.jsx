@@ -3,12 +3,14 @@ import {useAuth} from '@/lib/AuthContext';
 import RaceScenarioDiagram from './RaceScenarioDiagram';
 import V8ExternalPanel from './V8ExternalPanel';
 import {buildTicketOdds} from './v8TicketOdds';
+import V8SumPanel, {SumTheoryModelDetails} from './V8SumPanel';
+import {originalTimingSummary, savedSumView, SUM_LABELS, sumModelStatus, sumTimeText} from './v8SumView';
 import {isReplay, latestStudyStage, studyStageLabel, studySettlementIndex, studyProgressLabel} from './v8StudyView';
 import {BUTTON_CLASS, displayForecastStatus, formatTime, latestStage, timeMs, useClock, useV8Dashboard} from './v8Client';
 
 const TONES={emerald:'border-emerald-200 bg-emerald-50 text-emerald-800',amber:'border-amber-200 bg-amber-50 text-amber-900',sky:'border-sky-200 bg-sky-50 text-sky-800',slate:'border-slate-200 bg-slate-50 text-slate-600'};
 const COMPARE={SUPPORTED:'事前の読みを支持',CHANGED:'展示で展開を修正',NO_BASE:'比較元の保存待ち',PARTIAL:'情報が揃うまで保留'};
-const THEORIES={UICHI_MAIN:'ういち基本型',UICHI_URA:'裏ういち型',UICHI_NEW_MAIN:'新ういち型',UICHI_NEW_URA:'新裏ういち型',EXHIBITION_RELATIVE:'舟券太郎参考・展示相対評価',V8_ALL_FACTOR:'V8多因子評価'};
+const THEORIES={UICHI_MAIN:'ういち基本型',UICHI_URA:'裏ういち型',UICHI_NEW_MAIN:'新ういち型',UICHI_NEW_URA:'新裏ういち型',EXHIBITION_RELATIVE:'展示・スタート相対評価（従来式）',SUM_BASIC:'基本SUM',SUM_AMAGASAKI:'尼崎・3項SUM',V8_ALL_FACTOR:'V8多因子評価'};
 const score=value=>typeof value==='number'&&Number.isFinite(value)?Math.round(value):null;
 const measured=(value,digits=2)=>typeof value==='number'&&Number.isFinite(value)?value.toFixed(digits):'—';
 
@@ -17,7 +19,32 @@ function ConditionsPanel({forecast}) {
   const conditions=forecast.conditions || {}, observed=conditions.kind==='PRE_RACE_OBSERVATION', boats=forecast.boats || [];
   const completeExhibition=forecast.exhibition_complete===true;
   const fields=observed?[{label:'天候',value:conditions.weather || '未取得'},{label:'風',value:typeof conditions.wind_speed==='number'?`${conditions.wind_speed} m/s · ${conditions.wind_direction || '方位未確認'}`:'未取得'},{label:'波高',value:typeof conditions.wave_height==='number'?`${conditions.wave_height} cm`:'未取得'}]:[{label:'天気・風の予報',value:'未接続'}];
-  return <details className="rounded-xl border border-slate-200 bg-white p-4"><summary className="cursor-pointer text-sm font-bold text-slate-800">保存した入力データと取得状況</summary><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">{[...fields,{label:'潮位・潮流',value:'未接続'},{label:'周回・直線・回り足タイム',value:'未取得'},{label:'展示進入・ST・タイム',value:forecast.stage!=='FINAL'?'事前予想には不使用':completeExhibition?'出走艇を確認済み':'一部未取得・要確認'}].map(field=><div key={field.label} className="rounded-lg bg-slate-50 p-3"><p className="text-[10px] leading-5 text-slate-500">{field.label}</p><p className="mt-1 text-xs font-semibold text-slate-800">{field.value}</p></div>)}</div><p className="mt-2 text-[10px] leading-5 text-slate-500">{conditions.observed_at?`気象の取得 ${formatTime(conditions.observed_at,true)}。`:''}気象・潮位による補正は、現在の展開評価には加えていません。未取得を0として扱いません。</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[680px] text-left text-xs"><thead className="text-[10px] text-slate-500"><tr>{['艇・選手','想定進入','展示進入','平均ST','展示ST','展示タイム','モーター2連率','コース1着率'].map(label=><th key={label} className="px-2 py-2 font-semibold">{label}</th>)}</tr></thead><tbody>{boats.map(boat=><tr key={boat.boat_number} className="border-t border-slate-100"><th className="px-2 py-2 font-semibold text-slate-800">{boat.boat_number} {boat.player_name || '選手名未取得'}</th><td className="px-2 py-2 text-slate-600">{boat.expected_course ?? '—'}{boat.expected_course_basis==='FRAME_ORDER_ASSUMPTION'?' 仮定':''}</td><td className="px-2 py-2 text-slate-600">{boat.observed_course ?? '—'}</td><td className="px-2 py-2 text-slate-600">{measured(boat.avg_st)}</td><td className={`px-2 py-2 ${boat.exhibition_flying||boat.exhibition_late?'font-semibold text-rose-700':'text-slate-600'}`}>{boat.exhibition_late?'L':boat.exhibition_flying?`F${measured(Math.abs(boat.exhibition_st))}`:measured(boat.exhibition_st)}</td><td className="px-2 py-2 text-slate-600">{measured(boat.exhibition_time)}</td><td className="px-2 py-2 text-slate-600">{typeof boat.motor_2rate==='number'?`${boat.motor_2rate.toFixed(1)}%`:'—'}</td><td className="px-2 py-2 text-slate-600">{typeof boat.course_win_percent==='number'?`${boat.course_win_percent.toFixed(1)}%`:'未取得'}{boat.course_sample_size?` (${boat.course_sample_size}走)`:''}</td></tr>)}</tbody></table></div><p className="mt-2 text-[10px] leading-5 text-slate-500">展示STは本番のSTとは区別し、展示Fをスタートの速さとして加点しません。コース成績は進入コースが明示された値のみ扱います。</p></details>;
+  return <details className="rounded-xl border border-slate-200 bg-white p-4">
+    <summary className="cursor-pointer text-sm font-bold text-slate-800">保存した入力データと取得状況</summary>
+    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {[...fields,{label:'潮位・潮流',value:'未接続'},{label:'1周・周り足・直線タイム',value:originalTimingSummary(forecast)},{label:'SUM評価',value:savedSumView(forecast).label},{label:'展示進入・ST・タイム',value:forecast.stage!=='FINAL'?'事前予想には不使用':completeExhibition?'出走艇を確認済み':'一部未取得・要確認'}].map(field=><div key={field.label} className="rounded-lg bg-slate-50 p-3"><p className="text-[10px] leading-5 text-slate-500">{field.label}</p><p className="mt-1 text-xs font-semibold text-slate-800">{field.value}</p></div>)}
+    </div>
+    <p className="mt-2 text-[10px] leading-5 text-slate-500">{conditions.observed_at?`気象の取得 ${formatTime(conditions.observed_at,true)}。`:''}気象・潮位による補正は、現在の展開評価には加えていません。未取得を0として扱いません。</p>
+    <div className="mt-3 overflow-x-auto">
+      <table className="w-full min-w-[900px] text-left text-xs">
+        <thead className="text-[10px] text-slate-500"><tr>{['艇・選手','想定進入','展示進入','平均ST','展示ST','展示タイム','1周','周り足','直線','モーター2連率','コース1着率'].map(label=><th scope="col" key={label} className="px-2 py-2 font-semibold">{label}</th>)}</tr></thead>
+        <tbody>{boats.map(boat=><tr key={boat.boat_number} className="border-t border-slate-100">
+          <th scope="row" className="px-2 py-2 font-semibold text-slate-800">{boat.boat_number} {boat.player_name || '選手名未取得'}{boat.active===false&&<span className="ml-1 text-[10px] font-normal text-slate-500">欠場</span>}</th>
+          <td className="px-2 py-2 text-slate-600">{boat.expected_course ?? '—'}{boat.expected_course_basis==='FRAME_ORDER_ASSUMPTION'?' 仮定':''}</td>
+          <td className="px-2 py-2 text-slate-600">{boat.observed_course ?? '—'}</td>
+          <td className="px-2 py-2 text-slate-600">{measured(boat.avg_st)}</td>
+          <td className={`px-2 py-2 ${boat.exhibition_flying||boat.exhibition_late?'font-semibold text-rose-700':'text-slate-600'}`}>{boat.exhibition_late?'L':boat.exhibition_flying?`F${measured(Math.abs(boat.exhibition_st))}`:measured(boat.exhibition_st)}</td>
+          <td className="px-2 py-2 text-slate-600">{measured(boat.exhibition_time)}</td>
+          <td className="px-2 py-2 text-slate-600">{sumTimeText(boat.lap_time)}</td>
+          <td className="px-2 py-2 text-slate-600">{sumTimeText(boat.turn_time)}</td>
+          <td className="px-2 py-2 text-slate-600">{sumTimeText(boat.straight_time)}</td>
+          <td className="px-2 py-2 text-slate-600">{typeof boat.motor_2rate==='number'?`${boat.motor_2rate.toFixed(1)}%`:'—'}</td>
+          <td className="px-2 py-2 text-slate-600">{typeof boat.course_win_percent==='number'?`${boat.course_win_percent.toFixed(1)}%`:'未取得'}{boat.course_sample_size?` (${boat.course_sample_size}走)`:''}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+    <p className="mt-2 text-[10px] leading-5 text-slate-500">展示STは本番のSTとは区別し、展示Fをスタートの速さとして加点しません。タイムの単位は秒です。コース成績は進入コースが明示された値のみ扱います。</p>
+  </details>;
 }
 
 const TICKET_COLORS=['','bg-white text-slate-900 border-slate-400','bg-slate-900 text-white border-slate-900','bg-red-600 text-white border-red-600','bg-blue-600 text-white border-blue-600','bg-yellow-400 text-slate-900 border-yellow-400','bg-emerald-600 text-white border-emerald-600'];
@@ -75,6 +102,7 @@ function ForecastCard({forecast,title,subtitle,step,empty,displayOdds,race,now,o
       <RaceScenarioDiagram scenario={active} boats={forecast.boats} stage={forecast.stage}/>
       <div className="mt-3 grid grid-cols-2 gap-2">{scenarios.slice(0,6).map(scenario=><button type="button" key={scenario.key} onClick={()=>setSelected(scenario.key)} aria-pressed={active?.key===scenario.key} className={`rounded-lg border px-2.5 py-2 text-left transition ${active?.key===scenario.key?'border-sky-500 bg-sky-50 ring-1 ring-sky-100':'border-slate-200 bg-white hover:border-sky-300'}`}><span className="block text-xs font-bold text-slate-800">{scenario.label}</span><span className="mt-1 block text-[10px] text-slate-500">展開評価 {score(scenario.score) ?? '—'} / 100</span></button>)}</div>
       {active&&<div className="mt-3 rounded-lg bg-slate-50 p-3"><p className="text-xs font-semibold leading-6 text-slate-800">{active.reason}</p>{!!active.checkpoints?.length&&<><p className="mt-2 text-[11px] font-bold text-sky-700">{forecast.stage==='FINAL'?'判断の確認項目':'展示で確認すること'}</p><ul className="mt-1 space-y-1 text-[11px] leading-5 text-slate-600">{active.checkpoints.map((text,index)=><li key={index}>・{typeof text==='string'?text:text.label || text.description || '確認項目'}</li>)}</ul></>}</div>}
+      <V8SumPanel forecast={forecast}/>
       {!!forecast.research_tickets?.length&&<details open className="mt-3"><summary className="cursor-pointer text-xs font-semibold text-slate-600">V8の買い目・保存済み（{forecast.research_tickets.length}点）</summary><div className="mt-2"><TicketList tickets={forecast.research_tickets} displayOdds={displayOdds} race={race} now={now} blocked={oddsBlocked}/></div></details>}
       <p className="mt-3 text-[10px] leading-5 text-slate-400">展開評価は未校正の比較スコアです。発生確率・的中率ではありません。</p>
     </>}
@@ -89,7 +117,7 @@ function TheoryComparison({rows=[],admin,displayOdds,race,now,oddsBlocked}) {
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-bold text-slate-900">同じレースを、複数の見方で比較</h4><p className="mt-1 text-xs leading-5 text-slate-500">各ロジックの買い目を独立して保存し、一致と違いを比較します。</p></div><div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">{[['PRE','展示を使わない評価'],['FINAL','展示後']].map(([key,label])=><button type="button" key={key} onClick={()=>setStage(key)} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${stage===key?'bg-white text-sky-700 shadow-sm':'text-slate-500'}`}>{label}</button>)}</div></div>
     {!record?<p className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">{admin?'この時点のロジック比較は、まだ保存されていません。':'詳細なロジック比較は管理者の研究画面で確認できます。'}</p>:<>
       <p className="text-[11px] text-slate-500">保存：{formatTime(record.generated_at,true)} · モデル版 {record.revision || '—'}</p>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{(record.models||[]).map(model=><article key={model.key} className="rounded-xl border border-slate-200 bg-white p-4"><div className="flex items-start justify-between gap-2"><h5 className="text-sm font-bold text-slate-900">{THEORIES[model.key] || model.label}</h5><span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${model.status==='READY'?'bg-sky-50 text-sky-700':'bg-slate-100 text-slate-500'}`}>{model.status==='READY'?'比較可能':'情報不足'}</span></div>{model.key==='EXHIBITION_RELATIVE'&&<p className="mt-2 text-[11px] leading-5 text-slate-500">公開アイデアを参考にした独自式。本人公式のSUM・シンSUMの再現ではありません。</p>}<div className="mt-3"><TicketList tickets={model.tickets || []} displayOdds={displayOdds} race={race} now={now} blocked={oddsBlocked}/></div>{typeof model.score==='number'&&<p className="mt-3 text-xs text-slate-600">比較評価 <span className="font-bold text-slate-900">{(model.score<=1?model.score*100:model.score).toFixed(1)}</span><span className="ml-1 text-[10px] text-slate-400">未校正</span></p>}</article>)}</div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{(record.models||[]).map(model=><article key={model.key} className="min-w-0 rounded-xl border border-slate-200 bg-white p-4"><div className="flex items-start justify-between gap-2"><h5 className="text-sm font-bold text-slate-900">{THEORIES[model.key] || model.label}</h5><span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${model.status==='READY'?'bg-sky-50 text-sky-700':'bg-slate-100 text-slate-500'}`}>{SUM_LABELS[model.key]?sumModelStatus(model):model.status==='READY'?'比較可能':'情報不足'}</span></div>{model.key==='EXHIBITION_RELATIVE'&&<p className="mt-2 text-[11px] leading-5 text-slate-500">従来の独自式です。基本SUM・尼崎3項SUMは別のモデルで比較します。</p>}<SumTheoryModelDetails model={model}/><div className="mt-3"><TicketList tickets={model.tickets || []} displayOdds={displayOdds} race={race} now={now} blocked={oddsBlocked}/></div>{typeof model.score==='number'&&<p className="mt-3 text-xs text-slate-600">比較評価 <span className="font-bold text-slate-900">{(model.score<=1?model.score*100:model.score).toFixed(1)}</span><span className="ml-1 text-[10px] text-slate-400">未校正</span></p>}</article>)}</div>
     </>}
   </div>;
 }

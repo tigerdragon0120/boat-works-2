@@ -2,6 +2,7 @@
 // No hindsight, no model weights, no synthetic qualifying ranks. Missing values remain null.
 // V8_INPUT_ONLY records raw evidence without reading or relabelling a V7 prediction.
 import { selectV7RaceEntries } from "./v7RaceEntrySelector.js";
+import { buildSumEvidence, sumObservationKey } from './v8SumTheory.js';
 
 export const FEATURE_REVISION = "V7_FEATURE_OBSERVATION_1";
 const utcMs = (value) => {
@@ -12,6 +13,19 @@ const utcMs = (value) => {
   return Number.isFinite(out) ? out : null;
 };
 export { utcMs };
+
+// Preserve existing observations. A later original-exhibition observation gets
+// its own immutable key; the acquisition time alone does not create new copies.
+export function featureSnapshotKey(race,stage,sourceMode='V7_PREDICTION',observedAt=null) {
+  const base=FEATURE_REVISION+':'+race.race_key+':'+stage;
+  if(sourceMode!=='V8_INPUT_ONLY'||stage==='PRE')return base;
+  const raw=race.original_exhibition,now=utcMs(observedAt),at=utcMs(raw?.captured_at),exhibitionAt=utcMs(raw?.exhibition_captured_at),deadline=utcMs(race.deadline);
+  if(!raw||now==null||at==null||exhibitionAt==null||deadline==null||Math.max(at,exhibitionAt)>now||Math.max(at,exhibitionAt)>=deadline-60000
+    ||raw.race_date!==race.race_date||String(raw.venue_code).padStart(2,'0')!==String(race.venue_code).padStart(2,'0')
+    ||Number(raw.race_number)!==Number(race.race_number))return base;
+  const key=sumObservationKey(raw);
+  return key?base+':SUM:'+key:base;
+}
 
 const numeric = (value) => {
   if (value === "" || value == null) return null;
@@ -139,7 +153,9 @@ export function buildV7FeatureObservation({race,entries=[],odds=[],pre=null,fina
     return {ok:false,reason:'exhibition_already_available'};
   }
   if(result.reason)missing.push("ENTRIES_"+result.reason.toUpperCase());
-  const boats=result.entries.map(boatSnapshot);
+  const boats=result.entries.map(entry=>({...boatSnapshot(entry),
+    active:!entry.is_absent&&!entry.is_scratched&&!(race.scratched_boats||[]).map(Number).includes(Number(entry.boat_number))}));
+  const sum=inputOnly?buildSumEvidence({race,boats,originalExhibition:race.original_exhibition,stage,now:observedAt}):null;
   const expectedFields=[
     "national_win_rate","national_2rate","national_3rate","motor_2rate","motor_3rate",
     "boat_2rate","boat_3rate","local_2rate","local_3rate"
@@ -224,7 +240,7 @@ export function buildV7FeatureObservation({race,entries=[],odds=[],pre=null,fina
   };
   return {
     ok:true,record:{
-      snapshot_key:FEATURE_REVISION+":"+race.race_key+":"+stage,
+      snapshot_key:featureSnapshotKey(inputOnly&&!sum.original_exhibition?{...race,original_exhibition:null}:race,stage,sourceMode,observedAt),
       schema_version:FEATURE_REVISION,race_id:race.id,race_key:race.race_key,
       race_date:race.race_date,venue_code:String(race.venue_code??""),
       race_number:Number(race.race_number||0),snapshot_stage:stage,
@@ -243,6 +259,7 @@ export function buildV7FeatureObservation({race,entries=[],odds=[],pre=null,fina
       weather_complete:weatherComplete,
       qualifying_rank_complete:boats.length===6&&boats.every(b=>b.qualifying_rank!=null&&b.qualifying_point_rate!=null),
       boats,market:snapshotOdds,signals,missing,
+      ...(inputOnly?{original_exhibition:sum.original_exhibition}:{}),
       provenance:{
         source:inputOnly?'BASE44_RACE_RACEENTRY_ODDSSNAPSHOT':"BASE44_RACE_RACEENTRY_ODDSSNAPSHOT_PREDICTIONV7",
         source_mode:sourceMode,prediction_used:!!chosen,prediction_required:!inputOnly,

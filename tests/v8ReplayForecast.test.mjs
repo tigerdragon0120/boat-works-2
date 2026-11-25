@@ -73,5 +73,7 @@ test('a reconstructed baseline can never satisfy the live BUY baseline gate',()=
   const at='2026-11-22T04:50:00Z';
   const before={...reconstructed,generated_at:'2026-11-22T04:00:00Z',created_date:'2026-11-22T04:00:00Z'};
   const result=buildRaceForecast({race:{...race,status:'scheduled',updated_date:at},entries:entries().map(row=>({...row,updated_date:at})),stage:'FINAL',now:at,baseline:before});
-  assert.equal(result.ok,true);assert.equal(result.record.comparison.status,'NO_BASE');assert.equal(result.record.decision.status,'WAIT');
+  assert.equal(result.ok,true);assert.equal(result.record.comparison.status,'NO_BASE');
+  // Current V8 records its own WATCH research tickets even without a usable baseline.
+  assert.equal(result.record.decision.status,'WATCH');assert.equal(result.record.decision.research_only,true);
 });

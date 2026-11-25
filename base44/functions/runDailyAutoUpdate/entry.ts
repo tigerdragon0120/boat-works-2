@@ -10,6 +10,7 @@ import { runV8LiveGeneration } from '../../shared/v8LiveGeneration.js';
 import { selectLiveInputRaces, isSavedExhibitionComplete } from '../../shared/liveInputPriority.js';
 import { readV8Rows } from '../../shared/v8Repository.js';
 import { planRaceCardEntries } from '../../shared/raceCardEntryPlan.js';
+import { fetchOriginalExhibition } from '../../shared/originalExhibition.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -515,6 +516,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const res = await fetchHtml(url, 0, { timeoutMs: 6000, deadlineMs: startTime + timeBudgetMs });
     if (!res.ok) continue;
 
+    const exhibitionCapturedAt = new Date().toISOString();
     const parsed = parseBeforeInfo(res.html);
     if (!parsed.ok || !parsed.data?.entries?.length) continue;
 
@@ -575,7 +577,14 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const scratchedBoats = [...new Set([...storedScratched, ...parsedScratched])].filter((n: any) => n >= 1 && n <= 6).sort((a: any,b: any) => a-b);
     const activeBoatCount = parsed.data.active_boat_count || Math.max(1, 6 - scratchedBoats.length);
     const complete = isSavedExhibitionComplete(entries, scratchedBoats);
+    const original = await fetchOriginalExhibition({
+      race: { ...race, scratched_boats: scratchedBoats }, entries, exhibitionEntries: parsed.data.entries,
+      exhibitionSourceUrl: url, exhibitionCapturedAt,
+      // Leave time to save normal exhibition values and continue the V8 pipeline.
+      deadlineMs: Math.min(startTime + timeBudgetMs - 1500, deadlineMs > Date.now() ? deadlineMs - 65000 : Infinity),
+    });
     const raceUpdate: any = {};
+    if (JSON.stringify(original.snapshot) !== JSON.stringify(race.original_exhibition)) raceUpdate.original_exhibition = original.snapshot;
     if (JSON.stringify(storedScratched) !== JSON.stringify(scratchedBoats)) raceUpdate.scratched_boats = scratchedBoats;
     if (race.exhibition_ready !== complete) raceUpdate.exhibition_ready = complete;
     for (const field of ['weather','wind_speed','water_temp','air_temp','wave_height']) {
@@ -601,7 +610,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     if (complete && raceSaved && deadlineMs > Date.now() + 90000) forecastReadyKeys.add(race.race_key);
     if (updated > 0 || complete) {
       fetched++;
-      logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新 / 保存済み${complete?'全艇確認':'一部不足'} (取得${realCount}/${activeBoatCount})`);
+      logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新 / 保存済み${complete?'全艇確認':'一部不足'} (取得${realCount}/${activeBoatCount}) / SUM元データ ${original.snapshot.status}`);
     }
 
     await sleep(300);

@@ -176,3 +176,30 @@ test('a failed V8 forecast write makes the pipeline fail while a budget-only pau
   const paused=await runV8LiveGeneration(state.client,{timeBudgetMs:0});
   assert.equal(paused.ok,true);assert.equal(paused.partial,true);assert.equal(paused.skipped,'time_budget');
 });
+
+test('later original timings reach saved V8 forecasts immediately without rewriting the earlier FINAL',async t=>{
+  const race=makeRace('sum-arrival',1,{deadline:'2026-11-22T03:20:00Z',exhibition_ready:true});
+  const entries=entriesFor(race,true),state=setup(t,{races:[race],entries});
+  const first=await runV8LiveCapture(state.client);
+  assert.equal(first.final,1);
+  const previous=structuredClone(state.tables.V8RaceForecast[0]);
+  assert.equal(previous.sum_evidence.used_for_scoring,false);
+  t.mock.timers.tick(1000);
+  const current=state.tables.Race[0],at=new Date(Date.now()).toISOString();
+  current.updated_date=at;
+  current.original_exhibition={status:'AVAILABLE',source_kind:'OFFICIAL_ORIGINAL_EXHIBITION',provider:'BOATCAST',
+    race_date:race.race_date,venue_code:'01',race_number:1,captured_at:at,exhibition_captured_at:at,
+    source_url:'https://race.boatcast.jp/txt/01/bc_oriten_20261122_01_01.txt',
+    exhibition_source_url:'https://www.boatrace.jp/owpc/pc/race/beforeinfo?hd=20261122&jcd=01&rno=1',
+    entries:entries.map((entry,i)=>({boat_number:i+1,registration_number:entry.registration_number,
+      exhibition_time:entry.exhibition_time,lap_time:38-i*.4,turn_time:8-i*.1,straight_time:7.5-i*.05}))};
+  const next=await runV8LiveCapture(state.client);
+  assert.equal(next.final,1);
+  const saved=state.tables.V8RaceForecast.at(-1);
+  assert.equal(saved.sum_evidence.used_for_scoring,true);
+  assert.equal(saved.sum_evidence.selected_model,'SUM_BASIC');
+  assert.equal(saved.original_exhibition.source_url,current.original_exhibition.source_url);
+  assert.deepEqual(state.tables.V8RaceForecast[0],previous);
+  assert.notEqual(saved.forecast_key,previous.forecast_key);
+  assert.equal((await runV8LiveCapture(state.client)).created,0);
+});
