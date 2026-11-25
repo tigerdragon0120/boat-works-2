@@ -230,3 +230,18 @@ test('unknown affiliations and another racer cannot pass as a fuzzy match', () =
     assert.ok(parseOriginalExhibition(ASHIYA, options).reasons.includes('SOURCE_RACER_MISMATCH'));
   }
 });
+
+
+test('edge-compatible manual redirects reject 302 without following or using the body', async () => {
+  let requests = 0, bodyRead = false;
+  const result = await fetchOriginalExhibition({ ...inputs(), fetcher: async (_url, options) => {
+    requests++;
+    assert.equal(options.redirect, 'manual');
+    return { status: 302, ok: false, text: async () => { bodyRead = true; return ASHIYA; } };
+  } });
+  assert.equal(requests, 1);
+  assert.equal(bodyRead, false);
+  assert.equal(result.snapshot.status, 'UNAVAILABLE');
+  assert.deepEqual(result.snapshot.entries, []);
+  assert.deepEqual(result.snapshot.reasons, ['HTTP_302']);
+});
