@@ -457,8 +457,12 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     parameter_weights_applied:evaluated.racer_parameters_used,prior_strength:20};
   for(const row of racerEvidence.boats){
     const boat=allEvaluated.find(item=>item.boat_number===row.boat_number);
-    for(const key of ['start_score','start_basis','effective_avg_st','used_for_scoring','role_finish_used'])
-      row.scoring[key]=boat?.racer_parameters?.[key]??row.scoring[key]??null;
+    for(const key of ['start_score','start_basis','effective_avg_st','used_for_scoring','role_finish_used']) {
+      // Null means a calculated individual value was deliberately not applied
+      // under the common-input rule. Do not restore that pre-scoring value.
+      if(Object.hasOwn(boat?.racer_parameters||{},key))row.scoring[key]=boat.racer_parameters[key];
+      else if(!Object.hasOwn(row.scoring,key))row.scoring[key]=null;
+    }
     row.scoring.used_features=evaluated.feature_keys.filter(key=>['start_parameter_score','course_finish_score'].includes(key));
   }
   racerEvidence.non_exhibition_inputs_changed=comparison.non_exhibition_inputs_changed===true;
