@@ -64,6 +64,12 @@ test('a true zero sample remains distinguishable from missing evidence and is no
   assert.equal(out.boats[0].course_win_percent,null);
   assert.ok(!out.racer_evidence.scoring.feature_keys.includes('course_finish_score'));
   assert.equal(out.boats[0].racer_parameters.role_finish_used,false);
+  const other=out.racer_evidence.boats[1];
+  assert.equal(other.adjusted.avg_st,.17);
+  assert.equal(other.scoring.start_basis,'OVERALL_AVG_ST');
+  assert.equal(other.scoring.effective_avg_st,null);
+  assert.equal(other.scoring.start_score,null);
+  assert.equal(other.scoring.used_for_scoring,false);
 });
 
 test('partial or conflicting exhibition uses the same expected course in diagram and racer evidence',()=>{
