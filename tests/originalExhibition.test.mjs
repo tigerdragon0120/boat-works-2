@@ -174,3 +174,59 @@ test('an unused missing straight measurement does not cause repeat GETs', () => 
   assert.equal(data.status, 'AVAILABLE'); assert.equal(data.entries[0].straight_time, null);
   assert.equal(reuseOriginalExhibition(data, { ...options, nowMs: Date.parse(sourceTime) + 120000 }), data);
 });
+
+
+test('the hosted backend can supply lexical fetch without globalThis.fetch', async () => {
+  const source = fs.readFileSync(new URL('../base44/shared/originalExhibition.js', import.meta.url), 'utf8');
+  let requests = 0;
+  const injectedFetch = async url => {
+    assert.equal(url, 'https://race.boatcast.jp/txt/21/bc_oriten_20261124_21_07.txt');
+    requests++;
+    return new Response(ASHIYA, { status: 200 });
+  };
+  const inHostedRuntime = new Function('fetch', 'globalThis', source.replace(/^export /gm, '') + '\nreturn fetchOriginalExhibition;')(injectedFetch, Object.freeze({}));
+  const result = await inHostedRuntime(inputs());
+  assert.equal(requests, 1);
+  assert.equal(result.snapshot.status, 'AVAILABLE');
+});
+
+test('fetch failures log the public source and a sanitized message without exception causes', async t => {
+  const logged = [];
+  t.mock.method(console, 'warn', (...args) => { logged.push(args); });
+  const cause = new Error('private-cause-value');
+  const error = new TypeError('runtime rejected request; Authorization: Bearer secret-value token=private-value https://private.example/a?key=x', { cause });
+  const result = await fetchOriginalExhibition({ ...inputs(), fetcher: async () => { throw error; } });
+  assert.ok(result.snapshot.reasons.includes('FETCH_FAILED'));
+  assert.equal(logged.length, 1);
+  const diagnostics = JSON.parse(logged[0][1]);
+  assert.equal(diagnostics.name, 'TypeError');
+  assert.equal(diagnostics.source_url, 'https://race.boatcast.jp/txt/21/bc_oriten_20261124_21_07.txt');
+  assert.match(diagnostics.message, /runtime rejected request/);
+  assert.equal(JSON.stringify(logged).includes('secret-value'), false);
+  assert.equal(JSON.stringify(logged).includes('private-value'), false);
+  assert.equal(JSON.stringify(logged).includes('private.example'), false);
+  assert.equal(JSON.stringify(logged).includes('private-cause-value'), false);
+  assert.deepEqual(Object.keys(diagnostics).sort(), ['message', 'name', 'source_url']);
+});
+
+
+test('legacy names with exact branch and origin suffixes match while preserving registration checks', () => {
+  const options = inputs();
+  const affiliations = ['福岡/熊本', '広島/広島', '東京/千葉', '愛知/愛知', '埼玉/埼玉', '山口/山口'];
+  options.entries.forEach((entry, i) => { entry.player_name = entry.player_name.replace(/[\s　]+/g, '') + affiliations[i]; });
+  const data = parseOriginalExhibition(ASHIYA, options);
+  assert.equal(data.status, 'AVAILABLE');
+  assert.equal(data.entries[0].registration_number, options.entries[0].registration_number);
+  const withSpaces = inputs();
+  withSpaces.entries[0].player_name += ' 福岡 / 熊本';
+  assert.equal(parseOriginalExhibition(ASHIYA, withSpaces).status, 'AVAILABLE');
+  options.exhibitionEntries[0].registration_number = '5555';
+  assert.ok(parseOriginalExhibition(ASHIYA, options).reasons.includes('EXHIBITION_RACER_MISMATCH'));
+});
+
+test('unknown affiliations and another racer cannot pass as a fuzzy match', () => {
+  for (const name of ['桑原啓未知/未知', '桑原別人福岡/熊本', '桑原啓福岡/熊本後記']) {
+    const options = inputs(); options.entries[0].player_name = name;
+    assert.ok(parseOriginalExhibition(ASHIYA, options).reasons.includes('SOURCE_RACER_MISMATCH'));
+  }
+});

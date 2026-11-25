@@ -5,7 +5,24 @@ const SOURCE_KIND = 'OFFICIAL_ORIGINAL_EXHIBITION';
 const PROVIDER = 'BOATCAST';
 const TEXT_LIMIT = 16384;
 const RETRY_GAP_MS = 60000;
-const nameKey = value => typeof value === 'string' ? value.normalize('NFKC').replace(/[\s\u3000]+/g, '') : '';
+// The hosted backend can inject fetch lexically without exposing globalThis.fetch.
+// Use the same bare fetch call as the existing official/BOATCAST collectors.
+const runtimeFetch = (url, options) => fetch(url, options);
+function reportFetchFailure(sourceUrl, error) {
+  const name = String(error?.name || 'Error').replace(/[^A-Za-z0-9_.-]/g, '').slice(0, 60);
+  const message = String(error?.message || 'fetch failed')
+    .replace(/https?:\/\/[^\s]+/gi, '[url]')
+    .replace(/\b(authorization|bearer|token|api[_-]?key|password)\b\s*[:=]?\s*(?:Bearer\s+)?[^\s,;]+/gi, '$1=[redacted]')
+    .replace(/[\r\n\t]+/g, ' ').slice(0, 300);
+  // The URL is built from validated public race identifiers. Never log the
+  // exception object/cause, stack, request headers or response body.
+  console.warn('OriginalExhibition fetch failed', JSON.stringify({ source_url: sourceUrl, name, message }));
+}
+// Legacy RaceEntry names include e.g. 有賀達也埼玉/埼玉. Remove only a
+// recognized trailing affiliation pair; never use fuzzy or prefix name matching.
+const REGIONS = ['北海道','青森','岩手','宮城','秋田','山形','福島','茨城','栃木','群馬','埼玉','千葉','東京','神奈川','新潟','富山','石川','福井','山梨','長野','岐阜','静岡','愛知','三重','滋賀','京都','大阪','兵庫','奈良','和歌山','鳥取','島根','岡山','広島','山口','徳島','香川','愛媛','高知','福岡','佐賀','長崎','熊本','大分','宮崎','鹿児島','沖縄'];
+const REGION_SUFFIX = new RegExp('(?:' + REGIONS.join('|') + ')/(?:' + REGIONS.join('|') + ')$');
+const nameKey = value => typeof value === 'string' ? value.normalize('NFKC').replace(/[\s\u3000]+/g, '').replace(REGION_SUFFIX, '') : '';
 const registration = value => String(value?.registration_number ?? value?.register_number ?? '').trim();
 const finite = value => typeof value === 'number' && Number.isFinite(value);
 const isoTime = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:?\d{2})$/.test(value) && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
@@ -170,7 +187,7 @@ export function reuseOriginalExhibition(previous, { race, entries, exhibitionEnt
 }
 
 export async function fetchOriginalExhibition({ race, entries, exhibitionEntries, exhibitionSourceUrl,
-  exhibitionCapturedAt, deadlineMs = Infinity, timeoutMs = 2500, fetcher = globalThis.fetch } = {}) {
+  exhibitionCapturedAt, deadlineMs = Infinity, timeoutMs = 2500, fetcher = runtimeFetch } = {}) {
   const nowMs = Date.now(), base = context(race, { exhibitionSourceUrl, exhibitionCapturedAt, capturedAt: new Date(nowMs).toISOString() });
   if (!identity(race)) return { snapshot: unavailable(base, 'RACE_IDENTITY_INVALID'), fetched: false };
   if (!sourceMatches(exhibitionSourceUrl, race)) return { snapshot: unavailable(base, 'EXHIBITION_SOURCE_MISMATCH'), fetched: false };
@@ -194,6 +211,8 @@ export async function fetchOriginalExhibition({ race, entries, exhibitionEntries
     const snapshot = parseOriginalExhibition(text, { race, entries, exhibitionEntries, exhibitionSourceUrl, exhibitionCapturedAt, capturedAt: new Date().toISOString() });
     return { snapshot, fetched: true };
   } catch (error) {
-    return { snapshot: unavailable({ ...base, captured_at: new Date().toISOString() }, error?.name === 'AbortError' ? 'FETCH_TIMEOUT' : 'FETCH_FAILED'), fetched: true };
+    reportFetchFailure(base.source_url, error);
+    const timedOut = controller.signal.aborted || error?.name === 'AbortError' || error?.name === 'TimeoutError';
+    return { snapshot: unavailable({ ...base, captured_at: new Date().toISOString() }, timedOut ? 'FETCH_TIMEOUT' : 'FETCH_FAILED'), fetched: true };
   } finally { clearTimeout(timer); }
 }
