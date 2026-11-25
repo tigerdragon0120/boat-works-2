@@ -117,7 +117,14 @@ test('complete stored data is reused, but updated official exhibition data inval
 
 test('403 is recorded without retry and a repeated failed request is held for 60 seconds', async () => {
   const options = inputs(); let requests = 0;
-  const fetcher = async () => { requests++; return new Response('', { status: 403 }); };
+  const fetcher = async (_url, options) => {
+    requests++;
+    assert.deepEqual(options.headers, {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      Accept: 'text/plain', 'Accept-Language': 'ja,en;q=0.9',
+    });
+    return new Response('', { status: 403 });
+  };
   const failed = await fetchOriginalExhibition({ ...options, fetcher });
   assert.equal(failed.snapshot.status, 'UNAVAILABLE');
   assert.ok(failed.snapshot.reasons.includes('HTTP_403'));

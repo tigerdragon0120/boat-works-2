@@ -202,7 +202,7 @@ export async function fetchOriginalExhibition({ race, entries, exhibitionEntries
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.min(Math.max(100, timeoutMs), remaining));
   try {
-    const response = await fetcher(base.source_url, { signal: controller.signal, redirect: 'manual', headers: { Accept: 'text/plain', 'Accept-Language': 'ja' } });
+    const response = await fetcher(base.source_url, { signal: controller.signal, redirect: 'manual', headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', Accept: 'text/plain', 'Accept-Language': 'ja,en;q=0.9' } });
     const capturedAt = new Date().toISOString();
     if (!response.ok || response.status !== 200) return { snapshot: { ...unavailable({ ...base, captured_at: capturedAt }, 'HTTP_' + response.status), http_status: response.status }, fetched: true };
     const length = Number(response.headers?.get?.('content-length'));
