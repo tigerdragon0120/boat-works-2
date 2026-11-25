@@ -99,12 +99,13 @@ export default function V8RacerEvidencePanel({forecast, scenario}) {
         {source && <SourcePeriod source={source}/>}
       </div>
       <p className="mt-1 text-[10px] leading-5 text-slate-500">実際の進入コース別の実績です。艇番別成績や、このレースの的中確率とは異なります。</p>
+      {leader.available && leader.scoring?.used_for_scoring !== true && <p className="mt-1 text-[10px] leading-5 text-amber-800">全艇で比較できる詳細指標が揃っていないため、今回の評価には詳細パラメーターによる補正を適用していません。</p>}
       {comparison && <div className="mt-3 rounded-lg border border-sky-100 bg-sky-50/50 px-3 py-2">
         <p className="text-[11px] font-bold text-sky-900">{comparison.course_label}</p>
         <p className="mt-1 text-[11px] leading-5 text-slate-700">コース平均ST <strong className="tabular-nums">{parameterTime(comparison.average)}</strong> ／ 今回展示ST <strong className="tabular-nums">{comparison.exhibition}</strong>
           {comparison.difference !== null && <span className="ml-1 text-slate-500">（差 {comparison.difference >= 0 ? '+' : ''}{comparison.difference.toFixed(2)}秒）</span>}
         </p>
-        <p className="mt-1 text-[10px] leading-5 text-slate-500">{comparison.same_profile ? '事前と同じ選手データで展示を比較しています。' : source ? '展示後時点に保存した選手データを参照しています。' : '選手のコース成績は未取得です。'} 展示STは本番STと区別します。</p>
+        <p className="mt-1 text-[10px] leading-5 text-slate-500">{comparison.same_profile ? '事前と同じコース別成績で展示を比較しています。' : source ? '展示後時点に保存したコース別成績を参照しています。' : '選手のコース成績は未取得です。'} 展示STは本番STと区別します。</p>
         {view.evidence?.change_note && <p className="mt-1 text-[10px] leading-5 text-slate-500">{view.evidence.change_note}</p>}
       </div>}
     </>}
