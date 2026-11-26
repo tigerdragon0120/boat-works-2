@@ -145,7 +145,7 @@ test('V8 retains eight research tickets and requires its own final-selection gat
   const record = buildRaceForecast({ ...args, prediction: null }).record;
   assert.equal(record.decision.status, 'WATCH');
   assert.equal(record.decision.research_only, true);
-  assert.equal(record.decision.strategy, 'V8_RULE_BUY_1');
+  assert.equal(record.decision.strategy, 'V8_RULE_BUY_2');
   assert.equal(record.decision.source_prediction_id, null);
   assert.equal(record.provenance.prediction_id, null);
   assert.equal(record.research_tickets.length,8);
@@ -209,7 +209,7 @@ test('final content identity is deterministic, changes with quotes and preserves
 });
 test('new forecasts persist independent ticket sets for every scenario in both stages', () => {
   for (const record of [buildRaceForecast({race,entries,stage:'PRE',now:preNow}).record,buildRaceForecast(finalArgs()).record]) {
-    assert.equal(record.revision,'V8_FORECAST_6_FINAL_SELECTION');
+    assert.equal(record.revision,'V8_FORECAST_7_HEAD_COVERAGE');
     assert.ok(record.scenarios.length>=6);
     for (const scenario of record.scenarios) {
       assert.equal(scenario.ticket_revision,'V8_SCENARIO_TICKETS_2_RACER_PARAMETERS');

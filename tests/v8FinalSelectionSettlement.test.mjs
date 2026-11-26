@@ -54,14 +54,34 @@ test('WATCH shortlist is evaluated but never enters the BUY cohort',()=>{
 test('BUY must use the identical saved shortlist and cannot silently use the research set',()=>{
   const row=forecast();row.decision.tickets=research;
   assert.equal(run(row).reason,'BUY_SELECTION_MISMATCH');
-  const missing=forecast();delete missing.final_selection;
-  assert.equal(run(missing).reason,'BUY_SELECTION_MISSING');
+  for(const revision of ['V8_FORECAST_6_FINAL_SELECTION','V8_FORECAST_7_HEAD_COVERAGE']){
+    const missing=forecast();missing.revision=revision;delete missing.final_selection;
+    assert.equal(run(missing).reason,'BUY_SELECTION_MISSING');
+  }
   for(const n of [5,13]){
     const invalid=forecast();invalid.final_selection.ticket_count=n;
     assert.equal(run(invalid).reason,'BUY_SELECTION_MISMATCH');
   }
   const duplicate=forecast();duplicate.final_selection.tickets[1]=duplicate.final_selection.tickets[0];
   assert.equal(run(duplicate).reason,'BUY_SELECTION_MISMATCH');
+});
+
+test('multi-head policy records settle their saved ranks and retain the original policy identity',()=>{
+  const source=forecast(12);source.revision='V8_FORECAST_7_HEAD_COVERAGE';
+  source.final_selection.policy_revision='V8_RULE_BUY_2';
+  source.final_selection.tickets[10]='4-1-3';source.final_selection.tickets[11]='4-3-1';
+  source.decision.tickets=[...source.final_selection.tickets];
+  const original=JSON.stringify(source);
+  const actual={...result,result_trifecta:'4-1-3'};
+  const evidence={...proof,result_trifecta:actual.result_trifecta};
+  const out=run(source,{result:actual,provenance:evidence});
+  assert.equal(out.ok,true);assert.equal(out.record.buy_stake,1200);
+  assert.equal(out.record.final_selection_result.hit_rank,11);
+  assert.equal(out.record.final_selection_result.source_policy_revision,'V8_RULE_BUY_2');
+  assert.equal(out.record.source_revision,'V8_FORECAST_7_HEAD_COVERAGE');
+  assert.equal(out.record.research_hit,false);assert.equal(JSON.stringify(source),original);
+  const old=run(forecast(12));assert.equal(old.ok,true);
+  assert.equal(old.record.final_selection_result.source_policy_revision,null);
 });
 
 test('a missing historical shortlist stays unrecorded and is never derived from research tickets',()=>{

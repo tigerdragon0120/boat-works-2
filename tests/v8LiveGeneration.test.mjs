@@ -73,7 +73,7 @@ test('V8 FINAL preserves its PRE baseline and never reads or writes V7 predictio
   assert.equal(result.ok,true);assert.equal(result.v8.final,1);
   const v8=state.tables.V8RaceForecast.find(row=>row.stage==='FINAL');
   assert.equal(v8.provenance.prediction_id,null);
-  assert.equal(v8.decision.strategy,'V8_RULE_BUY_1');
+  assert.equal(v8.decision.strategy,'V8_RULE_BUY_2');
   assert.equal(v8.decision.status,'WATCH');assert.equal(v8.research_tickets.length,8);
   assert.deepEqual(v8.decision.tickets,v8.final_selection.tickets);
   assert.ok(v8.final_selection.tickets.length>=6&&v8.final_selection.tickets.length<=12);

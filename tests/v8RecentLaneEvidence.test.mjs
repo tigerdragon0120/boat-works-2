@@ -40,7 +40,7 @@ const baseline=()=>({...pre(),id:'pre',created_date:'2026-11-26T01:00:00.100Z'})
 
 test('published winning points and finish frequencies share one limited group, never an 88 percent win probability',()=>{
   const input=withRecent(),before=structuredClone(input),record=pre(input),row=record.recent_lane_evidence.boats[0];
-  assert.equal(FORECAST_REVISION,'V8_FORECAST_6_FINAL_SELECTION');
+  assert.equal(FORECAST_REVISION,'V8_FORECAST_7_HEAD_COVERAGE');
   assert.equal(row.raw.winning_rate,8.8);assert.equal(row.raw.first_rate,50);
   assert.equal(row.scoring.recent_frequency_score,72);assert.equal(row.scoring.recent_finish_score,75.2);
   assert.equal(row.scoring.blend_weight,.333);

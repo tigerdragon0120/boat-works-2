@@ -7,7 +7,7 @@ import {buildRacerParameters, parameterBoatFields, racerScenarioEvidence, roleAd
 import {buildRecentLaneEvidence,recentLaneEvidenceKey,RECENT_LANE_PRIOR_STRENGTH} from './v8RecentLaneEvidence.js';
 import {buildVenueEvidence,venueEvidenceKey,applyVenueToScenarios,buildFinalTicketSelection,decideFinalSelection,
   FINAL_SELECTION_REVISION,FINAL_BUY_POLICY_REVISION} from './v8FinalTickets.js';
-export const FORECAST_REVISION = 'V8_FORECAST_6_FINAL_SELECTION';
+export const FORECAST_REVISION = 'V8_FORECAST_7_HEAD_COVERAGE';
 export const FINAL_ODDS_MAX_AGE_MS = 5 * 60 * 1000;
 const CUTOFF_MS = 60000;
 const STAGES = ['DAY_BEFORE', 'PRE', 'FINAL'];

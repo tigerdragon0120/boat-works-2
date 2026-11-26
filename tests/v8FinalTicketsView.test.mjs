@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {finalSelectionView, finalSelectionOdds, finalSelectionDecision, finalSelectionResultView, finalSelectionStats} from '../src/components/liveV8/v8FinalTicketsView.js';
 import * as study from '../src/components/liveV8/v8StudyView.js';
+import {buildFinalTicketSelection} from '../base44/shared/v8FinalTickets.js';
 
 const NOW = Date.parse('2026-11-26T04:07:30Z');
 const race = {id: 'race-a', race_key: '2026-11-26_08_07', venue_code: '08', race_number: 7, race_date: '2026-11-26', deadline: '2026-11-26T04:11:00Z', status: 'scheduled'};
@@ -26,6 +27,27 @@ function settlement(row, {hit=true,buy=true,status='SETTLED'}={}) {
       decision_status:row.decision.status,buy_selected:buy}};
 }
 
+function balancedForecast() {
+  const row=forecast(12),tickets=[...allTickets.slice(0,8),'3-1-2','3-2-1','4-1-2','4-2-1'];
+  row.revision='V8_FORECAST_7_HEAD_BALANCE';
+  const odds=Object.fromEntries(tickets.map((ticket,index)=>[ticket,20+index]));
+  Object.assign(row.final_selection,{policy_revision:'V8_RULE_BUY_2',policy:{head_score_window:12,min_tickets_per_head:2,max_head_boats:3},
+    tickets:[...tickets],ticket_count:12,candidate_count:120,odds:{...odds},
+    ranked_tickets:tickets.map((ticket,index)=>({rank:index+1,ticket,score:80-index,
+      global_rank:index<8?index+1:index<10?index+13:index+21,
+      selection_basis:index<8?'SCORE_RANK':'HEAD_COVERAGE',reasons:['保存した評価理由']})),
+    head_allocations:[
+      {boat_number:1,course:1,kind:'MAIN',ticket_count:8,first_score:63,score_gap:0,scenario_key:'1_ESCAPE',best_global_rank:1,reason:'保存した本線の根拠'},
+      {boat_number:3,course:3,kind:'COUNTER',ticket_count:2,first_score:59,score_gap:4,scenario_key:'3_MAKURI',best_global_rank:21,reason:'本線との1着評価差は4点'},
+      {boat_number:4,course:4,kind:'COUNTER',ticket_count:2,first_score:55,score_gap:8,scenario_key:'4_MAKURISASHI',best_global_rank:31,reason:'本線との1着評価差は8点'},
+    ],role_evidence:[{boat_number:1,course:1,role:'INSIDE_AXIS',reasons:['内側の評価']},
+      {boat_number:3,course:3,role:'WIN_CANDIDATE',reasons:['外側の評価']},
+      {boat_number:4,course:4,role:'WIN_CANDIDATE',reasons:['外側の評価']}],
+  });
+  row.decision.tickets=[...tickets];row.decision.odds={...odds};
+  return row;
+}
+
 test('the saved 6–12 ticket order, role and reasons survive without research-ticket fallback or mutation',()=>{
   for(const count of [6,8,12]) {
     const row=forecast(count),before=structuredClone(row),view=finalSelectionView(row);
@@ -37,6 +59,91 @@ test('the saved 6–12 ticket order, role and reasons survive without research-t
   }
   const old=forecast();delete old.final_selection;
   assert.equal(finalSelectionView(old).kind,'LEGACY');assert.deepEqual(finalSelectionView(old).tickets,[]);
+});
+
+test('policy2 shows all three saved heads with counts checked against the actual tickets and keeps original scores/odds',()=>{
+  const row=balancedForecast(),before=structuredClone(row),view=finalSelectionView(row);
+  assert.equal(view.available,true);assert.equal(view.head_balanced,true);assert.equal(view.rank_label,'選抜内の評価順');
+  assert.equal(view.head_allocation_basis,'SAVED');assert.equal(view.head_allocation_status,'VALID');
+  assert.deepEqual(view.head_allocations.map(item=>item.summary),['本線 1号艇頭 8点','対抗 3号艇頭 2点','対抗 4号艇頭 2点']);
+  assert.equal(view.head_allocations.reduce((sum,item)=>sum+item.ticket_count,0),12);
+  assert.deepEqual(view.ranked.map(item=>item.score),row.final_selection.ranked_tickets.map(item=>item.score));
+  assert.deepEqual(view.ranked.map(item=>item.global_rank),[1,2,3,4,5,6,7,8,21,22,31,32]);
+  assert.equal(view.coverage_count,4);assert.equal(view.roles[0].label,'本線の1着候補');assert.equal(view.roles[1].label,'対抗の1着候補');
+  assert.ok(view.ranked.every(item=>item.label==='選抜内の評価順'));
+  assert.equal(finalSelectionOdds(row,race,NOW).quotes['3-1-2'],28);assert.equal(finalSelectionOdds(row,race,NOW).composite,2.91);
+  assert.equal(finalSelectionDecision(row,race,NOW).key,'BUY');assert.equal(finalSelectionResultView(row,settlement(row)).status,'SETTLED');
+  assert.deepEqual(row,before);
+});
+
+test('the saved MAIN may be an outside boat; the UI does not promote boat one or reinterpret points as probabilities',()=>{
+  const row=balancedForecast(),[inside,main,counter]=row.final_selection.head_allocations;
+  Object.assign(inside,{kind:'COUNTER',first_score:62,score_gap:2});
+  Object.assign(main,{kind:'MAIN',first_score:64,score_gap:0});
+  Object.assign(counter,{first_score:60,score_gap:4});
+  const view=finalSelectionView(row);
+  assert.equal(view.head_allocation_status,'VALID');assert.equal(view.head_allocations[0].boat_number,3);
+  assert.equal(view.head_allocations[0].summary,'本線 3号艇頭 2点');assert.equal(view.roles[0].label,'対抗の1着候補');
+  assert.equal(view.roles[1].label,'本線の1着候補');assert.equal(view.head_allocations[0].first_score,64);
+  assert.equal(view.head_allocations[0].score_gap,0);assert.equal(view.plan.probability_calibrated,false);
+  assert.ok(view.head_allocations.every(item=>!item.summary.includes('%')));
+});
+
+test('inconsistent head metadata falls back to ticket-derived counts without invented MAIN, course, score or reason',()=>{
+  const changes=[row=>{row.final_selection.head_allocations[0].ticket_count=9;},row=>{row.final_selection.head_allocations.pop();},
+    row=>{row.final_selection.head_allocations[1].boat_number=1;},row=>{row.final_selection.head_allocations[1].kind='MAIN';},
+    row=>{row.final_selection.head_allocations[1].kind='DARK_HORSE';},row=>{row.final_selection.head_allocations[0].course=null;},
+    row=>{row.final_selection.head_allocations[0].first_score=null;},row=>{row.final_selection.head_allocations[1].score_gap=-1;},
+    row=>{row.final_selection.head_allocations[1].score_gap=8;},row=>{row.final_selection.head_allocations[1].scenario_key='1_ESCAPE';},
+    row=>{row.final_selection.head_allocations[1].best_global_rank=1;},row=>{row.final_selection.head_allocations[1].reason=null;},
+    row=>{row.final_selection.head_allocations={};},row=>{row.final_selection.head_allocations=[null];}];
+  for(const change of changes){
+    const row=balancedForecast();change(row);const before=structuredClone(row),view=finalSelectionView(row);
+    assert.equal(view.available,true);assert.equal(view.head_allocation_status,'INVALID');assert.equal(view.head_allocation_basis,'TICKETS');
+    assert.deepEqual(view.head_allocations.map(item=>item.summary),['1号艇頭 8点','3号艇頭 2点','4号艇頭 2点']);
+    assert.ok(view.head_allocations.every(item=>item.kind===null&&item.reason===null&&item.course===null&&item.first_score===null));
+    assert.equal(view.roles[0].label,'内側の1着候補');assert.equal(finalSelectionDecision(row,race,NOW).key,'BUY');
+    assert.deepEqual(row,before);
+  }
+});
+
+test('old plans retain their rank labels, saved decisions and settlements while missing optional metadata has a neutral fallback',()=>{
+  const old=forecast(),before=structuredClone(old),view=finalSelectionView(old);
+  assert.equal(view.head_balanced,false);assert.equal(view.rank_label,'推定順位');assert.equal(view.head_allocation_status,'MISSING');
+  assert.deepEqual(view.head_allocations.map(item=>item.summary),['1号艇頭 8点']);assert.equal(view.head_allocations[0].kind,null);
+  assert.equal(view.coverage_count,null);assert.equal(view.roles[0].label,'1着の軸');
+  assert.equal(finalSelectionDecision(old,race,NOW).key,'BUY');assert.equal(finalSelectionResultView(old,settlement(old)).status,'SETTLED');
+  assert.deepEqual(old,before);
+  const current=balancedForecast();delete current.final_selection.head_allocations;
+  const currentView=finalSelectionView(current);assert.equal(currentView.head_allocation_status,'MISSING');
+  assert.equal(currentView.head_allocations.length,3);assert.equal(currentView.rank_label,'選抜内の評価順');
+});
+
+test('optional ranking metadata cannot invent coverage or reuse an invalid global rank',()=>{
+  const row=balancedForecast();row.final_selection.ranked_tickets[8].selection_basis='UNKNOWN';
+  assert.equal(finalSelectionView(row).coverage_count,null);
+  row.final_selection.ranked_tickets[8].global_rank=1;
+  const view=finalSelectionView(row);assert.equal(view.available,true);
+  assert.ok(view.ranked.every(item=>item.global_rank===null));assert.equal(view.head_allocation_status,'INVALID');
+  assert.deepEqual(view.tickets,row.final_selection.tickets);
+});
+
+test('the actual policy2 engine output renders all saved head allocations without rewriting its source scores',()=>{
+  const boats=[75,35,80,70,25,20].map((score,index)=>({boat_number:index+1,score,base_score:score,
+    active:true,expected_course:index+1,observed_course:index+1}));
+  const scenarios=boats.map((row,index)=>({key:`${row.boat_number}_${index===0?'ESCAPE':'MAKURI'}`,
+    leader:row.boat_number,method:index===0?'ESCAPE':'MAKURI',score:[80,30,78,74,25,20][index],beneficiaries:[]}));
+  const selection=buildFinalTicketSelection({boats,scenarios,venueEvidence:{status:'UNAVAILABLE'},stage:'FINAL',exhibitionComplete:true});
+  const row={...forecast(),boats,final_selection:selection},before=structuredClone(row),view=finalSelectionView(row);
+  assert.equal(view.available,true);assert.equal(view.head_allocation_status,'VALID');assert.equal(view.head_allocations.length,3);
+  assert.equal(view.coverage_count,selection.ranked_tickets.filter(ticket=>ticket.selection_basis==='HEAD_COVERAGE').length);
+  for(const allocation of view.head_allocations){
+    assert.equal(allocation.ticket_count,selection.tickets.filter(ticket=>ticket.startsWith(`${allocation.boat_number}-`)).length);
+    assert.ok(allocation.ticket_count>=2);
+  }
+  assert.deepEqual(view.ranked.map(ticket=>[ticket.ticket,ticket.score,ticket.global_rank]),
+    selection.ranked_tickets.map(ticket=>[ticket.ticket,ticket.score,ticket.global_rank]));
+  assert.deepEqual(row,before);
 });
 
 test('invalid counts, duplicate combinations, missing or inconsistent ranks never become a final plan',()=>{

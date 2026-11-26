@@ -114,7 +114,8 @@ function settle({source, sourceKind, result: resultInput, provenance, now, exclu
   if(buySelected&&source.final_selection&&(!validSavedFinalSelection(source.final_selection)
     ||JSON.stringify(buyTickets)!==JSON.stringify(source.final_selection.tickets)))
     return fail('BUY_SELECTION_MISMATCH');
-  if(buySelected&&source.revision==='V8_FORECAST_6_FINAL_SELECTION'&&!source.final_selection)
+  const forecastVersion=Number(/^V8_FORECAST_(\d+)(?:_|$)/.exec(source.revision||'')?.[1]);
+  if(buySelected&&forecastVersion>=6&&!source.final_selection)
     return fail('BUY_SELECTION_MISSING');
   const buyHit = buySelected && buyTickets.includes(result.result_trifecta);
   const topScenario = sourceKind !== 'EXTERNAL'

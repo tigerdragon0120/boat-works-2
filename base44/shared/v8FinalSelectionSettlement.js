@@ -12,6 +12,7 @@ export function deriveFinalSelectionVerification(forecast,settlement){
   if(!forecast?.final_selection)return null;
   const selection=forecast.final_selection;
   const common={revision:FINAL_SELECTION_VERIFICATION_REVISION,source_revision:selection.revision||null,
+    source_policy_revision:selection.policy_revision||null,
     source_forecast_id:forecast.id,decision_status:forecast.decision?.status||null,unit_stake:100};
   if(!validSavedFinalSelection(selection))return {...common,status:'INVALID_SAVED_SELECTION',
     tickets:[],ticket_count:0,buy_selected:false};

@@ -11,10 +11,56 @@ const time = value => {
 };
 const boat = value => Number.isInteger(value) && value >= 1 && value <= 6;
 const ROLE_LABELS = {INSIDE_AXIS: '1着の軸', WIN_CANDIDATE: '1着候補', FOLLOWER_FOCUS: '2・3着を中心に評価', SUPPORT_CANDIDATE: '相手候補'};
+const HEAD_BALANCE_POLICY = 'V8_RULE_BUY_2';
+const HEAD_KINDS = {MAIN: '本線', COUNTER: '対抗'};
+const selectionBasis = value => ['SCORE_RANK', 'HEAD_COVERAGE'].includes(value) ? value : null;
+const globalRank = value => Number.isInteger(value) && value >= 1 && value <= 120 ? value : null;
+
+// Ticket heads are the source of truth for counts. Optional explanatory metadata
+// must not create or relabel a head that is absent from the saved selection.
+function headAllocationView(plan, tickets, ranked) {
+  const counts = new Map();
+  for (const ticket of tickets) {
+    const number = Number(ticket[0]);
+    counts.set(number, (counts.get(number) || 0) + 1);
+  }
+  const derived = [...counts].map(([boat_number, ticket_count]) => ({boat_number, ticket_count, kind: null,
+    course: null, first_score: null, score_gap: null, scenario_key: null, best_global_rank: null, reason: null,
+    label: null, summary: `${boat_number}号艇頭 ${ticket_count}点`}));
+  const saved = plan.head_allocations;
+  const fallback = status => ({head_allocations: derived, head_allocation_status: status, head_allocation_basis: 'TICKETS'});
+  if (saved == null) return fallback('MISSING');
+  if (!Array.isArray(saved) || saved.length !== counts.size || new Set(saved.map(row => row?.boat_number)).size !== counts.size
+    || saved.filter(row => row?.kind === 'MAIN').length !== 1
+    || !saved.every(row => row && boat(row.boat_number) && boat(row.course) && Object.hasOwn(HEAD_KINDS, row.kind)
+      && Number.isInteger(row.ticket_count) && row.ticket_count === counts.get(row.boat_number)
+      && bound(row.first_score, 0, 100) !== null && bound(row.score_gap, 0, 100) !== null
+      && typeof row.scenario_key === 'string' && new RegExp(`^${row.boat_number}_(ESCAPE|SASHI|MAKURI|MAKURISASHI)$`).test(row.scenario_key)
+      && globalRank(row.best_global_rank) !== null && typeof row.reason === 'string' && row.reason.trim())) return fallback('INVALID');
+  if (plan.policy_revision === HEAD_BALANCE_POLICY) {
+    const main = saved.find(row => row.kind === 'MAIN');
+    if (!ranked.every(row => row.global_rank !== null) || !saved.every(row => {
+      const firstRank = Math.min(...ranked.filter(ticket => Number(ticket.ticket[0]) === row.boat_number).map(ticket => ticket.global_rank));
+      const expectedGap = main.first_score - row.first_score;
+      return row.best_global_rank === firstRank && expectedGap >= -0.002 && Math.abs(row.score_gap - expectedGap) <= 0.002;
+    })) return fallback('INVALID');
+  }
+  const normalized = [...saved].sort((a, b) => Number(b.kind === 'MAIN') - Number(a.kind === 'MAIN')
+    || [...counts.keys()].indexOf(a.boat_number) - [...counts.keys()].indexOf(b.boat_number)).map(row => ({
+    boat_number: row.boat_number, course: row.course, kind: row.kind, ticket_count: counts.get(row.boat_number),
+    first_score: row.first_score, score_gap: row.score_gap, scenario_key: row.scenario_key,
+    best_global_rank: row.best_global_rank, reason: row.reason.trim(), label: HEAD_KINDS[row.kind],
+    summary: `${HEAD_KINDS[row.kind]} ${row.boat_number}号艇頭 ${counts.get(row.boat_number)}点`,
+  }));
+  return {head_allocations: normalized, head_allocation_status: 'VALID', head_allocation_basis: 'SAVED'};
+}
 
 export function finalSelectionView(forecast) {
   const plan = forecast?.final_selection;
-  const empty = kind => ({kind, available: false, plan: plan || null, tickets: [], ranked: [], roles: [], count: 0});
+  const headBalanced = plan?.policy_revision === HEAD_BALANCE_POLICY;
+  const rankLabel = headBalanced ? '選抜内の評価順' : '推定順位';
+  const empty = kind => ({kind, available: false, plan: plan || null, tickets: [], ranked: [], roles: [], count: 0,
+    head_balanced: headBalanced, rank_label: rankLabel, head_allocations: [], head_allocation_status: 'MISSING', head_allocation_basis: 'TICKETS', coverage_count: null});
   if (!plan) return empty('LEGACY');
   if (plan.revision !== FINAL_SELECTION_REVISION || !['BUY', 'WATCH', 'WAIT', 'SKIP', 'REPLAY'].includes(plan.status)
     || !['DAY_BEFORE', 'PRE', 'FINAL'].includes(forecast.stage) || plan.stage !== forecast.stage || plan.probability_calibrated !== false) return empty('INVALID');
@@ -26,12 +72,26 @@ export function finalSelectionView(forecast) {
     || !ranked.every(row => row && Number.isInteger(row.rank))) return empty('INVALID');
   const sorted = [...ranked].sort((a, b) => a.rank - b.rank);
   if (!sorted.every((row, index) => row?.rank === index + 1 && row.ticket === tickets[index] && finite(row.score))) return empty('INVALID');
-  const rows = sorted.map(row => ({...row, reasons: strings(row.reasons), reason: strings(row.reasons).slice(0, 2).join('。')}));
+  const ranks = sorted.map(row => globalRank(row.global_rank));
+  const validGlobalRanks = ranks.every(value => value !== null) && new Set(ranks).size === ranks.length
+    && ranks.every((value, index) => index === 0 || value > ranks[index - 1]);
+  const rows = sorted.map(row => ({...row, reasons: strings(row.reasons), reason: strings(row.reasons).slice(0, 2).join('。'),
+    global_rank: validGlobalRanks ? row.global_rank : null, selection_basis: selectionBasis(row.selection_basis),
+    ...(headBalanced ? {label: rankLabel} : {})}));
+  const heads = headAllocationView(plan, tickets, rows);
+  const coverageCount = headBalanced && rows.every(row => row.selection_basis !== null)
+    ? rows.filter(row => row.selection_basis === 'HEAD_COVERAGE').length : null;
   const roles = (Array.isArray(plan.role_evidence) ? plan.role_evidence : []).filter(row => boat(row?.boat_number)
-    && Object.hasOwn(ROLE_LABELS, row.role)).map(row => ({...row, label: ROLE_LABELS[row.role], reasons: strings(row.reasons),
-    player_name: forecast.boats?.find(item => item.boat_number === row.boat_number)?.player_name || '選手名未取得',
-    reverse_support: Array.isArray(row.reverse_support) ? row.reverse_support.filter(item => typeof item?.label === 'string') : []}));
-  return {kind: 'SAVED', available: true, plan, tickets: [...tickets], ranked: rows, roles, count: tickets.length};
+    && Object.hasOwn(ROLE_LABELS, row.role)).map(row => {
+    const allocation = heads.head_allocation_basis === 'SAVED' ? heads.head_allocations.find(item => item.boat_number === row.boat_number) : null;
+    const label = headBalanced && allocation ? `${allocation.label}の1着候補`
+      : headBalanced && row.role === 'INSIDE_AXIS' ? '内側の1着候補' : ROLE_LABELS[row.role];
+    return {...row, label, reasons: strings(row.reasons),
+      player_name: forecast.boats?.find(item => item.boat_number === row.boat_number)?.player_name || '選手名未取得',
+      reverse_support: Array.isArray(row.reverse_support) ? row.reverse_support.filter(item => typeof item?.label === 'string') : []};
+  });
+  return {kind: 'SAVED', available: true, plan, tickets: [...tickets], ranked: rows, roles, count: tickets.length,
+    head_balanced: headBalanced, rank_label: rankLabel, coverage_count: coverageCount, ...heads};
 }
 
 export function finalSelectionOdds(forecast, race, now = Date.now(), blocked = false) {
