@@ -53,7 +53,7 @@ test('previous-day forecast uses actual JST observation date and never backfills
   const prior = buildRaceForecast({ race, entries, stage: 'DAY_BEFORE', now: '2026-11-21T10:00:00Z' });
   assert.equal(prior.ok, true);
   assert.equal(prior.record.stage, 'DAY_BEFORE');
-  assert.equal(prior.record.forecast_key, FORECAST_REVISION + ':' + race.race_key + ':DAY_BEFORE');
+  assert.equal(prior.record.forecast_key, FORECAST_REVISION + ':' + race.race_key + ':DAY_BEFORE:NO_RECENT');
   assert.equal(buildRaceForecast({ race, entries, stage: 'DAY_BEFORE', now: preNow }).reason, 'STAGE_DATE_MISMATCH');
   assert.equal(buildRaceForecast({ race, entries, stage: 'PRE', now: '2026-11-21T10:00:00Z' }).reason, 'STAGE_DATE_MISMATCH');
 });
@@ -207,7 +207,7 @@ test('final content identity is deterministic, changes with quotes and preserves
 });
 test('new forecasts persist independent ticket sets for every scenario in both stages', () => {
   for (const record of [buildRaceForecast({race,entries,stage:'PRE',now:preNow}).record,buildRaceForecast(finalArgs()).record]) {
-    assert.equal(record.revision,'V8_FORECAST_4_RACER_PARAMETERS');
+    assert.equal(record.revision,'V8_FORECAST_5_RECENT_LANE');
     assert.ok(record.scenarios.length>=6);
     for (const scenario of record.scenarios) {
       assert.equal(scenario.ticket_revision,'V8_SCENARIO_TICKETS_2_RACER_PARAMETERS');

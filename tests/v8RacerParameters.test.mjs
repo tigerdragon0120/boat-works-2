@@ -53,7 +53,7 @@ test('future, mismatched and unfinished official profiles are rejected at the en
   assert.equal(out.courses['1'],null);
 });
 
-test('a true zero sample remains distinguishable from missing evidence and is not scored as a zero rate',()=>{
+test('a zero sample remains missing while other racers keep their usable course evidence',()=>{
   const input=entries(),c=input[0].v8_racer_profile.courses['1'];
   for(const key of ['first_count','second_count','third_count','fourth_count','fifth_count','sixth_count'])c[key]=0;
   c.sample_size=0;
@@ -62,14 +62,20 @@ test('a true zero sample remains distinguishable from missing evidence and is no
   assert.equal(row.profile_valid,true);assert.equal(row.status,'MISSING');assert.equal(row.raw.sample_size,0);
   assert.equal(row.raw.first_rate,null);assert.equal(row.adjusted,null);
   assert.equal(out.boats[0].course_win_percent,null);
-  assert.ok(!out.racer_evidence.scoring.feature_keys.includes('course_finish_score'));
+  assert.ok(out.racer_evidence.scoring.feature_keys.includes('course_finish_score'));
   assert.equal(out.boats[0].racer_parameters.role_finish_used,false);
+  assert.equal(row.scoring.finish_reference_kind,'COURSE_POPULATION');
+  assert.equal(row.scoring.course_finish_score,24);
+  assert.equal(row.scoring.start_basis,'OVERALL_AVG_ST');
+  assert.equal(row.scoring.effective_avg_st,null);
+  assert.equal(row.scoring.start_score,null);
+  assert.equal(row.scoring.used_for_scoring,false);
   const other=out.racer_evidence.boats[1];
   assert.equal(other.adjusted.avg_st,.17);
-  assert.equal(other.scoring.start_basis,'OVERALL_AVG_ST');
-  assert.equal(other.scoring.effective_avg_st,null);
-  assert.equal(other.scoring.start_score,null);
-  assert.equal(other.scoring.used_for_scoring,false);
+  assert.equal(other.scoring.start_basis,'COURSE_AVG_ST_AND_RANK');
+  assert.equal(other.scoring.effective_avg_st,.17);
+  assert.ok(Number.isFinite(other.scoring.start_score));
+  assert.equal(other.scoring.used_for_scoring,true);
 });
 
 test('partial or conflicting exhibition uses the same expected course in diagram and racer evidence',()=>{
@@ -127,7 +133,8 @@ test('course starts and ranks change evidence-based scoring without adding the o
   assert.equal(out.boats[0].racer_parameters.start_basis,'COURSE_AVG_ST_AND_RANK');
   input[5].v8_racer_profile.courses['6'].avg_st_rank=null;
   const partial=buildRaceForecast({race,entries:input,stage:'PRE',now:preNow}).record;
-  assert.ok(partial.boats.every(row=>row.racer_parameters.start_basis==='COURSE_AVG_ST'));
+  assert.equal(partial.boats[5].racer_parameters.start_basis,'COURSE_AVG_ST');
+  assert.ok(partial.boats.slice(0,5).every(row=>row.racer_parameters.start_basis==='COURSE_AVG_ST_AND_RANK'));
 });
 
 test('non-exhibition card changes are recorded separately even when course profiles stay frozen',()=>{

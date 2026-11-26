@@ -83,3 +83,13 @@ test('FINAL prefers a current-model saved PRE over an old-model DAY_BEFORE and r
   assert.equal(selectCaptureBaseline([old]).id,old.id);
   assert.deepEqual([old,pre],before);
 });
+
+test('FINAL compares with an appended PRE that first captured the shared WAKU10 source',()=>{
+  const old={id:'before-source',stage:'DAY_BEFORE',revision:FORECAST_REVISION,generated_at:'2026-11-25T10:00:00Z',
+    provenance:{recent_lane_snapshot_id:null}};
+  const pre={id:'with-source',stage:'PRE',revision:FORECAST_REVISION,generated_at:'2026-11-26T00:00:00Z',
+    provenance:{recent_lane_snapshot_id:'shared-snapshot'}};
+  const before=structuredClone([old,pre]);
+  assert.equal(selectCaptureBaseline([old,pre]).id,pre.id);
+  assert.deepEqual([old,pre],before);
+});

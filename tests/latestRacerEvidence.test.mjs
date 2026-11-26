@@ -16,6 +16,7 @@ import {selectV7RaceEntries} from '../base44/shared/v7RaceEntrySelector.js';
 import {utcMs} from '../base44/shared/v7FeatureObservation.js';
 import {jstDate,groupBy,chronological,canonicalForecasts} from '../base44/shared/v8Repository.js';
 import {loadRacerFrameTendencies,emptyFrameTendencies} from '../base44/shared/v8RacerTendencies.js';
+import {normalizeRecentLaneSource,recentLaneSourceUrl} from '../base44/shared/v8RecentLaneSource.js';
 
 export const NOW = '2026-11-22T04:00:00.000Z';
 export const race = {id:'race-1',race_key:'2026-11-22_01_08',race_date:'2026-11-22',venue_code:'01',race_number:8,
@@ -243,10 +244,12 @@ function v7Runner(state,load) {
     loadLatestRacerDataset:load,enrichLatestRacerEntries};
   return new Function(...Object.keys(dependencies),autoSource+'\nreturn runV7AutoGeneration;')(...Object.values(dependencies));
 }
-function v8Handler(state,load) {
+function v8Handler(state,load,recent={}) {
   const dependencies={createClientFromRequest:()=>state.client,acquireLock:async()=> 'lock',releaseLock:async()=>{},selectV7RaceEntries,utcMs,
     buildRaceForecast,FORECAST_REVISION,jstDate,readV8Rows:async(entity,query)=>entity.filter(query),groupBy,chronological,canonicalForecasts,
-    loadLatestRacerDataset:load,enrichLatestRacerEntries,loadRacerFrameTendencies,emptyFrameTendencies};
+    loadLatestRacerDataset:load,enrichLatestRacerEntries,loadRacerFrameTendencies,emptyFrameTendencies,
+    loadRecentLaneSnapshots:recent.load||(async()=>({status:'READY',byRaceId:new Map(),rows:[]})),
+    ensureRecentLaneSnapshot:recent.ensure||(async()=>({status:'MISSING',snapshot:null,rows:[],reason:'SAVED_SNAPSHOT_MISSING'}))};
   return new Function(...Object.keys(dependencies),captureRunnerSource+'\n'+captureSource)(...Object.values(dependencies));
 }
 test('V7 scheduled generation reads once, stores real term provenance, and never updates an existing prediction',async t=>{
@@ -281,6 +284,65 @@ test('V8 optional dataset failures still capture an otherwise complete PRE forec
   const saved=state.table.V8RaceForecast[0];assert.equal(saved.boats[0].course_win_percent,null);
   assert.equal(saved.provenance.racer_term_evidence.dataset_read_status,'READ_FAILED');
 });
+
+async function capturedRecentSource(state) {
+  const current=state.table.RaceEntry;
+  current.forEach((row,i)=>{row.player_name='試験選手'+String.fromCharCode(65+i);});
+  const text=['data=','1\t0',...current.map((row,i)=>[row.player_name,'8.80','0.13','2.2',
+    ...[2,2,1,2,1,1,1,4,1,1].flatMap(finish=>[String(finish),'','IP'])].join('\t'))].join('\n');
+  const fetched='2026-11-22T03:55:00.000Z',available='2026-11-22T03:55:01.000Z';
+  const normalized=await normalizeRecentLaneSource({text,metadata:{source:'BOATCAST',data_type:'WAKU10',http_status:200,
+    source_url:recentLaneSourceUrl(race),fetched_at:fetched,race_date:race.race_date,venue_code:race.venue_code,race_number:race.race_number},
+    race,entries:current,now:NOW});
+  assert.equal(normalized.ok,true);
+  return {status:'READY',reason:null,snapshot:{id:'shared-waku10'},rows:normalized.racers.map(row=>({...row,
+    snapshot_id:'shared-waku10',snapshot_key:normalized.snapshot_key,source_url:normalized.source_url,
+    fetched_at:fetched,available_at:available}))};
+}
+
+test('V8 appends a source-enriched PRE once and retains the original immutable forecast',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse(NOW)});
+  const state=fakePlatform(),ready=await capturedRecentSource(state);
+  let observation={status:'MISSING',snapshot:null,rows:[],reason:'SOURCE_NOT_PUBLISHED'};
+  const handle=v8Handler(state,async()=>dataset(),{ensure:async()=>observation});
+  const request=()=>new Request('https://test.invalid/capture',{method:'POST'});
+  const first=await (await handle(request())).json();assert.equal(first.created,1);
+  const original=structuredClone(state.table.V8RaceForecast[0]);
+  assert.equal(original.recent_lane_key,'NO_RECENT');
+  observation=ready;
+  const second=await (await handle(request())).json();assert.equal(second.created,1);
+  assert.deepEqual(state.table.V8RaceForecast[0],original);
+  const enriched=state.table.V8RaceForecast[1];assert.match(enriched.recent_lane_key,/^RECENT_/);
+  assert.notEqual(enriched.forecast_key,original.forecast_key);
+  assert.equal(enriched.provenance.recent_lane_snapshot_id,'shared-waku10');
+  assert.equal(enriched.recent_lane_evidence.boats[0].snapshot_id,'shared-waku10');
+  assert.equal(enriched.recent_lane_evidence.boats[0].scoring.used,true);
+  const third=await (await handle(request())).json();assert.equal(third.created,0);
+  assert.equal(state.table.V8RaceForecast.length,2);
+});
+
+test('a shared-source read failure does not fan out source requests and still saves a missing-source forecast',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse(NOW)});const state=fakePlatform();let acquisitions=0;
+  const handle=v8Handler(state,async()=>dataset(),{load:async()=>({status:'READ_FAILED',byRaceId:new Map(),rows:[]}),
+    ensure:async()=>{acquisitions++;throw new Error('must not fetch');}});
+  const summary=await (await handle(new Request('https://test.invalid/capture',{method:'POST'}))).json();
+  assert.equal(summary.created,1);assert.equal(acquisitions,0);
+  assert.equal(state.table.V8RaceForecast[0].provenance.recent_lane_read_status,'READ_FAILED');
+});
+
+test('new WAKU10 evidence bypasses the unchanged FINAL throttle',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse(NOW)});
+  const state=fakePlatform({shown:true});state.table.RaceEntry.forEach(row=>{row.exhibition_course=row.boat_number;});
+  const ready=await capturedRecentSource(state);let observation={status:'MISSING',snapshot:null,rows:[]};
+  const handle=v8Handler(state,async()=>dataset(),{ensure:async()=>observation});
+  const request=()=>new Request('https://test.invalid/capture',{method:'POST'});
+  const first=await (await handle(request())).json();assert.equal(first.created,1);assert.equal(first.final,1);
+  const original=structuredClone(state.table.V8RaceForecast[0]);observation=ready;
+  const second=await (await handle(request())).json();assert.equal(second.created,1);assert.equal(second.final,1);
+  assert.deepEqual(state.table.V8RaceForecast[0],original);
+  assert.equal(state.table.V8RaceForecast[1].recent_lane_evidence.boats[0].scoring.used,true);
+});
+
 test('the V7 saver does not attach official provenance from browser input or a mismatched snapshot',()=>{
   const src=withoutImports(readFileSync(new URL('../base44/shared/v7PredictionStore.js',import.meta.url),'utf8')).replace('export async function','async function');
   const sanitize=new Function('timeMs','LATEST_RACER_EVIDENCE_REVISION',src+'\nreturn sanitize;')(timeMs,LATEST_RACER_EVIDENCE_REVISION);
