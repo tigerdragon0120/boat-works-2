@@ -17,12 +17,12 @@ export function exhibitionProgress(race, entries) {
     complete, valid:valid.length, total:active.length};
 }
 
-export default function UnifiedRaceView({race, entries=[], nextOpenRace=null, onSelectNextRace=()=>{}}) {
+export default function UnifiedRaceView({race, entries=[], nextOpenRace=null, onSelectNextRace=()=>{}, onForecastSnapshots}) {
   const exhibition=exhibitionProgress(race,entries);
   const deadlineMs=Date.parse(race?.deadline||'');
   const raceClosed=['finished','cancelled'].includes(race?.status) || (Number.isFinite(deadlineMs)&&Date.now()>=deadlineMs);
   return <section className="space-y-4">
-    <V8RaceJourney race={race} entries={entries}/>
+    <V8RaceJourney race={race} entries={entries} onForecastSnapshots={onForecastSnapshots}/>
     {raceClosed && nextOpenRace && <button type="button" onClick={onSelectNextRace} className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-sky-900">締切前の {nextOpenRace.race_number}R を見る</button>}
     {(exhibition.ready||raceClosed) && <details className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
       <summary className="cursor-pointer text-sm font-semibold text-slate-600">V7の保存予想・従来の判定を確認</summary>

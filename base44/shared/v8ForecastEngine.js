@@ -4,7 +4,8 @@
 import {buildSumEvidence, selectedSumModel} from './v8SumTheory.js';
 import {buildScenarioTickets, SCENARIO_TICKET_REVISION, SCENARIO_TICKET_BASIS} from './v8ScenarioTickets.js';
 import {buildRacerParameters, parameterBoatFields, racerScenarioEvidence, roleAdjustedBoatScore} from './v8RacerParameters.js';
-export const FORECAST_REVISION = 'V8_FORECAST_4_RACER_PARAMETERS';
+import {buildRecentLaneEvidence,recentLaneEvidenceKey,RECENT_LANE_PRIOR_STRENGTH} from './v8RecentLaneEvidence.js';
+export const FORECAST_REVISION = 'V8_FORECAST_5_RECENT_LANE';
 export const FINAL_ODDS_MAX_AGE_MS = 5 * 60 * 1000;
 const CUTOFF_MS = 60000;
 const STAGES = ['DAY_BEFORE', 'PRE', 'FINAL'];
@@ -121,29 +122,18 @@ const weightedMean = pairs => {
   return present.reduce((sum, [value, weight]) => sum + value * weight, 0)
     / present.reduce((sum, [, weight]) => sum + weight, 0);
 };
-function scoreBoats(boats, stage, sumEvidence) {
-  const withProfiles = boats.every(boat=>boat.racer_parameters?.profile_valid===true);
-  const allCourseStarts=withProfiles&&boats.every(boat=>finite(boat.racer_parameters?.effective_avg_st));
-  const allStartRanks=allCourseStarts&&boats.every(boat=>finite(boat.racer_parameters?.adjusted?.avg_st_rank));
-  boats=boats.map(boat=>{
-    const p=boat.racer_parameters||{},courseStart=allCourseStarts?p.effective_avg_st:null;
-    const effective=courseStart??boat.avg_st;
-    const start=finite(effective)?clamp((.3-effective)/.3*100):null;
-    const rank=allStartRanks?clamp((6-p.adjusted.avg_st_rank)/5*100):null;
-    const combined=round(weightedMean([[start,.8],[rank,.2]]));
-    return {...boat,start_parameter_score:combined,racer_parameters:{...p,effective_avg_st:courseStart,
-      start_score:courseStart===null?null:combined,
-      start_basis:!allCourseStarts?'OVERALL_AVG_ST':allStartRanks?'COURSE_AVG_ST_AND_RANK':'COURSE_AVG_ST'}};
-  });
-  const fields = withProfiles ? [
+function scoreBoats(boats, stage, sumEvidence, recentEvidence) {
+  const recentRows=new Map((recentEvidence?.boats||[]).map(row=>[row.boat_number,row]));
+  const grouped=boats.some(boat=>boat.racer_parameters?.profile_valid===true)
+    ||boats.some(boat=>recentRows.get(boat.boat_number)?.status==='READY');
+  const coreFields=[
     ['national_win_rate', .21, value => value * 10],
     ['local_win_rate', .10, value => value * 10],
     ['national_2rate', .12, value => value],
     ['motor_2rate', .18, value => value],
-    ['start_parameter_score', .15, value => value],
     ['section_points', .08, value => clamp(value * 10)],
-    ['course_finish_score', .16, value => value],
-  ] : [
+  ];
+  const legacyFields=[
     ['national_win_rate', .27, value => value * 10],
     ['local_win_rate', .12, value => value * 10],
     ['national_2rate', .16, value => value],
@@ -152,22 +142,93 @@ function scoreBoats(boats, stage, sumEvidence) {
     ['section_points', .08, value => clamp(value * 10)],
     ['course_win_percent', .04, value => value],
   ];
-  // A missing feature is excluded for every boat so scores remain comparable.
-  const used = fields.filter(([key]) => boats.every(boat => finite(boat[key])));
-  const roleFinishUsed=withProfiles&&used.some(([key])=>key==='course_finish_score')
-    &&boats.every(boat=>finite(boat.racer_parameters?.second_finish_score)&&finite(boat.racer_parameters?.third_finish_score));
-  const base = boats.map(boat => weightedMean(used.map(([key, weight, convert]) => [convert(boat[key]), weight])));
+  // Core features retain the common-input rule. Detailed groups use a disclosed
+  // per-racer fallback, so one missing history cannot discard the other five.
+  const common=(grouped?coreFields:legacyFields).filter(([key])=>boats.every(boat=>finite(boat[key])));
+  const coreWeights=common.reduce((sum,[,weight])=>sum+weight,0);
+  const groupWeights=Object.fromEntries(common.map(([key,weight])=>[key,round(weight/coreWeights*(grouped ? .69 : 1))]));
+  const featureKeys=grouped
+    ?['national_win_rate','local_win_rate','national_2rate','motor_2rate','start_parameter_score','section_points','course_finish_score']
+      .filter(key=>Object.hasOwn(groupWeights,key)||['start_parameter_score','course_finish_score'].includes(key))
+    :common.map(([key])=>key);
+  if(grouped){groupWeights.start_parameter_score=.15;groupWeights.course_finish_score=.16;}
+  const independentInputs=common.length+(grouped&&boats.some(boat=>finite(boat.avg_st)||finite(boat.racer_parameters?.effective_avg_st))?1:0)
+    +(grouped&&boats.some(boat=>finite(boat.racer_parameters?.course_finish_score)||recentRows.get(boat.boat_number)?.scoring?.finish_sample_size>0)?1:0);
+  const meaningful=independentInputs>=3&&common.some(([key])=>key==='national_win_rate'||key==='national_2rate');
+  const finishValue=value=>['first_rate','top2_rate','top3_rate'].every(key=>finite(value?.[key]))
+    ?value.first_rate*.5+value.top2_rate*.3+value.top3_rate*.2:null;
+  const stValue=value=>finite(value)?clamp((.3-value)/.3*100):null;
+  const rankValue=value=>finite(value)?clamp((6-value)/5*100):null;
+  const mix=(reference,value,alpha)=>!finite(value)||alpha<=0?reference:finite(reference)?reference+alpha*(value-reference):value;
+  boats=boats.map(boat=>{
+    const p=boat.racer_parameters||{},r=recentRows.get(boat.boat_number),s=r?.scoring;
+    const core=weightedMean(common.map(([key,weight,convert])=>[convert(boat[key]),weight]));
+    if(!grouped){
+      if(s){s.reason=r.reason;s.base_before=round(core);s.base_after=round(core);}
+      return {...boat,base_score:round(core),racer_parameters:{...p,used_for_scoring:false,used_features:[],role_finish_used:false,
+        effective_avg_st:null,start_score:null,start_basis:'OVERALL_AVG_ST'}};
+    }
+    const individualFinish=finishValue(p.adjusted),populationFinish=finishValue(p.prior);
+    const finishReference=individualFinish??populationFinish??core;
+    const finishKind=individualFinish!==null?'RACER_COURSE':populationFinish!==null?'COURSE_POPULATION':'CORE_NEUTRAL';
+    const individualST=finite(p.adjusted?.avg_st)?p.adjusted.avg_st:null;
+    const referenceST=individualST??(finite(boat.avg_st)?boat.avg_st:null)??(finite(p.prior?.avg_st)?p.prior.avg_st:null);
+    const referenceRank=finite(p.adjusted?.avg_st_rank)?p.adjusted.avg_st_rank
+      :individualST===null&&!finite(boat.avg_st)&&finite(p.prior?.avg_st_rank)?p.prior.avg_st_rank:null;
+    const startKind=individualST!==null?'RACER_COURSE':finite(boat.avg_st)?'OVERALL_AVG_ST':referenceST!==null?'COURSE_POPULATION':'CORE_NEUTRAL';
+    const referenceSTScore=stValue(referenceST)??core;
+    const referenceRankScore=rankValue(referenceRank)??referenceSTScore;
+    const startReference=weightedMean([[referenceSTScore,.8],[referenceRankScore,.2]]);
+    const finishAlpha=s?.finish_sample_size>0?s.finish_sample_size/(s.finish_sample_size+RECENT_LANE_PRIOR_STRENGTH):0;
+    const recentST=finite(s?.recent_avg_st)?s.recent_avg_st:null,recentRank=finite(s?.recent_avg_start_order)?s.recent_avg_start_order:null;
+    const startAlpha=(recentST!==null||recentRank!==null)&&r?.raw?.sample_size>0
+      ?r.raw.sample_size/(r.raw.sample_size+RECENT_LANE_PRIOR_STRENGTH):0;
+    const finishAfter=mix(finishReference,s?.recent_finish_score,finishAlpha);
+    const startAfter=weightedMean([[mix(referenceSTScore,stValue(recentST),startAlpha),.8],
+      [mix(referenceRankScore,rankValue(recentRank),startAlpha),.2]]);
+    const before=weightedMean([[core,.69],[finishReference,.16],[startReference,.15]]);
+    const after=weightedMean([[core,.69],[finishAfter,.16],[startAfter,.15]]);
+    const effectiveST=mix(referenceST,recentST,startAlpha);
+    const individualStart=individualST!==null||finite(p.adjusted?.avg_st_rank);
+    const officialUsed=meaningful&&(individualFinish!==null||individualStart);
+    const roleUsed=meaningful&&p.profile_valid===true&&finite(p.second_finish_score)&&finite(p.third_finish_score);
+    const used=[];
+    if(meaningful&&finishAlpha>0&&finite(s?.recent_finish_score)){
+      used.push('RECENT_FINISH_FREQUENCY');if(s.winning_rate_used)used.push('RECENT_FINISH_POINTS');
+    }
+    if(meaningful&&startAlpha>0&&recentST!==null)used.push('RECENT_AVG_ST');
+    if(meaningful&&startAlpha>0&&recentRank!==null)used.push('RECENT_ST_RANK');
+    if(s){
+      Object.assign(s,{used:used.length>0,applied:used.length>0,used_features:used,
+        reason:!meaningful?'SCORING_INPUTS_INSUFFICIENT':used.length?'APPLIED':r.reason==='READY'?'NO_USABLE_METRICS':r.reason,
+        finish_reference_kind:finishKind,start_reference_kind:startKind,
+        finish_before:round(finishReference),finish_after:round(finishAfter),start_before:round(startReference),start_after:round(startAfter),
+        base_before:round(before),base_after:round(after),delta:used.length?round(round(after)-round(before)):null});
+      if(!meaningful&&!s.omitted_reasons.includes('SCORING_INPUTS_INSUFFICIENT'))s.omitted_reasons.push('SCORING_INPUTS_INSUFFICIENT');
+    }
+    const startBasis=individualST!==null?(finite(referenceRank)?'COURSE_AVG_ST_AND_RANK':'COURSE_AVG_ST')
+      :startKind==='COURSE_POPULATION'?'COURSE_POPULATION':startKind==='CORE_NEUTRAL'?'CORE_NEUTRAL':'OVERALL_AVG_ST';
+    return {...boat,base_score:round(after),start_parameter_score:round(startAfter),course_finish_score:round(finishAfter),
+      recent_lane_scoring:s?JSON.parse(JSON.stringify(s)):null,
+      racer_parameters:{...p,used_for_scoring:officialUsed,role_finish_used:roleUsed,
+        used_features:meaningful?[...(individualFinish!==null?['course_finish_score']:[]),...(individualStart?['start_parameter_score']:[])]:[],
+        finish_reference_kind:finishKind,course_finish_score:round(finishAfter),
+        effective_avg_st:individualStart||startAlpha>0||startKind==='COURSE_POPULATION'?round(effectiveST):null,
+        start_score:individualStart||startAlpha>0?round(startAfter):null,
+        start_basis:startBasis+(startAlpha>0?'_WITH_RECENT_LANE':'')}};
+  });
   const allTimes = stage === 'FINAL' && boats.every(boat => finite(boat.exhibition_time));
   const allStarts = stage === 'FINAL' && boats.every(boat => finite(boat.exhibition_st));
   const minTime = allTimes ? Math.min(...boats.map(boat => boat.exhibition_time)) : null;
   const maxTime = allTimes ? Math.max(...boats.map(boat => boat.exhibition_time)) : null;
   const sum = stage === 'FINAL' ? selectedSumModel(sumEvidence) : null;
   return {
-    feature_keys: used.map(([key]) => key),
-    feature_weights: Object.fromEntries(used.map(([key,weight])=>[key,round(weight/used.reduce((sum,[,w])=>sum+w,0))])),
-    racer_parameters_used: withProfiles,
-    meaningful: used.length >= 3 && used.some(([key]) => key === 'national_win_rate' || key === 'national_2rate'),
-    boats: boats.map((boat, index) => {
+    feature_keys: featureKeys,
+    feature_weights:groupWeights,
+    parameter_weights_applied:grouped,
+    racer_parameters_used:boats.some(boat=>boat.racer_parameters?.used_for_scoring===true),
+    meaningful,
+    boats: boats.map(boat => {
       const speedScore = !allTimes ? null : maxTime === minTime ? 50 : (maxTime - boat.exhibition_time) / (maxTime - minTime) * 100;
       const sumRow = sum?.boats.find(row => row.boat_number === boat.boat_number);
       const originalRow = sumRow || sumEvidence?.basic?.boats.find(row => row.boat_number === boat.boat_number);
@@ -175,11 +236,8 @@ function scoreBoats(boats, stage, sumEvidence) {
       const exhibitionStartScore = !allStarts ? null : boat.exhibition_flying ? 0 : clamp((.3 - boat.exhibition_st) / .3 * 100);
       // Replace the existing speed term; adding SUM as a second speed feature
       // would count the shared exhibition measurement twice.
-      const score = weightedMean([[base[index], .75], [sumScore ?? speedScore, .15], [exhibitionStartScore, .10]]);
-      const parametersUsed=withProfiles&&(used.some(([key])=>key==='course_finish_score')
-        ||allCourseStarts&&used.some(([key])=>key==='start_parameter_score'));
-      return { ...boat, racer_parameters:{...boat.racer_parameters,used_for_scoring:parametersUsed,role_finish_used:roleFinishUsed},
-        base_score: round(base[index]), score: round(score), exhibition_speed_score: round(speedScore), exhibition_start_score: round(exhibitionStartScore),
+      const score = weightedMean([[boat.base_score, .75], [sumScore ?? speedScore, .15], [exhibitionStartScore, .10]]);
+      return { ...boat,score: round(score), exhibition_speed_score: round(speedScore), exhibition_start_score: round(exhibitionStartScore),
         lap_time: originalRow?.lap_time ?? null, turn_time: originalRow?.turn_time ?? null,
         straight_time: originalRow?.straight_time ?? null, sum_total: sumRow?.total ?? null,
         sum_delta: sumRow?.delta ?? null, sum_speed_score: round(sumScore),
@@ -196,7 +254,7 @@ function buildScenarios(boats, complete) {
   const inside = ordered[0];
   const startOf = boat => {
     if (complete && finite(boat.exhibition_st)) return boat.exhibition_flying ? null : boat.exhibition_st;
-    return boat.racer_parameters?.used_for_scoring&&finite(boat.racer_parameters?.effective_avg_st)
+    return finite(boat.racer_parameters?.effective_avg_st)
       ? boat.racer_parameters.effective_avg_st : boat.avg_st;
   };
   const startEdge = (boat, target) => {
@@ -387,6 +445,12 @@ function fingerprint(value) {
   for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619); }
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
+// Capture can compare immutable source identities before deciding whether an
+// earlier PRE without WAKU10 needs a separately saved supplemented forecast.
+export function forecastRecentLaneKey(input){
+  if(Array.isArray(input?.entries))return recentLaneEvidenceKey(buildRecentLaneEvidence(input));
+  return recentLaneEvidenceKey(input?.recent_lane_evidence||input);
+}
 function buildForecast({ race, entries = [], stage, now: nowText, baseline = null, odds = null, weather = null, originalExhibition = null }, replay = false) {
   const now = forecastTime(nowText), deadline = forecastTime(race?.deadline);
   if (!STAGES.includes(stage)) return { ok: false, reason: 'INVALID_STAGE' };
@@ -424,6 +488,8 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   const savedBaseline = useBaseline(baseline, race, now, replay);
   const racerEvidence = buildRacerParameters({race,entries:sorted,stage,now:nowText,baseline:savedBaseline,
     exhibitionComplete:complete,replay});
+  const recentEvidence=buildRecentLaneEvidence({race,entries:sorted,stage,now:nowText,baseline:savedBaseline,
+    exhibitionComplete:complete,replay});
   rawBoats=rawBoats.map((boat,index)=>{
     const parameters=racerEvidence.boats[index],selected=complete?boat.observed_course:boat.expected_course;
     const legacyCourse=courseRecord(sorted[index],selected);
@@ -440,7 +506,7 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     if (rawBoats.some(boat => boat[key] == null)) missing.push(key.toUpperCase() + '_INCOMPLETE');
   }
   const sum = buildSumEvidence({race, boats: rawBoats, originalExhibition, stage, now: nowText, replay});
-  const evaluated = scoreBoats(replay ? rawBoats.filter(boat=>boat.active) : rawBoats, stage, sum.evidence);
+  const evaluated = scoreBoats(replay ? rawBoats.filter(boat=>boat.active) : rawBoats, stage, sum.evidence,recentEvidence);
   const allEvaluated = replay ? rawBoats.map(boat => evaluated.boats.find(row => row.boat_number === boat.boat_number)
     || { ...boat, base_score: null, score: null, exhibition_speed_score: null, exhibition_start_score: null }) : evaluated.boats;
   if (!evaluated.meaningful) missing.push('SCORING_INPUTS_INSUFFICIENT');
@@ -449,21 +515,48 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   if (stage === 'FINAL' && sum.evidence.status !== 'READY') missing.push('SUM_NOT_APPLIED');
   const scenarios = evaluated.meaningful && enoughBoats ? buildScenarios(evaluated.boats, complete).map(scenario => ({
     ...scenario,
+    recent_lane_evidence:(()=>{
+      const row=recentEvidence.boats.find(item=>item.boat_number===scenario.leader);
+      return row?.snapshot?{boat_number:row.boat_number,registration_number:row.registration_number,lane:row.lane,
+        selected_course:row.selected_course,snapshot_id:row.snapshot_id,source_basis:row.source_basis,
+        scoring:JSON.parse(JSON.stringify(row.scoring))}:null;
+    })(),
     tickets:buildScenarioTickets({scenario,boats:allEvaluated,stage,exhibitionComplete:complete}),
     ticket_revision:SCENARIO_TICKET_REVISION, ticket_basis:SCENARIO_TICKET_BASIS,
   })) : [];
   const comparison = compare(savedBaseline, allEvaluated, scenarios, complete, stage);
+  const recentChanged=savedBaseline?recentEvidence.boats.filter(row=>{
+    const old=savedBaseline.recent_lane_evidence?.boats?.find(item=>item.boat_number===row.boat_number&&item.registration_number===row.registration_number);
+    return (row.snapshot_id??null)!==(old?.snapshot_id??null)||(row.row_hash??null)!==(old?.row_hash??null);
+  }):[];
+  comparison.recent_lane_inputs_changed=recentChanged.length>0;
+  comparison.recent_lane_changed_boats=recentChanged.map(row=>row.boat_number);
+  if(savedBaseline){
+    comparison.checkpoint_results.push({label:'枠番過去10走',status:recentChanged.length?'CHANGED':recentEvidence.status==='UNAVAILABLE'?'UNKNOWN':'SUPPORTED',
+      detail:recentEvidence.change_note||'枠番過去10走の取得待ち'});
+    if(recentChanged.length){
+      comparison.changes.push('展示以外の枠番履歴も追加・更新されています（'+recentChanged.map(row=>row.boat_number+'号艇').join('・')+'）');
+      comparison.non_exhibition_inputs_changed=true;
+      for(const row of recentChanged){
+        const existing=comparison.non_exhibition_changes.find(item=>item.boat_number===row.boat_number);
+        if(existing)existing.fields.push('recent_lane_snapshot');
+        else comparison.non_exhibition_changes.push({boat_number:row.boat_number,fields:['recent_lane_snapshot']});
+      }
+      const check=comparison.checkpoint_results.find(item=>item.label==='展示以外の基礎情報');
+      if(check){check.status='CHANGED';check.detail='選手・モーター・節間・枠番履歴の更新を展示の変化と区別して記録';}
+    }
+  }
   racerEvidence.scoring={feature_keys:evaluated.feature_keys,feature_weights:evaluated.feature_weights,
-    parameter_weights_applied:evaluated.racer_parameters_used,prior_strength:20};
+    parameter_weights_applied:evaluated.parameter_weights_applied,prior_strength:20};
   for(const row of racerEvidence.boats){
     const boat=allEvaluated.find(item=>item.boat_number===row.boat_number);
-    for(const key of ['start_score','start_basis','effective_avg_st','used_for_scoring','role_finish_used']) {
-      // Null means a calculated individual value was deliberately not applied
-      // under the common-input rule. Do not restore that pre-scoring value.
+    for(const key of ['start_score','start_basis','effective_avg_st','course_finish_score','finish_reference_kind','used_for_scoring','role_finish_used']) {
+      // Preserve explicit nulls: a displayed raw value is not necessarily the
+      // reference or blended value applied by the score calculation.
       if(Object.hasOwn(boat?.racer_parameters||{},key))row.scoring[key]=boat.racer_parameters[key];
       else if(!Object.hasOwn(row.scoring,key))row.scoring[key]=null;
     }
-    row.scoring.used_features=evaluated.feature_keys.filter(key=>['start_parameter_score','course_finish_score'].includes(key));
+    row.scoring.used_features=boat?.racer_parameters?.used_features||[];
   }
   racerEvidence.non_exhibition_inputs_changed=comparison.non_exhibition_inputs_changed===true;
   racerEvidence.non_exhibition_changes=comparison.non_exhibition_changes||[];
@@ -478,6 +571,7 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     forecastTime(decision.odds_captured_at) || 0,
     forecastTime(conditions.observed_at) || 0,
     forecastTime(sum.evidence.input_as_of) || 0,
+    ...recentEvidence.boats.map(row=>forecastTime(row.available_at)||0),
     ...racerEvidence.boats.flatMap(row=>[forecastTime(row.profile?.source?.available_at)||0,
       forecastTime(row.frame_tendencies?.latest_source_at||row.frame_tendencies?.as_of)||0]));
   const priorIdentity = stage === 'FINAL' ? savedBaseline?.id || null : null;
@@ -491,9 +585,11 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     odds_id: stage === 'FINAL' ? decision.odds_snapshot_id || null : null,
     odds: decision.odds, decision, conditions, sum_evidence: sum.evidence, original_exhibition: sum.original_exhibition,
     racer_evidence:racerHashEvidence,
+    recent_lane_evidence:Object.fromEntries(Object.entries(recentEvidence).filter(([key])=>key!=='as_of')),
     scenario_tickets:scenarios.map(scenario => ({key:scenario.key,tickets:scenario.tickets,revision:scenario.ticket_revision})) });
+  const recentKey=recentLaneEvidenceKey(recentEvidence);
   return { ok: true, record: {
-    forecast_key: FORECAST_REVISION + ':' + race.race_key + ':' + stage + (stage === 'FINAL' ? ':' + contentHash : ''),
+    forecast_key: FORECAST_REVISION + ':' + race.race_key + ':' + stage + ':' + (stage === 'FINAL' ? contentHash : recentKey),
     revision: FORECAST_REVISION, race_id: race.id, race_key: race.race_key, race_date: race.race_date,
     venue_code: String(race.venue_code).padStart(2, '0'), venue_name: race.venue_name || '',
     race_number: Number(race.race_number), deadline: race.deadline, stage, generated_at: new Date(now).toISOString(),
@@ -504,6 +600,7 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     missing: [...new Set(missing)], conditions, exhibition_complete: complete,
     sum_evidence: sum.evidence, original_exhibition: sum.original_exhibition,
     racer_evidence:racerEvidence,
+    recent_lane_evidence:recentEvidence,recent_lane_key:recentKey,
     score_type: 'UNCALIBRATED_RESEARCH_SCORE', model_label: '展開仮説 V8',
     gender_model: race.is_womens === true ? 'WOMENS' : race.is_womens === false ? 'OPEN' : 'UNKNOWN',
     provenance: {
@@ -519,6 +616,7 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
       sum_replaces_exhibition_speed: sum.evidence.used_for_scoring,
       scenario_ticket_revision:SCENARIO_TICKET_REVISION,
       racer_parameters_revision:racerEvidence.revision,racer_parameters_used:evaluated.racer_parameters_used,
+      recent_lane_revision:recentEvidence.revision,recent_lane_used:recentEvidence.boats.some(row=>row.scoring.used),
       taro_official_strategy_reproduced: false,
       research_only: true, content_fingerprint: contentHash,
       fingerprint_kind: 'FNV1A_CHANGE_DETECTION_NOT_SIGNATURE',

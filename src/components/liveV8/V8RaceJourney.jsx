@@ -5,6 +5,7 @@ import V8ExternalPanel from './V8ExternalPanel';
 import {buildTicketOdds} from './v8TicketOdds';
 import V8SumPanel, {SumTheoryModelDetails} from './V8SumPanel';
 import V8RacerEvidencePanel from './V8RacerEvidencePanel';
+import V8RecentLaneEvidencePanel from './V8RecentLaneEvidencePanel';
 import {selectJourneyBaseline} from './v8RacerEvidenceView';
 import {originalTimingSummary, savedSumView, SUM_LABELS, sumModelStatus, sumTimeText} from './v8SumView';
 import {isReplay, latestStudyStage, studyStageLabel, studySettlementIndex, studyProgressLabel} from './v8StudyView';
@@ -119,6 +120,7 @@ function ForecastCard({forecast,verification,selectionMode='',title,subtitle,ste
         </button>;
       })}</div>
       {active&&<div className="mt-3 rounded-lg bg-slate-50 p-3"><p className="text-xs font-semibold leading-6 text-slate-800">{active.reason}</p>{!!active.checkpoints?.length&&<><p className="mt-2 text-[11px] font-bold text-sky-700">{forecast.stage==='FINAL'?'判断の確認項目':'展示で確認すること'}</p><ul className="mt-1 space-y-1 text-[11px] leading-5 text-slate-600">{active.checkpoints.map((text,index)=><li key={index}>・{typeof text==='string'?text:text.label || text.description || '確認項目'}</li>)}</ul></>}</div>}
+      <V8RecentLaneEvidencePanel forecast={forecast} scenario={active}/>
       <V8RacerEvidencePanel forecast={forecast} scenario={active}/>
       <V8SumPanel forecast={forecast}/>
       {activeView&&<section aria-label="選択した展開の買い目" data-scenario-key={active.key} className="mt-4 rounded-xl border border-sky-200 bg-sky-50/30 p-3 sm:p-4">
@@ -156,7 +158,7 @@ function TheoryComparison({rows=[],admin,displayOdds,race,now,oddsBlocked}) {
   </div>;
 }
 
-export default function V8RaceJourney({race}) {
+export default function V8RaceJourney({race,onForecastSnapshots}) {
   const {user}=useAuth(), admin=user?.role==='admin', now=useClock();
   const {data,loading,error,refresh}=useV8Dashboard({mode:'race',race_id:race?.id},!!race?.id);
   const [tab,setTab]=useState('JOURNEY'),[baseMode,setBaseMode]=useState('AUTO');
@@ -166,6 +168,8 @@ export default function V8RaceJourney({race}) {
   const referenceId=final?.comparison?.baseline_id || final?.baseline_id;
   const linked=records.find(row=>row.id===referenceId) || null;
   const baseline=selectJourneyBaseline({mode:baseMode,linked,pre,dayBefore});
+  // Share the already-loaded saved records with the entry table; no second V8 read.
+  useEffect(()=>{onForecastSnapshots?.({race_id:race?.id,baseline,final});},[onForecastSnapshots,race?.id,baseline,final]);
   const currentRace=(data?.races || []).find(row=>row.id===race?.id || (row.race_key && row.race_key===race?.race_key)) || race;
   const ambiguous=(data?.ambiguous_race_keys || []).includes(currentRace?.race_key);
   const oddsBlocked=!!error||!data||data.complete===false||ambiguous;

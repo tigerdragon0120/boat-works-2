@@ -1,0 +1,107 @@
+{
+  "name": "V8RecentLaneSnapshot",
+  "type": "object",
+  "description": "BOATCASTの枠番過去10走をレース・選手対応と取得時刻付きで共有保存する。READYは固定し、予想は採用した内容を別途不変保存する。",
+  "properties": {
+    "revision": {
+      "type": "string"
+    },
+    "snapshot_key": {
+      "type": "string"
+    },
+    "race_id": {
+      "type": "string"
+    },
+    "race_key": {
+      "type": "string"
+    },
+    "race_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "race_number": {
+      "type": "number"
+    },
+    "entrant_signature": {
+      "type": "string"
+    },
+    "entry_identity": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "source": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "READY",
+        "FAILED"
+      ]
+    },
+    "source_url": {
+      "type": "string"
+    },
+    "fetched_at": {
+      "type": "string"
+    },
+    "attempted_at": {
+      "type": "string"
+    },
+    "next_retry_at": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "parser_revision": {
+      "type": "string"
+    },
+    "content_hash": {
+      "type": "string"
+    },
+    "racers": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "denominator_rule": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "revision",
+    "snapshot_key",
+    "race_id",
+    "race_key",
+    "race_date",
+    "entrant_signature",
+    "source",
+    "status",
+    "attempted_at"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "none"
+      }
+    }
+  }
+}

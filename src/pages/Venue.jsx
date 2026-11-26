@@ -33,6 +33,7 @@ export default function Venue() {
   // 選択中レースの詳細データ
   const [race, setRace] = useState(null);
   const [entries, setEntries] = useState([]);
+  const [v8ForecastSnapshots, setV8ForecastSnapshots] = useState(null);
   // v61Stages: 合成(V6.1)の事前予想(PRE)と直前予想(FINAL)。画面の表示ソースはこれだけ。
   const [v61Stages, setV61Stages] = useState({ pre: null, final: null });
   // v62Stages: V6.2(回収率重視)の事前予想(PRE)と直前予想(FINAL)。
@@ -533,7 +534,7 @@ export default function Venue() {
       {visibleRace && <RaceResultCard race={race} entries={entries} raceResult={raceResult} />}
 
       {/* 表示は一つ。展示前は展開、展示後はV7 FINAL。 */}
-      {visibleRace && <UnifiedRaceView key={race.id} race={race} entries={entries} nextOpenRace={nextOpenRace} onSelectNextRace={() => nextOpenRace && setSelectedId(nextOpenRace.id)} />}
+      {visibleRace && <UnifiedRaceView key={race.id} race={race} entries={entries} nextOpenRace={nextOpenRace} onSelectNextRace={() => nextOpenRace && setSelectedId(nextOpenRace.id)} onForecastSnapshots={setV8ForecastSnapshots} />}
 
       {visibleRace && <section className="rounded-xl border border-slate-200 bg-white p-3">
         <h2 className="font-bold mb-3 text-slate-900">出走表・展示・選手情報</h2>
@@ -543,6 +544,7 @@ export default function Venue() {
           probRank={[]} evRank={[]}
           rankMode={rankMode} setRankMode={setRankMode}
           predictionVersion="v7"
+          v8Forecasts={v8ForecastSnapshots?.race_id === race.id ? v8ForecastSnapshots : null}
         />
       </section>}
     </div>

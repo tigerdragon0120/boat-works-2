@@ -1,7 +1,9 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 import PlayerPhoto from "@/components/race/PlayerPhoto";
 import { base44 } from "@/api/base44Client";
+import {recentLaneTableView, recentLaneRequestKey, recentLaneReadySnapshotKey, recentLaneHistoryCells, recentLaneNumber,
+  recentLaneTime, recentLaneReason} from '@/components/liveV8/v8RecentLaneView';
 
 // BOATCAST準拠: ダークテーマ + 進入コース別カラー
 const courseBg = {
@@ -82,183 +84,50 @@ function safeLaneNumber(raw) {
   return Number.isInteger(n) && n >= 1 && n <= 6 ? n : null;
 }
 
-// 着順正規化: 数値(1-6)→finish_order、特殊結果(F/L/欠/沈/失/転/落/妨/不等)→finish_status、欠損→両方null
-function normalizeWaku10Finish(raw) {
-  if (raw == null || raw === "") return { finish_order: null, finish_status: null };
-  const n = Number(raw);
-  if (Number.isInteger(n) && n >= 1 && n <= 6) return { finish_order: n, finish_status: null };
-  return { finish_order: null, finish_status: String(raw) };
-}
+// The endpoint returns the exact normalized BOATCAST snapshot used by V8.
+// Authentication and cache-only access are handled on the server.
+export default function LanePast10Table({ entries, race, v8Forecasts = null }) {
+  const requestKey = useMemo(() => recentLaneRequestKey(race, entries),
+    [race?.id, race?.race_key, race?.race_date, race?.venue_code, race?.race_number, entries]);
+  const parameters = useMemo(() => ({race_id: race?.id, race_key: race?.race_key,
+    race_date: race?.race_date, venue_code: String(race?.venue_code || '').padStart(2, '0'),
+    race_number: Number(race?.race_number)}),
+    [race?.id, race?.race_key, race?.race_date, race?.venue_code, race?.race_number]);
+  const snapshotKey = useMemo(() => recentLaneReadySnapshotKey(v8Forecasts, race), [v8Forecasts, race?.id, race?.race_key]);
+  const lastRead = useRef({key: null, snapshotKey: ''}), sequence = useRef(0);
+  const [result, setResult] = useState({key: null, snapshotKey: '', data: null, loading: false, error: null});
+  const current = result.key === requestKey && (!snapshotKey || result.snapshotKey === snapshotKey)
+    ? result : {data: null, loading: true, error: null};
+  const view = useMemo(() => recentLaneTableView(current.data, entries, race, v8Forecasts),
+    [current.data, entries, race, v8Forecasts]);
+  const statsByKey = Object.fromEntries(view.rows.map(row => [`${row.registration_number}_${row.boat_number}`, {
+    ...row, recent10: recentLaneHistoryCells(row), sample_count: row.sample_size,
+    total_lane_count: row.history.length, profile: {}, status: row.available ? 'ok' : 'unavailable',
+  }]));
+  const loading = current.loading;
 
-export default function LanePast10Table({ entries, race }) {
-  const [statsByKey, setStatsByKey] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [dataSource, setDataSource] = useState("LOCAL");
-
-  const reqKey = useMemo(
-    () => entries.map((e) => `${e.register_number || e.registration_number}_${e.boat_number}`).join(","),
-    [entries]
-  );
-
-  // キャッシュ新鮮度しきい値: 1時間以内なら再計算スキップ
-  const STALE_THRESHOLD_MS = 60 * 60 * 1000;
-
-  const fetchFromBoatcast = async () => {
-    try {
-      const res = await base44.functions.invoke("fetchBoatcastWaku10", {
-        venue_code: String(race?.venue_code || ""),
-        race_date: race?.race_date || "",
-        race_number: Number(race?.race_number || 0),
-      });
-      const data = res?.data;
-      if (!data?.ok || !data?.racers) return null;
-
-      const statsByKey = {};
-      for (const r of data.racers) {
-        const lane = safeLaneNumber(r.lane);
-        if (lane == null) continue;
-        const entry = entries.find((e) => Number(e.boat_number) === lane);
-        const reg = String(entry?.register_number || entry?.registration_number || "");
-        if (!reg) continue;
-
-        // BOATCASTは「前走→10走前」の順で返すため、画面用に「10走前→前走」へ反転する。
-        // 進入欄の空欄は枠なり進入を意味するので、現在の枠番で確実に補完する。
-        const newestFirst = Array.isArray(r.past10) ? r.past10.slice(0, 10) : [];
-        const recent10 = newestFirst.map((p) => {
-          const { finish_order, finish_status } = normalizeWaku10Finish(p?.finish);
-          const course = safeLaneNumber(p?.course) ?? lane;
-          return {
-            course,
-            finish_order,
-            finish_status,
-            st: null,
-            start_order: null,
-            is_disqualified: false,
-            is_absent: p?.finish === "欠",
-          };
-        }).reverse();
-        while (recent10.length < 10) recent10.unshift(null);
-
-        statsByKey[`${reg}_${lane}`] = {
-          registration_number: reg,
-          lane,
-          winning_rate: Number.isFinite(Number(r.winRate)) ? Number(r.winRate) : null,
-          avg_st: Number.isFinite(Number(r.avgSt)) ? Number(r.avgSt) : null,
-          avg_start_order: Number.isFinite(Number(r.stRank)) ? Number(r.stRank) : null,
-          sample_count: newestFirst.filter((p) => p?.finish && p.finish !== "欠").length,
-          total_lane_count: newestFirst.length,
-          recent10,
-          profile: {},
-          status: newestFirst.length > 0 ? "ok" : "error",
-          error: newestFirst.length > 0 ? null : "BOATCAST WAKU10データなし",
-        };
-      }
-      return statsByKey;
-    } catch (e) {
-      console.error("BOATCAST fetch error:", e);
-      return null;
-    }
-  };
-
+  useEffect(() => () => { sequence.current++; lastRead.current = {key: null, snapshotKey: ''}; }, [requestKey]);
   useEffect(() => {
-    if (!reqKey) return;
-    let cancelled = false;
-
-    const fetchFromServer = async () => {
-      const reqEntries = entries
-        .map((e) => ({
-          registration_number: String(e.register_number || e.registration_number || ""),
-          lane: Number(e.boat_number),
-        }))
-        .filter((x) => /^\d{4}$/.test(x.registration_number) && x.lane >= 1 && x.lane <= 6);
-      if (!reqEntries.length) return null;
+    if (lastRead.current.key === requestKey && (!snapshotKey || lastRead.current.snapshotKey === snapshotKey)) return;
+    lastRead.current = {key: requestKey, snapshotKey};
+    const request = ++sequence.current;
+    setResult({key: requestKey, snapshotKey, data: null, loading: true, error: null});
+    if (!parameters.race_id || !parameters.race_date || !parameters.race_number) {
+      setResult({key: requestKey, snapshotKey, data: null, loading: false, error: '対象レースの確認待ちです。'});
+      return;
+    }
+    (async () => {
       try {
-        const invokePromise = base44.functions.invoke("getLanePast10Stats", {
-          entries: reqEntries,
-          race_date: race?.race_date || null,
-          race_id: race?.id || null,
-          venue_code: race?.venue_code || null,
-          race_number: race?.race_number || null,
-        });
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("getLanePast10Stats timeout (90s)")), 90000)
-        );
-        const res = await Promise.race([invokePromise, timeoutPromise]);
-        return res?.data?.by_key || null;
-      } catch (e) {
-        console.error("LanePast10 fetch error:", e);
-        return null;
+        const response = await base44.functions.invoke('fetchBoatcastWaku10', parameters);
+        const data = response?.data || null;
+        if (sequence.current === request) setResult({key: requestKey, snapshotKey, data, loading: false,
+          error: data?.ok === false ? recentLaneReason(data.reason) : null});
+      } catch {
+        if (sequence.current === request) setResult({key: requestKey, snapshotKey, data: null, loading: false,
+          error: '枠番過去10走を取得できませんでした。次の読み込みをお待ちください。'});
       }
-    };
-
-    const load = async () => {
-      setLoading(true);
-
-      // 匿名閲覧では統計の再取得・保存を行わない(閲覧のみ)
-      if (!(await base44.auth.isAuthenticated())) {
-        if (!cancelled) setLoading(false);
-        return;
-      }
-
-      // BOATCAST優先取得(全レース対象) — 失敗時のみLOCAL fallback
-      const boatcastStats = await fetchFromBoatcast();
-      if (boatcastStats && Object.keys(boatcastStats).length > 0 && !cancelled) {
-        setStatsByKey(boatcastStats);
-        setDataSource("BOATCAST");
-        setLoading(false);
-        return;
-      }
-      setDataSource("LOCAL");
-
-      // Step 1: キャッシュ確認(RacerLaneRecentStats by race_id)
-      let cacheByKey = {};
-      if (race?.id) {
-        try {
-          const cached = await base44.entities.RacerLaneRecentStats.filter({ race_id: race.id }, 'lane', 10);
-          for (const c of cached || []) {
-            const reg = String(c.registration_number || '');
-            cacheByKey[`${reg}_${c.lane}`] = c;
-          }
-        } catch {}
-      }
-
-      // 全6艇のキャッシュが揃っているか確認
-      const allCached = entries.length > 0 && entries.every((e) => {
-        const reg = String(e.register_number || e.registration_number || '');
-        return cacheByKey[`${reg}_${e.boat_number}`];
-      });
-
-      if (allCached && !cancelled) {
-        // キャッシュ即表示
-        setStatsByKey(cacheByKey);
-        setLoading(false);
-
-        // 新鮮度チェック: 1時間超過ならバックグラウンド更新
-        const oldest = Math.min(
-          ...Object.values(cacheByKey).map((c) => new Date(c.updated_at || 0).getTime())
-        );
-        if (Date.now() - oldest > STALE_THRESHOLD_MS) {
-          const fresh = await fetchFromServer();
-          if (!cancelled && fresh) setStatsByKey(fresh);
-        }
-        return;
-      }
-
-      // Step 2: 部分キャッシュがあれば先表示
-      if (Object.keys(cacheByKey).length > 0 && !cancelled) {
-        setStatsByKey(cacheByKey);
-        setLoading(false);
-      }
-
-      // Step 3: サーバーから取得(フォールバック)
-      const fresh = await fetchFromServer();
-      if (!cancelled && fresh) setStatsByKey(fresh);
-      if (!cancelled) setLoading(false);
-    };
-
-    load();
-    return () => { cancelled = true; };
-  }, [reqKey, race?.race_date, race?.id]);
+    })();
+  }, [requestKey, parameters, snapshotKey]);
 
   if (!entries.length) {
     return <div className="py-12 text-center text-slate-500 text-sm">出走表データがありません</div>;
@@ -285,7 +154,7 @@ export default function LanePast10Table({ entries, race }) {
                 {i === 9 ? "前走" : `${10 - i}走`}
               </th>
             ))}
-            <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[42px]">勝率</th>
+            <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[42px]">勝率<br/>（着順点）</th>
             <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[48px]">平均ST</th>
             <th rowSpan={2} className="border border-slate-700 py-1 text-center font-bold text-slate-500 text-[9px] w-[42px]">ST順</th>
           </tr>
@@ -299,11 +168,11 @@ export default function LanePast10Table({ entries, race }) {
         </thead>
         <tbody>
           {entries.map((e) => {
-            const reg = String(e.register_number || e.registration_number || "");
+            const reg = String(e.registration_number ?? e.register_number ?? "").trim();
             const stats = statsByKey[`${reg}_${e.boat_number}`];
-            const isError = stats?.status === "error";
-            const isNoData = (!stats && !loading) || (stats && !isError && (stats.total_lane_count ?? 0) === 0);
-            const isLoading = loading && !stats;
+            const isError = false;
+            const isNoData = !stats?.available || (stats.total_lane_count ?? 0) === 0;
+            const isLoading = loading && !stats?.available;
             const profile = stats?.profile || {};
             const recent10 = stats?.recent10 || [];
 
@@ -312,14 +181,14 @@ export default function LanePast10Table({ entries, race }) {
                 {/* 上段: 進入コース */}
                 <tr className="bg-slate-800/40">
                   <td rowSpan={2} className="sticky left-0 z-20 bg-slate-800 border border-slate-700 px-1.5 py-1 align-top">
-                    <RacerInfo e={e} reg={reg} profile={profile} sampleCount={stats?.sample_count} />
+                    <RacerInfo e={e} reg={reg} profile={profile} sampleCount={stats?.sample_count} normalCount={stats?.normal_sample_size} adoption={stats?.adoption} reason={!loading && !stats?.available ? recentLaneReason(stats?.reason) : null}/>
                   </td>
                   {Array.from({ length: 10 }).map((_, i) => (
                     <CourseCell key={i} h={recent10[i]} loading={isLoading} isError={isError} />
                   ))}
-                  <StatCell rowSpan={2} value={stats?.winning_rate != null && Number.isFinite(Number(stats.winning_rate)) ? Number(stats.winning_rate).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} highlight />
-                  <StatCell rowSpan={2} value={stats?.avg_st != null && Number.isFinite(Number(stats.avg_st)) ? Number(stats.avg_st).toFixed(2) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} mono />
-                  <StatCell rowSpan={2} value={stats?.avg_start_order != null && Number.isFinite(Number(stats.avg_start_order)) ? Number(stats.avg_start_order).toFixed(1) : "—"} loading={isLoading} isError={isError} isNoData={isNoData} />
+                  <StatCell rowSpan={2} value={recentLaneNumber(stats?.winning_rate)} loading={isLoading} isError={isError} isNoData={isNoData} highlight />
+                  <StatCell rowSpan={2} value={recentLaneNumber(stats?.avg_st)} loading={isLoading} isError={isError} isNoData={isNoData} mono />
+                  <StatCell rowSpan={2} value={recentLaneNumber(stats?.avg_start_order, 1)} loading={isLoading} isError={isError} isNoData={isNoData} />
                 </tr>
                 {/* 下段: 着順 */}
                 <tr className="bg-slate-800/40">
@@ -333,17 +202,18 @@ export default function LanePast10Table({ entries, race }) {
         </tbody>
       </table>
       {loading && <div className="px-3 py-1 text-[10px] text-blue-400">取得中...</div>}
-      <div className="px-3 py-0.5 text-right text-[9px]">
-        <span className={dataSource === "BOATCAST" ? "text-blue-400 font-bold" : "text-slate-600"}>
-          {dataSource}
-        </span>
+      {current.error && <p role="status" className="px-3 py-2 text-[11px] leading-5 text-amber-200">{current.error}</p>}
+      <div className="space-y-1 px-3 py-2 text-[10px] leading-5 text-slate-400">
+        <p><span className="font-semibold text-blue-300">BOATCAST {view.available}/{view.total}艇</span>{view.available > 0 && <> · 取得 {recentLaneTime(current.data?.metadata?.fetched_at || view.rows.find(row => row.available)?.fetched_at)}</>}</p>
+        <p>勝率は0〜10の着順点の平均です。1着率（%）とは異なります。平均STは秒、ST順は順位です。</p>
+        {v8Forecasts && <p>「反映」は保存したV8予想と同じ取得記録・内容を使い、計算に適用した艇だけに表示します。</p>}
       </div>
     </div>
   );
 }
 
 // 左側sticky: 選手情報ブロック
-function RacerInfo({ e, reg, profile, sampleCount }) {
+function RacerInfo({ e, reg, profile, sampleCount, normalCount, adoption, reason }) {
   const identity = getRacerIdentity(e, profile);
 
   return (
@@ -366,7 +236,9 @@ function RacerInfo({ e, reg, profile, sampleCount }) {
             {profile.age != null && <span className="ml-1.5">{profile.age}歳</span>}
           </div>
         )}
-        {sampleCount != null && sampleCount > 0 && <div className="text-[8px] text-slate-600 mt-px">同枠{sampleCount}走</div>}
+        {sampleCount != null && <div className="mt-1 text-[9px] text-slate-400">同枠{sampleCount}走{normalCount != null ? ` · 正常着順${normalCount}走` : ''}</div>}
+        {adoption && adoption.kind !== 'UNAVAILABLE' && <div className={`mt-1 text-[9px] leading-4 ${adoption.kind === 'APPLIED' ? 'font-semibold text-sky-300' : 'text-slate-400'}`}>{adoption.label}</div>}
+        {reason && <div className="mt-1 text-[9px] leading-4 text-amber-200">{reason}</div>}
       </div>
     </div>
   );
@@ -378,7 +250,7 @@ function CourseCell({ h, loading, isError }) {
   if (isError || !h) return <td className="border border-slate-700 bg-slate-900/50 text-center text-slate-700 text-[10px] py-0.5">—</td>;
   const course = safeLaneNumber(h.course);
   return (
-    <td className={cn("border border-slate-700 text-center font-black text-[11px] py-0.5", course != null ? (courseBg[course] || "bg-slate-700 text-slate-300") : "bg-slate-900/50 text-slate-700")}>
+    <td title={h.course_inferred ? '元データの枠なり表記から補完' : undefined} className={cn("border border-slate-700 text-center font-black text-[11px] py-0.5", course != null ? (courseBg[course] || "bg-slate-700 text-slate-300") : "bg-slate-900/50 text-slate-700")}>
       {course != null ? course : "—"}
     </td>
   );

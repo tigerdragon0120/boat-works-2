@@ -38,7 +38,7 @@ const filterTabs = ["選手成績", "得点率早見", "枠番過去10走", "節
 
 // 選手名の表示整形は @/lib/racerIdentity に集約
 
-export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode, predictionVersion = "mix" }) {
+export default function EntryTable({ race, entries, activePred, activeBoats, allTri, probRank, evRank, rankMode, setRankMode, predictionVersion = "mix", v8Forecasts = null }) {
   const [subTab, setSubTab] = useState("出走表");
   const [filter, setFilter] = useState("選手成績");
   const [tokutenEntries, setTokutenEntries] = useState(entries);
@@ -106,7 +106,7 @@ export default function EntryTable({ race, entries, activePred, activeBoats, all
       {/* メインコンテンツ */}
       <div className="flex-1 overflow-auto">
         {subTab === "買い目" && <BetTicketView activePred={displayPred} allTri={allTri} race={race} predictionVersion={predictionVersion} />}
-        {subTab === "出走表" && <><EntryGrid entries={filter === "得点率早見" ? tokutenEntries : entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} />{filter === "得点率早見" && tokutenLoading && <div className="px-3 py-2 text-[11px] text-amber-600 font-bold">BOATCAST 得点率早見を取得中…</div>}</>}
+        {subTab === "出走表" && <><EntryGrid entries={filter === "得点率早見" ? tokutenEntries : entries} filter={filter} activeBoats={activeBoats} activePred={displayPred} race={race} v8Forecasts={v8Forecasts}/>{filter === "得点率早見" && tokutenLoading && <div className="px-3 py-2 text-[11px] text-amber-600 font-bold">BOATCAST 得点率早見を取得中…</div>}</>}
         {subTab === "直前情報" && <ExhibitionInfo entries={entries} race={race} />}
         {subTab === "オッズ" && <OddsView allTri={allTri} />}
         {subTab === "3連単" && <TrifectaView probRank={probRank} evRank={evRank} rankMode={rankMode} setRankMode={setRankMode} />}
@@ -163,7 +163,7 @@ function resolveRoleBoats(activePred, activeBoats = []) {
   return { honmei, taiko, ana };
 }
 
-function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
+function EntryGrid({ entries, filter, activeBoats, activePred, race, v8Forecasts }) {
   // 外部データ更新でRaceEntryが一時重複しても、画面は1〜6号艇を各1件だけ表示する。
   const uniqueEntries = Array.from(
     new Map(
@@ -174,7 +174,7 @@ function EntryGrid({ entries, filter, activeBoats, activePred, race }) {
     ).values()
   ).sort((a, b) => Number(a.boat_number) - Number(b.boat_number));
   if (!uniqueEntries.length) return <Empty msg="出走表データがありません" />;
-  if (filter === "枠番過去10走") return <LanePast10Table entries={uniqueEntries} race={race} />;
+  if (filter === "枠番過去10走") return <LanePast10Table entries={uniqueEntries} race={race} v8Forecasts={v8Forecasts}/>;
   const scratchedBoats = race?.scratched_boats || [];
   const isScratched = (n) => scratchedBoats.includes(n);
   const roleOf = (n) => {

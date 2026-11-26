@@ -99,7 +99,7 @@ export default function V8RacerEvidencePanel({forecast, scenario}) {
         {source && <SourcePeriod source={source}/>}
       </div>
       <p className="mt-1 text-[10px] leading-5 text-slate-500">実際の進入コース別の実績です。艇番別成績や、このレースの的中確率とは異なります。</p>
-      {leader.available && leader.scoring?.used_for_scoring !== true && <p className="mt-1 text-[10px] leading-5 text-amber-800">全艇で比較できる詳細指標が揃っていないため、今回の評価には詳細パラメーターによる補正を適用していません。</p>}
+      {leader.available && leader.scoring?.used_for_scoring !== true && <p className="mt-1 text-[10px] leading-5 text-amber-800">この選手の今回コースに使える詳細指標がないため、コース別パラメーターによる補正を適用していません。</p>}
       {comparison && <div className="mt-3 rounded-lg border border-sky-100 bg-sky-50/50 px-3 py-2">
         <p className="text-[11px] font-bold text-sky-900">{comparison.course_label}</p>
         <p className="mt-1 text-[11px] leading-5 text-slate-700">コース平均ST <strong className="tabular-nums">{parameterTime(comparison.average)}</strong> ／ 今回展示ST <strong className="tabular-nums">{comparison.exhibition}</strong>

@@ -175,13 +175,15 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // 無限リトライ禁止(MAX_RETRIESまで)
 // 認証回避・Cookie偽装等は行わない(通常の公開HTTPアクセスのみ)
 // ============================================================
-async function fetchWithRetry(url) {
+async function fetchWithRetry(url, { timeoutMs = FETCH_TIMEOUT_MS, maxRetries = MAX_RETRIES } = {}) {
+  const requestTimeout = Number.isFinite(timeoutMs) ? Math.max(1, Math.min(FETCH_TIMEOUT_MS, timeoutMs)) : FETCH_TIMEOUT_MS;
+  const retryLimit = Number.isInteger(maxRetries) ? Math.max(0, Math.min(MAX_RETRIES, maxRetries)) : MAX_RETRIES;
   let lastError = null;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= retryLimit; attempt++) {
     try {
       const res = await fetch(url, {
         headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: AbortSignal.timeout(requestTimeout),
       });
       diagnostics.http_status = res.status;
 
@@ -196,7 +198,7 @@ async function fetchWithRetry(url) {
         return { ok: false, status: 403, error: 'Forbidden (403)' };
       }
       if (res.status === 429) {
-        if (attempt < MAX_RETRIES) {
+        if (attempt < retryLimit) {
           const wait = Math.min(10000, 1000 * 2 ** attempt);
           await sleep(wait);
           continue;
@@ -204,7 +206,7 @@ async function fetchWithRetry(url) {
         return { ok: false, status: 429, error: 'Rate Limited (429)' };
       }
       if (res.status >= 500) {
-        if (attempt < MAX_RETRIES) {
+        if (attempt < retryLimit) {
           await sleep(Math.min(5000, 1000 * 2 ** attempt));
           continue;
         }
@@ -213,7 +215,7 @@ async function fetchWithRetry(url) {
       return { ok: false, status: res.status, error: `HTTP ${res.status}` };
     } catch (e) {
       lastError = e;
-      if (attempt < MAX_RETRIES) {
+      if (attempt < retryLimit) {
         await sleep(Math.min(5000, 1000 * 2 ** attempt));
         continue;
       }
@@ -233,7 +235,7 @@ async function fetchWithRetry(url) {
 // 同一 race_date + venue_code + race_number + data_type の
 // 短時間に同じデータの重複取得を防止する
 // ============================================================
-export async function fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType }) {
+export async function fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType, timeoutMs, maxRetries }) {
   const url = buildUrl(dataType, venueCode, raceDate, raceNumber);
   const cacheKey = buildCacheKey(dataType, venueCode, raceDate, raceNumber);
   const ttl = getTtl(dataType);
@@ -275,7 +277,7 @@ export async function fetchBoatcastText({ venueCode, raceDate, raceNumber, dataT
     diagnostics.data_type = dataType;
     diagnostics.cache = 'MISS';
 
-    const result = await fetchWithRetry(url);
+    const result = await fetchWithRetry(url, { timeoutMs, maxRetries });
     diagnostics.last_fetch = new Date().toISOString();
 
     if (result.ok) {

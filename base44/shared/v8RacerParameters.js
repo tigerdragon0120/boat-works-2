@@ -118,6 +118,16 @@ export function buildRacerParameters({race,entries=[],stage,now,baseline=null,ex
       scoring:{course_finish_score:finishScore,start_score:startScore,start_basis:startScore===null?'OVERALL_AVG_ST':'COURSE_AVG_ST_AND_RANK',
         effective_avg_st:effectiveStart,second_finish_score:secondScore,third_finish_score:thirdScore,used_for_scoring:false}};
   });
+  // A missing individual course does not remove the other five racers' records.
+  // The same-dataset population is a disclosed fallback, never a fabricated
+  // individual record. Keep raw/sample_size unchanged when borrowing a prior.
+  for(const row of rows){
+    let donor=row.profile?.course_priors?.[String(row.selected_course)]?row:null;
+    if(!donor)donor=rows.find(candidate=>candidate.profile?.course_priors?.[String(row.selected_course)]
+      &&(!row.profile||candidate.profile.source.dataset_key===row.profile.source.dataset_key));
+    if(!row.prior&&donor)row.prior=clone(donor.profile.course_priors[String(row.selected_course)]);
+    row.prior_source=donor?{dataset_key:donor.profile.source.dataset_key,available_at:donor.profile.source.available_at}:null;
+  }
   const ready=rows.filter(row=>row.status==='READY').length;
   const basis=reused&&current?'MIXED':reused?'BASELINE_SNAPSHOT':current?'CURRENT_SNAPSHOT':'UNAVAILABLE';
   const changeNote=stage!=='FINAL'?null:reused===rows.length&&rows.length
@@ -133,7 +143,7 @@ export function buildRacerParameters({race,entries=[],stage,now,baseline=null,ex
 export function parameterBoatFields(row) {
   return {racer_parameters:{profile_valid:row?.profile_valid===true,selected_course:row?.selected_course??null,
     selected_course_basis:row?.selected_course_basis||'EXPECTED',sample_size:row?.sample_size||0,
-    reliability:row?.reliability||0,raw:clone(row?.raw),adjusted:clone(row?.adjusted),
+    reliability:row?.reliability||0,raw:clone(row?.raw),adjusted:clone(row?.adjusted),prior:clone(row?.prior),
     ...clone(row?.scoring)},
     course_first_percent:row?.raw?.first_rate??null,course_second_percent:row?.raw?.second_rate??null,
     course_third_percent:row?.raw?.third_rate??null,course_top2_percent:row?.raw?.top2_rate??null,
