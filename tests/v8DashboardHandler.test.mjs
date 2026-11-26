@@ -25,12 +25,25 @@ const forecast=(stage='FINAL')=>({
   decision:{status:stage==='FINAL'?'BUY':'WATCH',odds_captured_at:'2026-11-23T05:29:00Z',valid_until:'2026-11-23T05:34:00Z'},
 });
 const matches=(record,query)=>Object.entries(query).every(([key,value])=>value&&typeof value==='object'&&'$in' in value?value.$in.includes(record[key]):record[key]===value);
+function providerProjection(row,fields){
+  const allowed=new Set(Array.isArray(fields)?fields:fields.split(','));
+  const visit=(value,prefix)=>{
+    if(allowed.has(prefix)||value==null||typeof value!=='object')return value;
+    if(Array.isArray(value))return value.map(item=>visit(item,prefix));
+    return Object.fromEntries(Object.entries(value).filter(([key])=>{
+      const path=prefix?prefix+'.'+key:key;
+      return [...allowed].some(field=>field===path||field.startsWith(path+'.'));
+    }).map(([key,value])=>[key,visit(value,prefix?prefix+'.'+key:key)]));
+  };
+  return visit(row,'');
+}
 
-async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],forecasts=[forecast()],verifications=[],odds=[],oddsReadError=null,failRaceCursor=false,raceReadErrors=[],raceLookupError=null,mockReadTimers=false}={}){
+async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],forecasts=[forecast()],verifications=[],external=[],odds=[],oddsReadError=null,failRaceCursor=false,failEntityCursor=null,raceReadErrors=[],raceLookupError=null,mockReadTimers=false,admin=false,repositoryOverrides={},projectFields=false}={}){
   t.mock.timers.enable({apis:mockReadTimers?['Date','setTimeout']:['Date'],now:NOW});
   t.mock.method(console,'error',()=>{});
+  t.mock.method(console,'info',()=>{});
   const calls=[];
-  const rowsByEntity={Race:raceRows,V8RaceForecast:forecasts,V8ExternalPrediction:[],V8ForecastVerification:verifications,V8TheoryTrial:[],OddsSnapshot:odds};
+  const rowsByEntity={Race:raceRows,V8RaceForecast:forecasts,V8ExternalPrediction:external,V8ForecastVerification:verifications,V8TheoryTrial:[],OddsSnapshot:odds};
   const sr={};
   for(const [name,rows] of Object.entries(rowsByEntity)){
     sr[name]={
@@ -41,15 +54,16 @@ async function exercise(t,{body={mode:'race',race_id:race.id},raceRows=[race],fo
         if(name==='OddsSnapshot'&&oddsReadError)throw oddsReadError;
         if(name==='Race'&&raceReadErrors.length)throw raceReadErrors.shift();
         if(name==='Race'&&options.cursor&&failRaceCursor)throw new Error('read failed on second page');
+        if(name===failEntityCursor&&options.cursor)throw new Error('incomplete projected ledger');
         const selected=rows.filter(row=>matches(row,query));
         const offset=options.cursor?Number(options.cursor.slice('cursor-'.length)):0;
         const page=selected.slice(offset,offset+options.limit),more=offset+options.limit<selected.length;
-        return {items:structuredClone(page),has_more:more,next_cursor:more?'cursor-'+(offset+options.limit):null};
+        return {items:structuredClone(projectFields&&options.fields?page.map(row=>providerProjection(row,options.fields)):page),has_more:more,next_cursor:more?'cursor-'+(offset+options.limit):null};
       },
     };
   }
-  const client={auth:{me:async()=>null},asServiceRole:{entities:sr}};
-  const handler=factory(()=>client,...names.map(name=>repository[name]),utcMs,SETTLEMENT_REVISION,selectDisplayOddsSnapshot);
+  const client={auth:{me:async()=>admin?{role:'admin'}:null},asServiceRole:{entities:sr}};
+  const handler=factory(()=>client,...names.map(name=>repositoryOverrides[name]||repository[name]),utcMs,SETTLEMENT_REVISION,selectDisplayOddsSnapshot);
   const response=await handler(new Request('https://test.invalid/dashboard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
   return {response,body:await response.json(),calls};
 }
@@ -114,6 +128,7 @@ test('day overview does not issue any new odds reads or include display-only odd
   assert.equal(out.response.status,200);
   assert.equal(out.calls.some(call=>call.entity==='OddsSnapshot'),false);
   assert.equal(Object.hasOwn(out.body,'display_odds'),false);
+  assert.ok(out.calls.every(call=>!Object.hasOwn(call.options,'fields')));
 });
 
 test('closed-race odds selection keeps the last pre-deadline snapshot and never merges missing prices',()=>{
@@ -175,7 +190,8 @@ test('an initial transient Race read is recovered inside the first dashboard req
 test('permanent Race read errors propagate only the safe status and context without retry',async(t)=>{
   const out=await exercise(t,{raceReadErrors:[sourceError(403)]});
   assert.equal(out.response.status,503);
-  assert.deepEqual(out.body.diagnostic,{context:'Race',code:'INCOMPLETE_READ:page_read_failed_or_timed_out',http_status:403});
+  assert.deepEqual(out.body.diagnostic,{context:'Race',code:'INCOMPLETE_READ:page_read_failed_or_timed_out',http_status:403,
+    kind:'Error',phase:'READ_RACES',mode:'race',elapsed_ms:0,read_rows:{},read_ms:{Race:0},selected_rows:{}});
   assert.equal(out.calls.filter(call=>call.entity==='Race').length,1);
   assert.equal(Object.hasOwn(out.body,'forecasts'),false);
   assert.doesNotMatch(JSON.stringify(out.body),/private|credential|secret|authorization|token/);
@@ -186,7 +202,8 @@ test('exhausted transient Race reads retain the last status and cannot publish p
   await flush();t.mock.timers.tick(200);await flush();t.mock.timers.tick(500);await flush();
   const out=await pending;
   assert.equal(out.response.status,503);
-  assert.deepEqual(out.body.diagnostic,{context:'Race',code:'INCOMPLETE_READ:page_read_failed_or_timed_out',http_status:504});
+  assert.deepEqual(out.body.diagnostic,{context:'Race',code:'INCOMPLETE_READ:page_read_failed_or_timed_out',http_status:504,
+    kind:'Error',phase:'READ_RACES',mode:'race',elapsed_ms:700,read_rows:{},read_ms:{Race:700},selected_rows:{}});
   assert.equal(out.calls.filter(call=>call.entity==='Race').length,3);
   assert.equal(Object.hasOwn(out.body,'forecasts'),false);
   assert.doesNotMatch(JSON.stringify(out.body),/private|credential|secret|authorization|token/);
@@ -195,7 +212,8 @@ test('exhausted transient Race reads retain the last status and cannot publish p
 test('unverified source exception messages are not accepted as public diagnostic codes',async(t)=>{
   const out=await exercise(t,{raceLookupError:new Error('INCOMPLETE_READ:private_source_details')});
   assert.equal(out.response.status,503);
-  assert.deepEqual(out.body.diagnostic,{context:'RACE_OR_FORMAT',code:'READ_FAILED'});
+  assert.deepEqual(out.body.diagnostic,{context:'RACE_OR_FORMAT',code:'READ_FAILED',
+    kind:'Error',phase:'READ_RACES',mode:'race',elapsed_ms:0,read_rows:{},read_ms:{},selected_rows:{}});
   assert.doesNotMatch(JSON.stringify(out.body),/private_source_details/);
 });
 
@@ -223,4 +241,89 @@ test('dashboard selects a complete FINAL before latest so newer partial history 
  const out=await exercise(t,{forecasts:[complete,partial]});
  assert.equal(out.response.status,200);assert.deepEqual(out.body.forecasts.map(row=>row.id),[complete.id]);
  assert.deepEqual(out.body.buy_forecasts.map(row=>row.id),[complete.id]);assert.equal(out.body.coverage.final_count,1);
+});
+
+const finalTickets=['1-2-3','1-2-4','1-3-2','1-3-4','1-4-2','1-4-3'];
+const savedSelection=(status='WATCH')=>({
+ revision:'V8_FINAL_SELECTION_1',policy_revision:'V8_RULE_BUY_2',status,stage:'FINAL',probability_calibrated:false,
+ tickets:[...finalTickets],ticket_count:6,ranked_tickets:finalTickets.map((ticket,index)=>({ticket,rank:index+1,score:70-index,components:{first:80}})),
+ role_evidence:[{private_detail:'not needed by verification'}],
+});
+const verificationFor=source=>({
+ id:'verified-'+source.id,revision:SETTLEMENT_REVISION,verification_key:'key-'+source.id,
+ source_kind:source.record_mode==='REPLAY'?'REPLAY':'FORECAST',forecast_id:source.id,
+ race_id:source.race_id,race_key:source.race_key,race_date:source.race_date,stage:source.stage,status:'SETTLED',
+ research_tickets:source.research_tickets,research_hit:false,research_stake:800,research_return:0,result_trifecta:'6-5-4',
+ final_selection_result:{revision:'V8_FINAL_SELECTION_VERIFICATION_1',source_revision:'V8_FINAL_SELECTION_1',source_forecast_id:source.id,
+  status:'SETTLED',tickets:[...finalTickets],ticket_count:6,unit_stake:100,hit:false,hit_rank:null,stake:600,return:0,
+  decision_status:source.decision.status,buy_selected:source.decision.status==='BUY'},
+});
+
+test('verification projection preserves first BUY, linked PRE, separate replay and saved ticket identity',async t=>{
+ const pre={...forecast('PRE'),id:'pre-linked',forecast_key:'pre-linked',generated_at:'2026-11-23T01:00:00Z',created_date:'2026-11-23T01:00:00Z'};
+ const preLatest={...forecast('PRE'),id:'pre-latest',forecast_key:'pre-latest'};
+ const firstBuy={...forecast(),id:'buy-first',forecast_key:'buy-first',generated_at:'2026-11-23T05:10:00Z',created_date:'2026-11-23T05:10:00Z',
+  final_selection:savedSelection('BUY'),decision:{...forecast().decision,tickets:[...finalTickets]}};
+ const latest={...forecast(),id:'watch-latest',forecast_key:'watch-latest',comparison:{baseline_id:pre.id,large_detail:'private'},
+  final_selection:savedSelection(),decision:{...forecast().decision,status:'WATCH',tickets:[...finalTickets]}};
+ const closed={...race,id:'closed-race',race_key:'2026-11-23_02_08',deadline:'2026-11-23T05:00:00Z',status:'finished'};
+ const replay={...forecast(),id:'replay-final',forecast_key:'replay-final',race_id:closed.id,race_key:closed.race_key,deadline:closed.deadline,
+  record_mode:'REPLAY',generated_at:'2026-11-23T05:10:00Z',created_date:'2026-11-23T05:10:01Z',input_as_of:'2026-11-23T05:05:00Z',
+  decision:{status:'REPLAY'},provenance:{result_excluded:true,reconstruction:true,input_fields_whitelisted:true},final_selection:savedSelection('REPLAY')};
+ const invalidReplay={...replay,id:'invalid-replay',forecast_key:'invalid-replay',provenance:{...replay.provenance,reconstruction:false}};
+ const rows=[pre,preLatest,firstBuy,latest,replay,invalidReplay],before=structuredClone(rows);
+ const out=await exercise(t,{body:{mode:'verification',days:7},admin:true,projectFields:true,raceRows:[race,closed],forecasts:rows,
+  verifications:[pre,firstBuy,latest,replay].map(verificationFor)});
+ assert.equal(out.response.status,200);assert.deepEqual(rows,before);
+ assert.deepEqual(new Set(out.body.forecasts.map(row=>row.id)),new Set([pre.id,preLatest.id,latest.id]));
+ assert.deepEqual(out.body.buy_forecasts.map(row=>row.id),[firstBuy.id]);
+ assert.deepEqual(out.body.replay_forecasts.map(row=>row.id),[replay.id]);
+ assert.deepEqual(out.body.buy_verifications.map(row=>row.forecast_id),[firstBuy.id]);
+ assert.deepEqual(out.body.replay_verifications.map(row=>row.forecast_id),[replay.id]);
+ assert.equal(out.body.race_progress.find(row=>row.race_id===race.id).pre.forecast_id,pre.id);
+ assert.deepEqual(out.body.buy_forecasts[0].decision.tickets,finalTickets);
+ assert.deepEqual(out.body.forecasts.find(row=>row.id===latest.id).final_selection.ranked_tickets,
+  latest.final_selection.ranked_tickets.map(({rank,ticket,score})=>({rank,ticket,score})));
+ assert.deepEqual(out.body.buy_verifications[0].final_selection_result,verificationFor(firstBuy).final_selection_result);
+ assert.equal(out.body.policies.buy_evaluation,'FIRST_PUBLISHED_BUY_PER_RACE');
+ assert.ok(out.calls.every(call=>Array.isArray(call.options.fields)&&call.options.fields.includes('id')));
+ assert.doesNotMatch(JSON.stringify(out.body),/private_detail|large_detail|components/);
+});
+
+test('growing verification overview finishes every cursor and omits oversized source and scenario details',async t=>{
+ const heavy='HEAVY_DETAIL_NOT_FOR_OVERVIEW'.repeat(1000);
+ const races=Array.from({length:201},(_,index)=>({...race,id:'race-'+index,race_key:'logical-race-'+index}));
+ const rows=races.map((r,index)=>({...forecast(),id:'forecast-'+index,forecast_key:'forecast-'+index,race_id:r.id,race_key:r.race_key,
+  decision:{status:'WATCH'},final_selection:savedSelection(),boats:[{details:heavy}],scenarios:[{details:heavy}],
+  racer_evidence:{details:heavy},recent_lane_evidence:{details:heavy},venue_evidence:{details:heavy}}));
+ const verifications=rows.map(row=>({...verificationFor(row),scenario_results:[{details:heavy}],provenance:{details:heavy}}));
+ // This provider deliberately ignores projection, exercising the second whitelist at the response boundary.
+ const out=await exercise(t,{body:{mode:'verification',days:7},admin:true,raceRows:races,forecasts:rows,verifications});
+ assert.equal(out.response.status,200);assert.equal(out.body.forecasts.length,201);assert.equal(out.body.verifications.length,201);
+ for(const entity of ['Race','V8RaceForecast','V8ForecastVerification']){
+  const calls=out.calls.filter(call=>call.entity===entity);assert.equal(calls.length,2);assert.equal(calls[1].options.cursor,'cursor-200');
+  assert.ok(calls.every(call=>Array.isArray(call.options.fields)));
+ }
+ const json=JSON.stringify(out.body);
+ assert.doesNotMatch(json,/HEAVY_DETAIL_NOT_FOR_OVERVIEW|racer_evidence|scenario_results|role_evidence/);
+ assert.ok(Buffer.byteLength(json)<1000000);
+ assert.ok(out.body.forecasts.every(row=>row.final_selection.ticket_count===6));
+});
+
+test('an incomplete projected forecast cursor withholds the whole overview',async t=>{
+ const rows=Array.from({length:201},(_,index)=>({...forecast(),id:'forecast-'+index,forecast_key:'key-'+index}));
+ const out=await exercise(t,{body:{mode:'verification',days:7},admin:true,projectFields:true,forecasts:rows,failEntityCursor:'V8RaceForecast'});
+ assert.equal(out.response.status,503);assert.equal(out.body.error,'READ_INCOMPLETE');
+ assert.equal(out.body.diagnostic.context,'V8RaceForecast');assert.equal(out.body.diagnostic.phase,'READ_RECORDS');
+ assert.equal(Object.hasOwn(out.body,'forecasts'),false);
+});
+
+test('post-read failures expose safe kind, phase and counts without exception text',async t=>{
+ const out=await exercise(t,{body:{mode:'verification',days:7},admin:true,projectFields:true,
+  repositoryOverrides:{buildRaceProgress:()=>{throw new TypeError('private credential-bearing record and secret URL');}}});
+ assert.equal(out.response.status,503);assert.equal(out.body.diagnostic.context,'RACE_OR_FORMAT');
+ assert.equal(out.body.diagnostic.kind,'TypeError');assert.equal(out.body.diagnostic.phase,'BUILD_PROGRESS');
+ assert.equal(out.body.diagnostic.mode,'verification');assert.equal(out.body.diagnostic.read_rows.V8RaceForecast,1);
+ assert.equal(out.body.diagnostic.selected_rows.forecasts,1);assert.ok(out.body.diagnostic.elapsed_ms>=0);
+ assert.equal(Object.hasOwn(out.body,'forecasts'),false);assert.doesNotMatch(JSON.stringify(out.body),/private|credential|secret|URL/);
 });

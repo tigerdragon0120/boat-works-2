@@ -3,7 +3,7 @@ import { useAuth } from '@/lib/AuthContext';
 import { sharedReadRequests, shouldPollRead, stableReadKey } from '@/lib/sharedReadRequests';
 
 // Read-only calls only: mutations must never be coalesced by this hook.
-export function useCreditSavingRead({ operation, parameters = {}, read, enabled = true, interval = 300000 }) {
+export function useCreditSavingRead({ operation, parameters = {}, read, enabled = true, interval = 300000, formatError }) {
   const { user, isAuthenticated, isLoadingAuth } = useAuth();
   const active = enabled && !isLoadingAuth;
   const scope = sharedReadRequests.scopeFor(user, isAuthenticated);
@@ -31,14 +31,15 @@ export function useCreditSavingRead({ operation, parameters = {}, read, enabled 
       return null;
     } catch (error) {
       if (alive.current && currentKey.current === key && request === sequence.current) {
-        polling.current = { ...polling.current, data: null, error: true };
-        setState({ key, data: null, loading: false, error: error?.response?.data?.message || error?.message || '読込に失敗しました' });
+        polling.current = { ...polling.current, data: null, error };
+        setState({ key, data: null, loading: false, error: typeof formatError === 'function'
+          ? formatError(error) : error?.response?.data?.message || error?.message || '読込に失敗しました' });
       }
       return null;
     } finally {
       if (polling.current.inFlight === request) polling.current.inFlight = null;
     }
-  }, [active, key, scope, operation, serialized, read]);
+  }, [active, key, scope, operation, serialized, read, formatError]);
 
   useEffect(() => {
     alive.current = true;

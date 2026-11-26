@@ -2,7 +2,13 @@
 import {fetchAllPaged} from './pagedFetch.js';
 import {utcMs} from './v7FeatureObservation.js';
 
-export const jstDate = (offset=0, now=Date.now()) => new Date(now+offset*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
+// Reuse ICU's formatter: verification checks dates for every immutable row,
+// and constructing thousands of identical formatters retains substantial memory.
+const jstDateFormatter = new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Tokyo'});
+export const jstDate = (offset=0, now=Date.now()) => {
+  const date=new Date(now+offset*86400000);
+  return Number.isFinite(date.getTime())?jstDateFormatter.format(date):'Invalid Date';
+};
 export const dateValid = value => typeof value==='string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value+'T00:00:00Z')) && new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
 const READ_PAGE_TIMEOUT_MS=10000;
 const retryBackoff=[200,500];
@@ -24,7 +30,7 @@ const retryAfterMs=error=>{
   const at=Date.parse(value);
   return Number.isFinite(at)?Math.max(0,at-Date.now()):null;
 };
-export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=40,sort='-created_date'}={}) {
+export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=40,sort='-created_date',fields}={}) {
   // Match the deployed cursor contract used by existing successful collectors.
   // Arrays and incomplete pages are never interpreted as a complete ledger.
   let stopped=false,lastHttpStatus=null,retryBudgetExhausted=false;
@@ -34,7 +40,7 @@ export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=
       if(stopped||Date.now()>=pageDeadline){retryBudgetExhausted=true;throw new Error('READ_RETRY_BUDGET');}
       lastHttpStatus=null;
       try{
-        const result=await entity.filter(q,{...options});
+        const result=await entity.filter(q,{...options,...(fields==null?{}:{fields})});
         if(stopped||Date.now()>=pageDeadline){retryBudgetExhausted=true;throw new Error('READ_RETRY_BUDGET');}
         // Only the paging helper validates response shapes, IDs and continuations.
         // A malformed successful response must not be retried or masked.

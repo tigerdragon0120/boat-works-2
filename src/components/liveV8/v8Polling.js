@@ -1,3 +1,5 @@
+import {dashboardReadErrorState} from './v8ReadErrors.js';
+
 const MINUTE=60000;
 
 function deadlineMs(value) {
@@ -11,7 +13,8 @@ function deadlineMs(value) {
 // Keep live alerts fresh; completed views still check occasionally for corrections.
 // A past date alone never stops polling while the server repairs missing stages.
 export function dashboardPollInterval(parameters={},data=null,error=null,now=Date.now()) {
-  if (error || !data) return MINUTE;
+  if (error) return dashboardReadErrorState(error).retryable ? MINUTE : Infinity;
+  if (!data) return MINUTE;
   if (parameters.mode==='verification') return 5*MINUTE;
   const today=new Date(now).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'});
   const selectedDate=parameters.race_date || data.race_date;

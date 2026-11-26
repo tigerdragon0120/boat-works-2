@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  eligibleForecast, canonicalForecasts, latestForecasts, firstBuyForecasts, currentDecision, publicRow, readV8Rows,
+  eligibleForecast, canonicalForecasts, latestForecasts, firstBuyForecasts, currentDecision, publicRow, readV8Rows, jstDate,
 } from '../base44/shared/v8Repository.js';
 
 const NOW = Date.parse('2026-11-22T04:40:00.000Z');
@@ -15,6 +15,27 @@ const row = (id, stage, at, status = 'WATCH', extra = {}) => ({
 });
 const earlyBuy = () => row('buy-first','FINAL','2026-11-22T04:30:00Z','BUY');
 const lateSkip = () => row('skip-later','FINAL','2026-11-22T04:37:00Z','SKIP');
+
+test('reused JST formatter retains midnight, year and offset boundaries',()=>{
+  for(const [at,offset,expected] of [
+    ['2026-11-22T14:59:59.999Z',0,'2026-11-22'],
+    ['2026-11-22T15:00:00.000Z',0,'2026-11-23'],
+    ['2026-12-31T15:00:00.000Z',0,'2027-01-01'],
+    ['2026-12-31T15:00:00.000Z',-1,'2026-12-31'],
+    ['2026-12-30T15:00:00.000Z',1,'2027-01-01'],
+    ['2028-02-28T15:00:00.000Z',1,'2028-03-01'],
+  ]){
+    const now=Date.parse(at);
+    assert.equal(jstDate(offset,now),expected);
+    assert.equal(jstDate(offset,now),new Date(now+offset*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}));
+  }
+});
+test('JST formatter keeps the previous Invalid Date result for invalid inputs',()=>{
+  for(const [offset,now] of [[0,NaN],[0,Infinity],[0,8640000000000001],[NaN,NOW],[Infinity,NOW]]){
+    assert.equal(jstDate(offset,now),'Invalid Date');
+    assert.equal(jstDate(offset,now),new Date(now+offset*86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Tokyo'}));
+  }
+});
 
 test('first published BUY remains the verification source after a later SKIP', () => {
   const canonical = canonicalForecasts([lateSkip(), earlyBuy()], NOW).rows;
@@ -117,6 +138,22 @@ test('cursor pagination follows has_more even for short pages and preserves filt
   assert.deepEqual(result.map(item=>item.id),['first','second']);
   assert.equal(entity.calls.length,2);
   assert.equal(Object.hasOwn(entity.calls[0],'cursor'),false);
+  assert.equal(Object.hasOwn(entity.calls[0],'fields'),false);
+});
+test('optional field projection is sent unchanged on every cursor without shortening a complete ledger',async()=>{
+  const fields=['id','forecast_key','decision.status','final_selection.ranked_tickets.ticket'],calls=[];
+  const entity={filter:async(query,options)=>{
+    calls.push(structuredClone(options));assert.equal(options.fields,fields);
+    return options.cursor?{items:[{id:'second',decision:{status:'BUY'}}],has_more:false,next_cursor:null}
+      :{items:[{id:'first',decision:{status:'WATCH'}}],has_more:true,next_cursor:'next-projected'};
+  }};
+  const result=await readV8Rows(entity,{race_date:'2026-11-22'},{fields});
+  assert.deepEqual(result.map(row=>row.id),['first','second']);assert.equal(calls.length,2);
+  assert.equal(calls[1].cursor,'next-projected');assert.equal(calls[1].limit,200);
+});
+test('projected reads still reject a missing row identity or incomplete final cursor',async()=>{
+  await assert.rejects(readV8Rows({filter:async()=>({items:[{decision:{status:'BUY'}}],has_more:false})},{},{fields:'id,decision.status'}),/page_row_invalid_or_repeated/);
+  await assert.rejects(readV8Rows({filter:async()=>({items:[{id:'one'}],has_more:true,next_cursor:null})},{},{fields:'id,decision.status'}),/continuation_invalid_or_repeated/);
 });
 test('an array response is never accepted as a complete V8 ledger', async () => {
   let calls=0;

@@ -256,3 +256,20 @@ test('the Verification integration uses server first-BUY rows, not latest WATCH 
   assert.equal(summary.buyStats.n,1);assert.equal(summary.buyStats.hits,1);assert.equal(summary.buyStats.stake,600);
   assert.equal(summary.liveFinal.metrics.n,0);
 });
+
+test('a latest FINAL that is also the first BUY is counted once when both response lists contain the same receipt',()=>{
+  const source=readFileSync(new URL('../src/components/liveV8/V8Verification.jsx',import.meta.url),'utf8');
+  const body=source.split('const summary=useMemo(()=>{')[1].split('},[data,venue]);')[0];
+  const clientSource=readFileSync(new URL('../src/components/liveV8/v8Client.js',import.meta.url),'utf8');
+  const client=new Function('isReplay',clientSource.replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'')+'\nreturn {latestRows,timeMs};')(study.isReplay);
+  const helpers={...study,...client,finalSelectionStats,stats:study.studyStats,settlementIndex:()=>new Map()};
+  const summarize=new Function('data','venue',...Object.keys(helpers),body);
+  const selected=forecast(6),receipt={id:'receipt-1',...settlement(selected)};
+  const data={races:[race],forecasts:[selected],buy_forecasts:[selected],verifications:[receipt],buy_verifications:[structuredClone(receipt)]};
+  const summary=summarize(data,'ALL',...Object.values(helpers));
+  assert.equal(summary.finalStats.n,1);assert.equal(summary.buyStats.n,1);assert.equal(summary.buyStats.pending,0);
+  assert.equal(summary.buyStats.stake,600);assert.equal(summary.buyStats.returns,2800);
+  data.buy_verifications=[{...receipt,id:'receipt-2'}];
+  const conflict=summarize(data,'ALL',...Object.values(helpers));
+  assert.equal(conflict.buyStats.n,0);assert.equal(conflict.buyStats.pending,1);assert.equal(conflict.finalStats.n,1);
+});

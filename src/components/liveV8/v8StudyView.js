@@ -2,6 +2,13 @@
 export const isReplay = row => row?.record_mode === 'REPLAY';
 const at = row => Date.parse(row?.generated_at || row?.created_date || '') || 0;
 const raceKey = row => row?.race_key || row?.race_id || row?.id;
+const sameSavedRow = (a, b) => {
+  if (Object.is(a, b)) return true;
+  if (a == null || b == null || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) return a.length === b.length && a.every((value, index) => sameSavedRow(value, b[index]));
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(key => Object.hasOwn(b, key) && sameSavedRow(a[key], b[key]));
+};
 export const completeStudyFinal = row => row?.stage === 'FINAL' && row.exhibition_complete === true && Array.isArray(row.research_tickets) && row.research_tickets.length > 0;
 export function latestStudyStage(rows, stage) {
   return (rows || []).filter(row => row?.stage === stage && (stage !== 'FINAL' || completeStudyFinal(row))).sort((a,b) => at(b)-at(a) || String(b.id).localeCompare(String(a.id)))[0] || null;
@@ -13,13 +20,25 @@ export function studyStageLabel(row) {
   return row.stage === 'DAY_BEFORE' ? '前日' : '当日・展示前';
 }
 export function studySettlementIndex(rows) {
-  const groups = new Map();
+  const byId = new Map(), anonymous = [], conflicts = new Set(), groups = new Map();
   for (const row of rows || []) {
+    if (!row || typeof row !== 'object') continue;
+    if (typeof row.id !== 'string' || !row.id.trim()) { anonymous.push(row); continue; }
+    const previous = byId.get(row.id);
+    if (!previous) byId.set(row.id, row);
+    else if (!sameSavedRow(previous, row)) {
+      // A repeated physical row may come from both the latest and first-BUY
+      // response lists. Conflicting versions of that ID still remain on hold.
+      if (previous.forecast_id) conflicts.add(previous.forecast_id);
+      if (row.forecast_id) conflicts.add(row.forecast_id);
+    }
+  }
+  for (const row of [...byId.values(), ...anonymous]) {
     if (!['SETTLED','EXCLUDED_REFUND'].includes(row?.status) || !row.forecast_id || row.source_kind === 'EXTERNAL') continue;
     const group = groups.get(row.forecast_id) || [];
     group.push(row); groups.set(row.forecast_id, group);
   }
-  return new Map([...groups].filter(([,group])=>group.length===1).map(([id,group])=>[id,group[0]]));
+  return new Map([...groups].filter(([id,group])=>!conflicts.has(id)&&group.length===1).map(([id,group])=>[id,group[0]]));
 }
 export function buildStudyRows(data) {
   const live=(data?.forecasts || []).filter(row=>!isReplay(row)), replay=(data?.replay_forecasts || []).filter(isReplay);

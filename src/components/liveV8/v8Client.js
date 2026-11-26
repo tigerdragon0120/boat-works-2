@@ -3,6 +3,7 @@ import {useCreditSavingRead} from '@/hooks/useCreditSavingRead';
 import {base44} from '@/api/base44Client';
 import {isReplay} from './v8StudyView';
 import {dashboardPollInterval} from './v8Polling';
+import {formatDashboardReadError} from './v8ReadErrors';
 
 export const STAGES = {DAY_BEFORE:'前日', PRE:'当日・展示前', FINAL:'展示後'};
 export const VENUES = ['','桐生','戸田','江戸川','平和島','多摩川','浜名湖','蒲郡','常滑','津','三国','びわこ','住之江','尼崎','鳴門','丸亀','児島','宮島','徳山','下関','若松','芦屋','福岡','唐津','大村'];
@@ -108,7 +109,7 @@ async function readV8Dashboard(parameters) {
   }
 }
 export function useV8Dashboard(parameters, enabled=true) {
-  return useCreditSavingRead({operation:'v8ReadDashboard',parameters,enabled,read:readV8Dashboard,interval:dashboardPollInterval});
+  return useCreditSavingRead({operation:'v8ReadDashboard',parameters,enabled,read:readV8Dashboard,interval:dashboardPollInterval,formatError:formatDashboardReadError});
 }
 export function useClock() {
   const [now,setNow]=useState(Date.now());

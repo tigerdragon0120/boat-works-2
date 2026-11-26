@@ -31,6 +31,32 @@ test('duplicate settlement records are withheld instead of selecting a favorable
  const index=studySettlementIndex([settled('f',true),settled('f',false)]);
  assert.equal(index.has('f'),false);
 });
+test('the same saved verification in latest and first-BUY lists is counted once, independently of object key order',()=>{
+ const receipt={id:'verified-1',...settled('f',true),final_selection_result:{status:'SETTLED',tickets:['1-2-3'],stake:100,return:2100,hit:true}};
+ const copy=Object.fromEntries(Object.entries(structuredClone(receipt)).reverse());
+ copy.final_selection_result=Object.fromEntries(Object.entries(copy.final_selection_result).reverse());
+ const before=structuredClone([receipt,copy]),index=studySettlementIndex([receipt,copy]);
+ assert.equal(index.size,1);assert.equal(index.get('f'),receipt);
+ const metrics=studyStats([...index.values()]);assert.equal(metrics.n,1);assert.equal(metrics.stake,800);assert.equal(metrics.returns,2100);
+ assert.deepEqual([receipt,copy],before);
+});
+test('different verification IDs remain ambiguous even when their outcomes match',()=>{
+ const receipt=settled('f',true);
+ assert.equal(studySettlementIndex([{...receipt,id:'a'},{...receipt,id:'b'}]).has('f'),false);
+ assert.equal(studySettlementIndex([receipt,structuredClone(receipt)]).has('f'),false);
+});
+test('conflicting content for the same physical ID stays on hold, including nested final-selection returns',()=>{
+ const receipt={id:'verified-1',...settled('f',true),final_selection_result:{status:'SETTLED',tickets:['1-2-3'],stake:100,return:2100,hit:true}};
+ for(const changed of [{...receipt,research_return:4200},{...receipt,status:'EXCLUDED_REFUND'},
+  {...receipt,final_selection_result:{...receipt.final_selection_result,return:4200}}]) {
+  assert.equal(studySettlementIndex([receipt,changed]).has('f'),false);
+ }
+});
+test('reusing one physical ID across two forecasts withholds both while unrelated valid receipts remain usable',()=>{
+ const first={id:'reused',...settled('f',true)},second={id:'reused',...settled('g',false)},other={id:'other',...settled('h',true)};
+ const index=studySettlementIndex([first,second,other,structuredClone(first)]);
+ assert.equal(index.has('f'),false);assert.equal(index.has('g'),false);assert.equal(index.get('h'),other);
+});
 test('partial and unmatched records do not inflate hit rates',()=>{
  const metric=studyStats([settled('f',true),settled('g',false),{...settled('h',true),status:'PENDING'}]);
  assert.deepEqual({n:metric.n,hits:metric.hits,stake:metric.stake,returns:metric.returns},{n:2,hits:1,stake:1600,returns:2100});
