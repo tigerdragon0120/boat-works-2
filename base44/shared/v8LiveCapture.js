@@ -13,17 +13,36 @@ import {loadVenueProfiles,ensureVenueProfile} from './v8VenueStore.js';
 const hasExhibition=(entries)=>entries.some(e=>['exhibition_time','exhibition_st','exhibition_course'].some(k=>e[k]!=null&&e[k]!==''));
 // Leave room in the shared service-token read quota for exhibition and result collectors.
 const MAX_FORECASTS_PER_RUN=24;
+// A revision change must not discard the valid, source-rich PRE collected by
+// the previous compatible selection policy in favor of an older legacy day.
+const compatiblePreviousBaseline=row=>{
+  const plan=row.final_selection;
+  if(row.revision!=='V8_FORECAST_6_FINAL_SELECTION'||row.record_mode==='REPLAY'||!['DAY_BEFORE','PRE'].includes(row.stage)
+    ||plan?.revision!=='V8_FINAL_SELECTION_1'||plan.policy_revision!=='V8_RULE_BUY_1'||plan.stage!==row.stage
+    ||!Array.isArray(plan.tickets)||plan.tickets.length<6||plan.tickets.length>12||plan.ticket_count!==plan.tickets.length
+    ||new Set(plan.tickets).size!==plan.tickets.length
+    ||!plan.tickets.every(ticket=>typeof ticket==='string'&&/^[1-6]-[1-6]-[1-6]$/.test(ticket)&&new Set(ticket.split('-')).size===3)
+    ||!Array.isArray(plan.ranked_tickets)||plan.ranked_tickets.length!==plan.tickets.length
+    ||!plan.ranked_tickets.every((ticket,index)=>ticket?.rank===index+1&&ticket.ticket===plan.tickets[index]&&Number.isFinite(ticket.score)))return false;
+  const heads=[...new Set(plan.tickets.map(ticket=>Number(ticket[0])))];
+  return Array.isArray(plan.head_boats)&&plan.head_boats.length===heads.length
+    &&new Set(plan.head_boats).size===heads.length&&heads.every(head=>plan.head_boats.includes(head));
+};
 export const selectCaptureBaseline=records=>{
   const current=records.filter(row=>row.revision===FORECAST_REVISION);
-  const withBoth=current.filter(row=>!!row.provenance?.recent_lane_snapshot_id&&!!row.provenance?.venue_snapshot_id);
-  const withRecent=current.filter(row=>!!row.provenance?.recent_lane_snapshot_id);
-  const withVenue=current.filter(row=>!!row.provenance?.venue_snapshot_id);
+  const compatible=records.filter(compatiblePreviousBaseline);
   const firstStage=(rows,stage)=>rows.filter(row=>row.stage===stage).sort(chronological)[0];
   const latestStage=(rows,stage)=>rows.filter(row=>row.stage===stage).sort(chronological).at(-1);
-  return latestStage(withBoth,'DAY_BEFORE')||latestStage(withBoth,'PRE')
-    ||latestStage(withRecent,'DAY_BEFORE')||latestStage(withRecent,'PRE')
-    ||latestStage(withVenue,'DAY_BEFORE')||latestStage(withVenue,'PRE')
-    ||firstStage(current,'DAY_BEFORE')||firstStage(current,'PRE')
+  const preferSources=rows=>{
+    const withBoth=rows.filter(row=>!!row.provenance?.recent_lane_snapshot_id&&!!row.provenance?.venue_snapshot_id);
+    const withRecent=rows.filter(row=>!!row.provenance?.recent_lane_snapshot_id);
+    const withVenue=rows.filter(row=>!!row.provenance?.venue_snapshot_id);
+    return latestStage(withBoth,'DAY_BEFORE')||latestStage(withBoth,'PRE')
+      ||latestStage(withRecent,'DAY_BEFORE')||latestStage(withRecent,'PRE')
+      ||latestStage(withVenue,'DAY_BEFORE')||latestStage(withVenue,'PRE')
+      ||firstStage(rows,'DAY_BEFORE')||firstStage(rows,'PRE');
+  };
+  return preferSources(current)||preferSources(compatible)
     ||firstStage(records,'DAY_BEFORE')||firstStage(records,'PRE')||null;
 };
 // A cooperative deadline stops new work; an in-flight database write is always awaited.

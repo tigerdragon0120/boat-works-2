@@ -93,3 +93,41 @@ test('FINAL compares with an appended PRE that first captured the shared WAKU10 
   assert.equal(selectCaptureBaseline([old,pre]).id,pre.id);
   assert.deepEqual([old,pre],before);
 });
+
+function compatibleV6Baseline(stage='PRE',id='v6-pre',at='2026-11-26T00:00:00Z'){
+  const tickets=['1-2-3','1-2-4','1-3-2','1-3-4','1-4-2','1-4-3'];
+  return {id,stage,revision:'V8_FORECAST_6_FINAL_SELECTION',record_mode:'LIVE',generated_at:at,
+    provenance:{recent_lane_snapshot_id:'saved-waku10',venue_snapshot_id:'saved-venue'},
+    final_selection:{revision:'V8_FINAL_SELECTION_1',policy_revision:'V8_RULE_BUY_1',stage,status:'WATCH',
+      tickets,ticket_count:tickets.length,head_boats:[1],ranked_tickets:tickets.map((ticket,index)=>({ticket,rank:index+1,score:70-index}))}};
+}
+
+test('a valid rich V6 policy-1 PRE outranks an older legacy DAY_BEFORE after a forecast revision change',()=>{
+  const old={id:'v3-day',stage:'DAY_BEFORE',revision:'V8_FORECAST_3_SCENARIOS',generated_at:'2026-11-25T10:00:00Z'};
+  const previous=compatibleV6Baseline(),rows=[old,previous],before=structuredClone(rows);
+  assert.equal(selectCaptureBaseline(rows).id,previous.id);
+  assert.equal(selectCaptureBaseline([...rows].reverse()).id,previous.id);
+  assert.deepEqual(rows,before);
+  const current={id:'v7-pre',stage:'PRE',revision:FORECAST_REVISION,generated_at:'2026-11-26T00:01:00Z'};
+  assert.equal(selectCaptureBaseline([...rows,current]).id,current.id);
+});
+
+test('compatible previous baselines preserve source richness, stage priority and latest enriched snapshots',()=>{
+  const first=compatibleV6Baseline(),later=compatibleV6Baseline('PRE','v6-later','2026-11-26T00:02:00Z');
+  const day=compatibleV6Baseline('DAY_BEFORE','v6-day','2026-11-25T10:00:00Z');
+  assert.equal(selectCaptureBaseline([later,first]).id,later.id);
+  assert.equal(selectCaptureBaseline([later,first,day]).id,day.id);
+  const venueOnlyDay=structuredClone(day);delete venueOnlyDay.provenance.recent_lane_snapshot_id;
+  assert.equal(selectCaptureBaseline([venueOnlyDay,first]).id,first.id);
+});
+
+test('missing or invalid previous selection metadata is not promoted over the historical fallback',()=>{
+  const old={id:'v3-day',stage:'DAY_BEFORE',revision:'V8_FORECAST_3_SCENARIOS',generated_at:'2026-11-25T10:00:00Z'};
+  for(const change of [row=>delete row.final_selection,row=>row.final_selection.revision='UNKNOWN',
+    row=>row.final_selection.policy_revision='V8_RULE_BUY_2',row=>row.final_selection.head_boats=[3],
+    row=>row.final_selection.ticket_count=7,row=>row.final_selection.tickets[1]=row.final_selection.tickets[0],
+    row=>row.final_selection.ranked_tickets[0].ticket='3-1-2',row=>row.record_mode='REPLAY']){
+    const previous=compatibleV6Baseline();change(previous);const rows=[old,previous],before=structuredClone(rows);
+    assert.equal(selectCaptureBaseline(rows).id,old.id);assert.deepEqual(rows,before);
+  }
+});
