@@ -1,0 +1,115 @@
+{
+  "name": "V8VenueProfileSnapshot",
+  "type": "object",
+  "description": "\u516c\u5f0f\u5834\u30c7\u30fc\u30bf\u306e\u5b9f\u9032\u5165\u30b3\u30fc\u30b9\u52253\u304b\u6708\u7d71\u8a08\u3092\u53d6\u5f97\u6642\u523b\u30fb\u96c6\u8a08\u671f\u9593\u4ed8\u304d\u3067\u56fa\u5b9a\u4fdd\u5b58\u3059\u308b\u3002\u6bcd\u6570\u4ef6\u6570\u30fb\u516c\u8868\u65e5\u6642\u306f\u975e\u63b2\u8f09\u3068\u3057\u3066null\u3002PROFILE\u306f\u4e0d\u5909\u3001REFRESH\u306f24\u6642\u9593\u306e\u518d\u78ba\u8a8d\u5f85\u3061\u5c02\u7528\u3002",
+  "properties": {
+    "revision": {
+      "type": "string"
+    },
+    "parser_revision": {
+      "type": "string"
+    },
+    "record_type": {
+      "type": "string",
+      "enum": [
+        "PROFILE",
+        "REFRESH"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "READY",
+        "FAILED",
+        "SUPERSEDED"
+      ]
+    },
+    "snapshot_key": {
+      "type": "string"
+    },
+    "venue_code": {
+      "type": "string"
+    },
+    "venue_name": {
+      "type": "string"
+    },
+    "source": {
+      "type": "string"
+    },
+    "source_url": {
+      "type": "string"
+    },
+    "period_start": {
+      "type": "string",
+      "format": "date"
+    },
+    "period_end": {
+      "type": "string",
+      "format": "date"
+    },
+    "expected_period_end": {
+      "type": "string",
+      "format": "date"
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "attempted_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "next_retry_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "source_hash": {
+      "type": "string"
+    },
+    "content_hash": {
+      "type": "string"
+    },
+    "profile": {
+      "type": "object"
+    },
+    "superseded_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "superseded_reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "revision",
+    "parser_revision",
+    "record_type",
+    "status",
+    "snapshot_key",
+    "venue_code",
+    "source",
+    "source_url",
+    "attempted_at"
+  ],
+  "rls": {
+    "read": {},
+    "create": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "none"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "none"
+      }
+    }
+  }
+}
