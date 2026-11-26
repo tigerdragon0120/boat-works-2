@@ -8,16 +8,21 @@ import {loadLatestRacerDataset} from './latestRacerStore.js';
 import {enrichLatestRacerEntries} from './latestRacerEvidence.js';
 import {loadRacerFrameTendencies,emptyFrameTendencies} from './v8RacerTendencies.js';
 import {loadRecentLaneSnapshots,ensureRecentLaneSnapshot} from './v8RecentLaneStore.js';
+import {loadVenueProfiles,ensureVenueProfile} from './v8VenueStore.js';
 
 const hasExhibition=(entries)=>entries.some(e=>['exhibition_time','exhibition_st','exhibition_course'].some(k=>e[k]!=null&&e[k]!==''));
 // Leave room in the shared service-token read quota for exhibition and result collectors.
 const MAX_FORECASTS_PER_RUN=24;
 export const selectCaptureBaseline=records=>{
   const current=records.filter(row=>row.revision===FORECAST_REVISION);
+  const withBoth=current.filter(row=>!!row.provenance?.recent_lane_snapshot_id&&!!row.provenance?.venue_snapshot_id);
   const withRecent=current.filter(row=>!!row.provenance?.recent_lane_snapshot_id);
+  const withVenue=current.filter(row=>!!row.provenance?.venue_snapshot_id);
   const firstStage=(rows,stage)=>rows.filter(row=>row.stage===stage).sort(chronological)[0];
   const latestStage=(rows,stage)=>rows.filter(row=>row.stage===stage).sort(chronological).at(-1);
-  return latestStage(withRecent,'DAY_BEFORE')||latestStage(withRecent,'PRE')
+  return latestStage(withBoth,'DAY_BEFORE')||latestStage(withBoth,'PRE')
+    ||latestStage(withRecent,'DAY_BEFORE')||latestStage(withRecent,'PRE')
+    ||latestStage(withVenue,'DAY_BEFORE')||latestStage(withVenue,'PRE')
     ||firstStage(current,'DAY_BEFORE')||firstStage(current,'PRE')
     ||firstStage(records,'DAY_BEFORE')||firstStage(records,'PRE')||null;
 };
@@ -64,11 +69,14 @@ export async function runV8LiveCapture(client,options={}){
     // First cover today's closing races; then fill all remaining pre-race plans and tomorrow.
     active.sort((a,b)=>Number(a.race_date!==today)-Number(b.race_date!==today)||utcMs(a.deadline)-utcMs(b.deadline));
     const todo=active;
-    const [entryRows,recentLaneRead]=todo.length?await Promise.all([
+    const [entryRows,recentLaneRead,venueRead]=todo.length?await Promise.all([
       readV8Rows(sr.RaceEntry,{race_id:{$in:todo.map(r=>r.id)}},{budget:phaseBudget(25000),maxPages:25}),
-      loadRecentLaneSnapshots(sr,{raceIds:todo.map(r=>r.id),budget:phaseBudget(10000)})
-    ]):[[],{status:'READY',byRaceId:new Map()}];
+      loadRecentLaneSnapshots(sr,{raceIds:todo.map(r=>r.id),budget:phaseBudget(10000)}),
+      loadVenueProfiles(sr,{venueCodes:[...new Set(todo.map(r=>String(r.venue_code).padStart(2,'0')))],budget:phaseBudget(10000)})
+    ]):[[],{status:'READY',byRaceId:new Map()},{status:'READY',byVenueCode:new Map()}];
     summary.recent_lane={read_status:recentLaneRead.status,ready:0,unavailable:0};
+    summary.venue_profiles={read_status:venueRead.status,ready:0,unavailable:0};
+    const venueResults=new Map();
     const entriesByRace=groupBy(entryRows,'race_id');
     for(const race of todo){
       if(summary.created>=MAX_FORECASTS_PER_RUN){summary.partial=true;break;}
@@ -99,12 +107,36 @@ export async function runV8LiveCapture(client,options={}){
       }
       const recentSnapshotId=recentLane.status==='READY'?recentLane.snapshot?.id||null:null;
       summary.recent_lane[recentSnapshotId?'ready':'unavailable']++;
+      const venueCode=String(race.venue_code).padStart(2,'0');
+      if(!venueResults.has(venueCode)){
+        let venueResult={status:venueRead.status,profile:null,snapshot:null,reason:'VENUE_READ_UNAVAILABLE'};
+        if(venueRead.status==='READY'){
+          try{
+            venueResult=await ensureVenueProfile(client,{venueCode,cached:venueRead.byVenueCode.get(venueCode)||[],
+              now:new Date().toISOString(),budget:phaseBudget(6500),allowFetch:true});
+          }catch(error){
+            console.warn('[V8_VENUE] optional source unavailable',String(error?.message||error).slice(0,120));
+            venueResult={status:'READ_FAILED',profile:null,snapshot:null,reason:'VENUE_READ_FAILED'};
+          }
+        }
+        // Every race at one venue shares this source read/acquisition for the run.
+        venueResults.set(venueCode,venueResult);
+        summary.venue_profiles[venueResult.status==='READY'?'ready':'unavailable']++;
+      }
+      const venueResult=venueResults.get(venueCode);
+      const venueProfile=venueResult.status==='READY'?venueResult.profile:null;
+      const venueSnapshotId=venueProfile?.snapshot_id||null;
       if(expired()){stopForBudget();break;}
       const sameRecentSource=record=>!!record?.provenance&&Object.hasOwn(record.provenance,'recent_lane_snapshot_id')
         &&record.provenance.recent_lane_snapshot_id===recentSnapshotId;
       const priorStage=records.filter(row=>row.revision===FORECAST_REVISION&&row.stage===stage).sort(chronological).at(-1);
-      // A temporary source outage cannot append a poorer PRE over a saved rich PRE.
-      if(stage!=='FINAL'&&(sameRecentSource(priorStage)||!recentSnapshotId&&priorStage?.provenance?.recent_lane_snapshot_id)){
+      const sameVenueSource=record=>!!record?.provenance&&Object.hasOwn(record.provenance,'venue_read_snapshot_id')
+        &&record.provenance.venue_read_snapshot_id===venueSnapshotId;
+      // Append a separately saved PRE when a missing source arrives; never replace
+      // a rich PRE with a poorer one during a temporary source outage.
+      const sourceLost=!!priorStage&&(!recentSnapshotId&&!!priorStage.provenance?.recent_lane_snapshot_id
+        ||!venueSnapshotId&&!!priorStage.provenance?.venue_snapshot_id);
+      if(stage!=='FINAL'&&(sameRecentSource(priorStage)&&sameVenueSource(priorStage)||sourceLost)){
         summary.existing++;continue;
       }
       const lastFinal=records.filter(r=>r.stage==='FINAL').sort(chronological).at(-1);
@@ -117,7 +149,7 @@ export async function runV8LiveCapture(client,options={}){
       });
       // Throttle only complete, unchanged forecasts. Exhibition corrections and
       // newly completed inputs must reach the existing source-time/cutoff checks now.
-      if(stage==='FINAL'&&lastFinalComplete&&unchangedInputs&&sameRecentSource(lastFinal)&&Date.now()-lastFinalAt<180000){summary.existing++;continue;}
+      if(stage==='FINAL'&&lastFinalComplete&&unchangedInputs&&sameRecentSource(lastFinal)&&sameVenueSource(lastFinal)&&Date.now()-lastFinalAt<180000){summary.existing++;continue;}
       try{
         const fresh=await sr.Race.get(race.id);
         if(!fresh||fresh.race_key!==race.race_key||['finished','cancelled'].includes(fresh.status)||utcMs(fresh.deadline)<=Date.now()+90000){hold('RACE_CHANGED_OR_CLOSED');continue;}
@@ -150,11 +182,14 @@ export async function runV8LiveCapture(client,options={}){
         }
         racerEvidence.provenance.dataset_read_status=racerDatasetRead.status;
         const output=buildRaceForecast({race:fresh,entries:racerEvidence.entries,stage,now:generatedAt,baseline,odds,weather,
-          originalExhibition:stage==='FINAL'?fresh.original_exhibition:null});
+          originalExhibition:stage==='FINAL'?fresh.original_exhibition:null,venueProfile});
         if(!output.ok){hold(output.reason||'BUILD_HELD');continue;}
         output.record.provenance.racer_term_evidence=racerEvidence.provenance;
         output.record.provenance.recent_lane_snapshot_id=recentSnapshotId;
         output.record.provenance.recent_lane_read_status=recentLane.status;
+        output.record.provenance.venue_snapshot_id=output.record.venue_evidence?.profile?.snapshot_id||null;
+        output.record.provenance.venue_read_snapshot_id=venueSnapshotId;
+        output.record.provenance.venue_read_status=venueResult.status;
         if(racerEvidence.provenance.applied_boats>0){
           output.record.input_as_of=new Date(Math.max(utcMs(output.record.input_as_of),utcMs(racerEvidence.provenance.source.available_at))).toISOString();
         }

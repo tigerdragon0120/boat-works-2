@@ -2,6 +2,7 @@
 import {CUTOFF_MS, evidenceTime, jstDay, validTicket, validateTickets} from './v8ExternalEvidence.js';
 import {eligibleReplayForecast} from './v8Repository.js';
 import {deriveScenarioVerification, SCENARIO_VERIFICATION_REVISION} from './v8ScenarioSettlement.js';
+import {deriveFinalSelectionVerification,validSavedFinalSelection} from './v8FinalSelectionSettlement.js';
 
 export const SETTLEMENT_REVISION = 'V8_SETTLEMENT_2';
 const fail = (reason) => ({ok: false, reason});
@@ -110,6 +111,11 @@ function settle({source, sourceKind, result: resultInput, provenance, now, exclu
   const buySelected = sourceKind === 'FORECAST' && source.stage === 'FINAL' && source.decision?.status === 'BUY';
   const buyTickets = buySelected ? source.decision.tickets : [];
   if (buySelected && !validateTickets(buyTickets)) return fail('INVALID_BUY_TICKETS');
+  if(buySelected&&source.final_selection&&(!validSavedFinalSelection(source.final_selection)
+    ||JSON.stringify(buyTickets)!==JSON.stringify(source.final_selection.tickets)))
+    return fail('BUY_SELECTION_MISMATCH');
+  if(buySelected&&source.revision==='V8_FORECAST_6_FINAL_SELECTION'&&!source.final_selection)
+    return fail('BUY_SELECTION_MISSING');
   const buyHit = buySelected && buyTickets.includes(result.result_trifecta);
   const topScenario = sourceKind !== 'EXTERNAL'
     ? (source.scenarios || []).find((row) => row.key === source.top_scenario_key) : null;
@@ -157,10 +163,12 @@ function settle({source, sourceKind, result: resultInput, provenance, now, exclu
     record.provenance.exclusion_reason='REFUND_OR_CANCELLATION_REQUIRES_REVIEW';
   }
   if(sourceKind !== 'EXTERNAL'){
+    record.final_selection_result=deriveFinalSelectionVerification(source,record);
     record.scenario_verification_revision = SCENARIO_VERIFICATION_REVISION;
     record.scenario_results = deriveScenarioVerification(source, record);
     record.provenance.scenario_result_count = record.scenario_results.length;
     record.provenance.scenario_totals_in_combined_statistics = false;
+    record.provenance.final_selection_totals_in_research_statistics=false;
   }
   return {ok:true,record};
 }

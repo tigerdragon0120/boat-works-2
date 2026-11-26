@@ -248,6 +248,8 @@ function v8Handler(state,load,recent={}) {
   const dependencies={createClientFromRequest:()=>state.client,acquireLock:async()=> 'lock',releaseLock:async()=>{},selectV7RaceEntries,utcMs,
     buildRaceForecast,FORECAST_REVISION,jstDate,readV8Rows:async(entity,query)=>entity.filter(query),groupBy,chronological,canonicalForecasts,
     loadLatestRacerDataset:load,enrichLatestRacerEntries,loadRacerFrameTendencies,emptyFrameTendencies,
+    loadVenueProfiles:async()=>({status:'UNAVAILABLE',byVenueCode:new Map(),rows:[],reason:'VENUE_ENTITY_UNAVAILABLE'}),
+    ensureVenueProfile:async()=>({status:'UNAVAILABLE',profile:null,snapshot:null,reason:'VENUE_ENTITY_UNAVAILABLE'}),
     loadRecentLaneSnapshots:recent.load||(async()=>({status:'READY',byRaceId:new Map(),rows:[]})),
     ensureRecentLaneSnapshot:recent.ensure||(async()=>({status:'MISSING',snapshot:null,rows:[],reason:'SAVED_SNAPSHOT_MISSING'}))};
   return new Function(...Object.keys(dependencies),captureRunnerSource+'\n'+captureSource)(...Object.values(dependencies));

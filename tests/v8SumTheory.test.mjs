@@ -202,7 +202,8 @@ test('V8 replaces its single 15 percent speed component and persists the exact e
     assert.equal(boat.speed_feature,'SUM_BASIC');
   }
   assert.equal(output.research_tickets.length,8);
-  assert.deepEqual(output.decision.tickets,output.research_tickets);
+  assert.deepEqual(output.decision.tickets,output.final_selection.tickets);
+  assert.ok(output.final_selection.tickets.length>=6&&output.final_selection.tickets.length<=12);
   assert.equal(output.decision.status,'WATCH');
   assert.equal(JSON.stringify(input),original);
   // Source corrections feed the saved V8 score/ticket ordering, rather than

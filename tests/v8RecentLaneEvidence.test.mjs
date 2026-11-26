@@ -40,7 +40,7 @@ const baseline=()=>({...pre(),id:'pre',created_date:'2026-11-26T01:00:00.100Z'})
 
 test('published winning points and finish frequencies share one limited group, never an 88 percent win probability',()=>{
   const input=withRecent(),before=structuredClone(input),record=pre(input),row=record.recent_lane_evidence.boats[0];
-  assert.equal(FORECAST_REVISION,'V8_FORECAST_5_RECENT_LANE');
+  assert.equal(FORECAST_REVISION,'V8_FORECAST_6_FINAL_SELECTION');
   assert.equal(row.raw.winning_rate,8.8);assert.equal(row.raw.first_rate,50);
   assert.equal(row.scoring.recent_frequency_score,72);assert.equal(row.scoring.recent_finish_score,75.2);
   assert.equal(row.scoring.blend_weight,.333);
@@ -166,7 +166,7 @@ test('REPLAY never receives current recent history or reuses a live recent basel
 
 test('PRE supplementation changes only the source-identity suffix and ignores calculation time',()=>{
   const noData=pre(entries()),ready=pre(),later=pre(withRecent(),'2026-11-26T01:05:00Z');
-  assert.equal(noData.recent_lane_key,'NO_RECENT');assert.match(noData.forecast_key,/:NO_RECENT$/);
+  assert.equal(noData.recent_lane_key,'NO_RECENT');assert.match(noData.forecast_key,/:NO_RECENT:NO_VENUE$/);
   assert.match(ready.recent_lane_key,/^RECENT_[0-9a-f]{8}$/);assert.notEqual(noData.forecast_key,ready.forecast_key);
   assert.equal(ready.forecast_key,later.forecast_key);assert.equal(ready.provenance.content_fingerprint,later.provenance.content_fingerprint);
   assert.equal(forecastRecentLaneKey(ready),ready.recent_lane_key);

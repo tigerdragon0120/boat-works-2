@@ -53,7 +53,7 @@ test('previous-day forecast uses actual JST observation date and never backfills
   const prior = buildRaceForecast({ race, entries, stage: 'DAY_BEFORE', now: '2026-11-21T10:00:00Z' });
   assert.equal(prior.ok, true);
   assert.equal(prior.record.stage, 'DAY_BEFORE');
-  assert.equal(prior.record.forecast_key, FORECAST_REVISION + ':' + race.race_key + ':DAY_BEFORE:NO_RECENT');
+  assert.equal(prior.record.forecast_key, FORECAST_REVISION + ':' + race.race_key + ':DAY_BEFORE:NO_RECENT:NO_VENUE');
   assert.equal(buildRaceForecast({ race, entries, stage: 'DAY_BEFORE', now: preNow }).reason, 'STAGE_DATE_MISMATCH');
   assert.equal(buildRaceForecast({ race, entries, stage: 'PRE', now: '2026-11-21T10:00:00Z' }).reason, 'STAGE_DATE_MISMATCH');
 });
@@ -140,16 +140,18 @@ test('partial exhibition cannot produce BUY, and duplicate observed courses are 
   const duplicate = buildRaceForecast({ ...args, entries: args.entries.map(entry => ({ ...entry, exhibition_course: 1 })) }).record;
   assert.equal(duplicate.decision.status, 'WAIT');
 });
-test('V8 records its own eight tickets independently of V7 predictions and never invents a BUY', () => {
+test('V8 retains eight research tickets and requires its own final-selection gates independently of V7', () => {
   const args = finalArgs();
   const record = buildRaceForecast({ ...args, prediction: null }).record;
   assert.equal(record.decision.status, 'WATCH');
   assert.equal(record.decision.research_only, true);
-  assert.equal(record.decision.strategy, 'V8_OWN_FORECAST_1');
+  assert.equal(record.decision.strategy, 'V8_RULE_BUY_1');
   assert.equal(record.decision.source_prediction_id, null);
   assert.equal(record.provenance.prediction_id, null);
-  assert.deepEqual(record.decision.tickets, record.research_tickets);
-  assert.equal(record.decision.tickets.length, 8);
+  assert.equal(record.research_tickets.length,8);
+  assert.deepEqual(record.decision.tickets, record.final_selection.tickets);
+  assert.ok(record.decision.tickets.length>=6&&record.decision.tickets.length<=12);
+  assert.equal(record.final_selection.gate_checks.find(row=>row.key==='VENUE').passed,false);
   assert.equal(record.decision.odds_snapshot_id, 'odds-current');
   assert.equal(record.decision.price_checked, true);
   assert.equal(record.decision.valid_until, '2026-11-22T04:44:00.000Z');
@@ -165,7 +167,7 @@ test('V8 records its own eight tickets independently of V7 predictions and never
 test('invalid or missing optional prices never alter the V8 tickets or admit future odds', () => {
   const args = finalArgs(), original = buildRaceForecast(args).record;
   const missingTicket = pricing('partial', '2026-11-22T04:39:00Z');
-  delete missingTicket.odds_map[original.research_tickets[0]];
+  delete missingTicket.odds_map[original.final_selection.tickets[0]];
   const invalidQuotes = [null,
     pricing('stale', '2026-11-22T04:34:59Z'),
     pricing('future', '2026-11-22T04:41:00Z'),
@@ -179,7 +181,7 @@ test('invalid or missing optional prices never alter the V8 tickets or admit fut
     assert.equal(record.decision.price_checked, false);
     assert.deepEqual(record.decision.odds, {});
     assert.deepEqual(record.research_tickets, original.research_tickets);
-    assert.deepEqual(record.decision.tickets, original.research_tickets);
+    assert.deepEqual(record.decision.tickets, original.final_selection.tickets);
     assert.ok(Date.parse(record.input_as_of) <= Date.parse(record.generated_at));
   }
 });
@@ -207,7 +209,7 @@ test('final content identity is deterministic, changes with quotes and preserves
 });
 test('new forecasts persist independent ticket sets for every scenario in both stages', () => {
   for (const record of [buildRaceForecast({race,entries,stage:'PRE',now:preNow}).record,buildRaceForecast(finalArgs()).record]) {
-    assert.equal(record.revision,'V8_FORECAST_5_RECENT_LANE');
+    assert.equal(record.revision,'V8_FORECAST_6_FINAL_SELECTION');
     assert.ok(record.scenarios.length>=6);
     for (const scenario of record.scenarios) {
       assert.equal(scenario.ticket_revision,'V8_SCENARIO_TICKETS_2_RACER_PARAMETERS');
@@ -217,7 +219,8 @@ test('new forecasts persist independent ticket sets for every scenario in both s
       assert.ok(scenario.tickets.every(ticket=>ticket.startsWith(scenario.leader+'-')));
     }
     assert.equal(record.research_tickets.length,8);
-    assert.deepEqual(record.decision.tickets,record.research_tickets);
+    assert.deepEqual(record.decision.tickets,record.final_selection.tickets);
+    assert.ok(record.final_selection.ticket_count>=6&&record.final_selection.ticket_count<=12);
     assert.equal(record.provenance.scenario_ticket_revision,'V8_SCENARIO_TICKETS_2_RACER_PARAMETERS');
   }
 });

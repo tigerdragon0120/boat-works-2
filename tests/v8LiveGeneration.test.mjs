@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {runV8LiveCapture} from '../base44/shared/v8LiveCapture.js';
 import {runV8LiveGeneration} from '../base44/shared/v8LiveGeneration.js';
 import {buildRaceForecast} from '../base44/shared/v8ForecastEngine.js';
+import {parseOfficialVenueProfile} from '../base44/shared/v8VenueProfileSource.js';
+import {makeVenueProfileRecord} from '../base44/shared/v8VenueStore.js';
 
 const NOW=Date.parse('2026-11-22T03:00:00Z');
 const SOURCE='2026-11-22T02:00:00Z';
@@ -19,11 +22,12 @@ const entriesFor=(race,exhibition=false)=>Array.from({length:6},(_,i)=>({
   ...(exhibition?{exhibition_time:i===0?6.65:6.78+i*.01,exhibition_st:.09+i*.02,exhibition_course:i+1}:{}),
 }));
 
-function setup(t,{races=[],entries=[],forecasts=[],results=[],before=()=>{}}={}){
+function setup(t,{races=[],entries=[],forecasts=[],results=[],venues=null,before=()=>{}}={}){
   t.mock.timers.enable({apis:['Date'],now:NOW});
   const tables={Race:structuredClone(races),RaceEntry:structuredClone(entries),V8RaceForecast:structuredClone(forecasts),
     RaceResult:structuredClone(results),ProcessLock:[],RacerStatsSync:[],PredictionV7:[],OddsSnapshot:[],
     V7WeatherObservation:[],V7StageClaim:[],V7GenerationTrace:[],OnlineFetchLog:[]};
+  if(venues!==null)tables.V8VenueProfileSnapshot=structuredClone(venues);
   const calls=[];let serial=0;
   const match=(row,query)=>Object.entries(query||{}).every(([key,value])=>value&&typeof value==='object'
     ? ('$in' in value?value.$in.includes(row[key]):false) : row[key]===value);
@@ -69,9 +73,10 @@ test('V8 FINAL preserves its PRE baseline and never reads or writes V7 predictio
   assert.equal(result.ok,true);assert.equal(result.v8.final,1);
   const v8=state.tables.V8RaceForecast.find(row=>row.stage==='FINAL');
   assert.equal(v8.provenance.prediction_id,null);
-  assert.equal(v8.decision.strategy,'V8_OWN_FORECAST_1');
+  assert.equal(v8.decision.strategy,'V8_RULE_BUY_1');
   assert.equal(v8.decision.status,'WATCH');assert.equal(v8.research_tickets.length,8);
-  assert.deepEqual(v8.decision.tickets,v8.research_tickets);
+  assert.deepEqual(v8.decision.tickets,v8.final_selection.tickets);
+  assert.ok(v8.final_selection.tickets.length>=6&&v8.final_selection.tickets.length<=12);
   assert.equal(v8.comparison.baseline_id,baseline.id);
   assert.deepEqual(state.tables.V8RaceForecast.find(row=>row.id===baseline.id),baseline);
   assert.deepEqual(state.tables.PredictionV7,[old]);
@@ -201,5 +206,52 @@ test('later original timings reach saved V8 forecasts immediately without rewrit
   assert.equal(saved.original_exhibition.source_url,current.original_exhibition.source_url);
   assert.deepEqual(state.tables.V8RaceForecast[0],previous);
   assert.notEqual(saved.forecast_key,previous.forecast_key);
+  assert.equal((await runV8LiveCapture(state.client)).created,0);
+});
+
+async function venueSnapshot(at=SOURCE){
+  const html=fs.readFileSync(new URL('./fixtures/official_venue_20261126_23.html',import.meta.url),'utf8');
+  const parsed=await parseOfficialVenueProfile(html,{venueCode:'23',fetchedAt:at,now:at});
+  assert.equal(parsed.ok,true);
+  const record=await makeVenueProfileRecord(parsed.profile,{now:at});
+  assert.ok(record);
+  return {...record,id:'venue-23-october',created_date:at,updated_date:at};
+}
+const karatsu=(id,number)=>makeRace(id,number,{venue_code:'23',race_key:`2026-11-22_23_${String(number).padStart(2,'0')}`});
+
+test('saved venue evidence is shared across races with one bulk read and no per-race source fetch',async t=>{
+  const a=karatsu('venue-a',1),b=karatsu('venue-b',2),source=await venueSnapshot();
+  const state=setup(t,{races:[a,b],entries:[...entriesFor(a),...entriesFor(b)],venues:[source]});
+  let fetched=0;t.mock.method(globalThis,'fetch',async()=>{fetched++;throw new Error('No source fetch is needed');});
+  const out=await runV8LiveCapture(state.client);
+  assert.equal(out.created,2);assert.equal(out.venue_profiles.ready,1);assert.equal(fetched,0);
+  assert.equal(state.calls.filter(call=>call.name==='V8VenueProfileSnapshot'&&call.method==='filter').length,1);
+  for(const row of state.tables.V8RaceForecast){
+    assert.equal(row.venue_evidence.status,'READY');
+    assert.equal(row.venue_evidence.profile.snapshot_id,source.id);
+    assert.equal(row.provenance.venue_snapshot_id,source.id);
+    assert.equal(row.provenance.venue_read_snapshot_id,source.id);
+    assert.equal(row.venue_evidence.profile.courses['1'].first_rate,59.2);
+  }
+  assert.deepEqual(state.tables.V8VenueProfileSnapshot,[source]);
+});
+
+test('a newly available venue source appends a richer PRE without rewriting the earlier forecast',async t=>{
+  const race=karatsu('venue-arrival',3),state=setup(t,{races:[race],entries:entriesFor(race),venues:[]});
+  t.mock.method(globalThis,'fetch',async()=>new Response('',{status:503}));
+  const initial=await runV8LiveCapture(state.client);
+  assert.equal(initial.pre,1);
+  const original=structuredClone(state.tables.V8RaceForecast[0]);
+  assert.equal(original.venue_evidence.status,'UNAVAILABLE');
+  t.mock.timers.tick(1000);
+  const source=await venueSnapshot(new Date().toISOString());
+  state.tables.V8VenueProfileSnapshot.push(source);
+  const arrived=await runV8LiveCapture(state.client);
+  assert.equal(arrived.pre,1);assert.equal(state.tables.V8RaceForecast.length,2);
+  const richer=state.tables.V8RaceForecast.at(-1);
+  assert.notEqual(richer.forecast_key,original.forecast_key);
+  assert.equal(richer.venue_evidence.profile.snapshot_id,source.id);
+  assert.notEqual(richer.venue_key,original.venue_key);
+  assert.deepEqual(state.tables.V8RaceForecast[0],original);
   assert.equal((await runV8LiveCapture(state.client)).created,0);
 });

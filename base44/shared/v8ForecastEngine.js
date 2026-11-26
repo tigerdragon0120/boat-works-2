@@ -5,7 +5,9 @@ import {buildSumEvidence, selectedSumModel} from './v8SumTheory.js';
 import {buildScenarioTickets, SCENARIO_TICKET_REVISION, SCENARIO_TICKET_BASIS} from './v8ScenarioTickets.js';
 import {buildRacerParameters, parameterBoatFields, racerScenarioEvidence, roleAdjustedBoatScore} from './v8RacerParameters.js';
 import {buildRecentLaneEvidence,recentLaneEvidenceKey,RECENT_LANE_PRIOR_STRENGTH} from './v8RecentLaneEvidence.js';
-export const FORECAST_REVISION = 'V8_FORECAST_5_RECENT_LANE';
+import {buildVenueEvidence,venueEvidenceKey,applyVenueToScenarios,buildFinalTicketSelection,decideFinalSelection,
+  FINAL_SELECTION_REVISION,FINAL_BUY_POLICY_REVISION} from './v8FinalTickets.js';
+export const FORECAST_REVISION = 'V8_FORECAST_6_FINAL_SELECTION';
 export const FINAL_ODDS_MAX_AGE_MS = 5 * 60 * 1000;
 const CUTOFF_MS = 60000;
 const STAGES = ['DAY_BEFORE', 'PRE', 'FINAL'];
@@ -38,8 +40,6 @@ const validCourse = value => {
 };
 export const validForecastTicket = value => typeof value === 'string'
   && /^[1-6]-[1-6]-[1-6]$/.test(value) && new Set(value.split('-')).size === 3;
-const validTickets = (tickets, expected) => Array.isArray(tickets)
-  && tickets.length === expected && new Set(tickets).size === expected && tickets.every(validForecastTicket);
 const registration = entry => {
   const value = first(entry.registration_number, entry.register_number);
   return value == null ? '' : String(value).trim();
@@ -383,41 +383,6 @@ function compare(baseline, boats, scenarios, complete, stage) {
     non_exhibition_inputs_changed:baseChanges.length>0,non_exhibition_changes:baseChanges,
   };
 }
-function decide({ race, stage, now, baseline, comparison, complete, odds, meaningful, tickets }) {
-  const ownTickets = validTickets(tickets, 8) ? [...tickets] : [];
-  const out = {
-    status: 'WAIT', reasons: [], tickets: ownTickets, odds: {}, source_prediction_id: null,
-    source_judgment: null, price_checked: false, valid_until: null, score_type: 'UNCALIBRATED_RESEARCH_SCORE',
-    research_only: true, strategy: 'V8_OWN_FORECAST_1',
-  };
-  if (!meaningful || !ownTickets.length) {
-    out.reasons.push('V8の買い目を作るための評価項目が不足しています'); return out;
-  }
-  if (stage !== 'FINAL') {
-    out.status = 'WATCH';
-    out.reasons.push('V8の事前予想を記録し、展示取得後に買い目の変化を比較します'); return out;
-  }
-  if (!complete) { out.reasons.push('6艇の展示進入・ST・タイムが揃っていません'); return out; }
-  // WATCH denotes a recorded research candidate, never a calibrated purchase signal.
-  // V8's tickets and settlement do not depend on another engine or on available odds.
-  out.status = 'WATCH';
-  out.reasons.push('V8の展示後予想の8点を記録し、確定結果と照合します');
-  if (!baseline) out.reasons.push('事前予想がないため、展示前後の比較は未完了です');
-  else if (comparison.entrant_changed) out.reasons.push('出走選手が変わったため、展示前後の比較を保留しています');
-  const deadline = forecastTime(race.deadline), quoteAt = forecastTime(odds?.captured_at), quoteStored = forecastTime(odds?.created_date);
-  if (!odds?.id || odds.race_id !== race.id || quoteAt == null || quoteAt > now
-    || quoteStored == null || quoteStored > now || quoteStored >= deadline - CUTOFF_MS
-    || quoteAt >= deadline - CUTOFF_MS || now - quoteAt >= FINAL_ODDS_MAX_AGE_MS) return out;
-  const quotes = Object.fromEntries(ownTickets.map(ticket => [ticket, bounded(odds.odds_map?.[ticket], 1, 1000000)]));
-  if (Object.values(quotes).some(value => value == null)) return out;
-  out.odds = quotes;
-  out.odds_snapshot_id = odds.id;
-  out.odds_captured_at = odds.captured_at;
-  out.valid_until = new Date(Math.min(deadline - CUTOFF_MS, quoteAt + FINAL_ODDS_MAX_AGE_MS)).toISOString();
-  out.price_checked = true;
-  out.price_rule = 'RECORDED_REFERENCE_ONLY_NO_BUY_THRESHOLD';
-  return out;
-}
 function conditionsSnapshot(race, weather, stage, now, missing) {
   // This revision records conditions, but no unvalidated wind/tide coefficient is applied.
   if (stage !== 'FINAL') {
@@ -451,7 +416,10 @@ export function forecastRecentLaneKey(input){
   if(Array.isArray(input?.entries))return recentLaneEvidenceKey(buildRecentLaneEvidence(input));
   return recentLaneEvidenceKey(input?.recent_lane_evidence||input);
 }
-function buildForecast({ race, entries = [], stage, now: nowText, baseline = null, odds = null, weather = null, originalExhibition = null }, replay = false) {
+export function forecastVenueKey(input){
+  return input?.race?venueEvidenceKey(buildVenueEvidence(input)):venueEvidenceKey(input);
+}
+function buildForecast({ race, entries = [], stage, now: nowText, baseline = null, odds = null, weather = null, originalExhibition = null,venueProfile=null }, replay = false) {
   const now = forecastTime(nowText), deadline = forecastTime(race?.deadline);
   if (!STAGES.includes(stage)) return { ok: false, reason: 'INVALID_STAGE' };
   if (!race?.id || !/^\d{4}-\d{2}-\d{2}_\d{2}_\d{2}$/.test(race?.race_key || '')
@@ -490,6 +458,7 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     exhibitionComplete:complete,replay});
   const recentEvidence=buildRecentLaneEvidence({race,entries:sorted,stage,now:nowText,baseline:savedBaseline,
     exhibitionComplete:complete,replay});
+  const venueEvidence=buildVenueEvidence({race,venueProfile,stage,now:nowText,baseline:savedBaseline,exhibitionComplete:complete,replay});
   rawBoats=rawBoats.map((boat,index)=>{
     const parameters=racerEvidence.boats[index],selected=complete?boat.observed_course:boat.expected_course;
     const legacyCourse=courseRecord(sorted[index],selected);
@@ -513,7 +482,8 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   const enoughBoats = replay ? active.length >= 3 : active.length === 6;
   sum.evidence.used_for_scoring = stage === 'FINAL' && sum.evidence.status === 'READY' && evaluated.meaningful && enoughBoats;
   if (stage === 'FINAL' && sum.evidence.status !== 'READY') missing.push('SUM_NOT_APPLIED');
-  const scenarios = evaluated.meaningful && enoughBoats ? buildScenarios(evaluated.boats, complete).map(scenario => ({
+  const scenarios = evaluated.meaningful && enoughBoats ? applyVenueToScenarios({scenarios:buildScenarios(evaluated.boats,complete),
+    boats:allEvaluated,venueEvidence,stage,exhibitionComplete:complete}).map(scenario => ({
     ...scenario,
     recent_lane_evidence:(()=>{
       const row=recentEvidence.boats.find(item=>item.boat_number===scenario.leader);
@@ -525,6 +495,14 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     ticket_revision:SCENARIO_TICKET_REVISION, ticket_basis:SCENARIO_TICKET_BASIS,
   })) : [];
   const comparison = compare(savedBaseline, allEvaluated, scenarios, complete, stage);
+  const venueChanged=!!savedBaseline&&(venueEvidence.profile?.snapshot_id??null)!==(savedBaseline.venue_evidence?.profile?.snapshot_id??null);
+  comparison.venue_inputs_changed=venueChanged;
+  comparison.non_exhibition_global_changes=venueChanged?['venue_profile']:[];
+  if(savedBaseline){
+    comparison.checkpoint_results.push({label:'場のコース別根拠',status:venueChanged?'CHANGED':venueEvidence.profile?'SUPPORTED':'UNKNOWN',
+      detail:venueEvidence.change_note||'場の資料の取得待ち'});
+    if(venueChanged){comparison.non_exhibition_inputs_changed=true;comparison.changes.push('展示以外の場の資料も追加・更新されています');}
+  }
   const recentChanged=savedBaseline?recentEvidence.boats.filter(row=>{
     const old=savedBaseline.recent_lane_evidence?.boats?.find(item=>item.boat_number===row.boat_number&&item.registration_number===row.registration_number);
     return (row.snapshot_id??null)!==(old?.snapshot_id??null)||(row.row_hash??null)!==(old?.row_hash??null);
@@ -561,16 +539,15 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
   racerEvidence.non_exhibition_inputs_changed=comparison.non_exhibition_inputs_changed===true;
   racerEvidence.non_exhibition_changes=comparison.non_exhibition_changes||[];
   const researchTickets = candidateTickets(evaluated.boats, scenarios);
-  const decision = replay ? {
-    status: 'REPLAY', reasons: ['取得済み入力から再構成した事後検証用の展開予想'],
-    tickets: [], odds: {}, price_checked: false, valid_until: null, research_only: true,
-    strategy: 'REPLAY_RESEARCH_ONLY', source_prediction_id: null,
-  } : decide({ race, stage, now, baseline: savedBaseline, comparison, complete, odds, meaningful: evaluated.meaningful, tickets: researchTickets });
+  const finalSelection=buildFinalTicketSelection({boats:allEvaluated,scenarios,venueEvidence,stage,exhibitionComplete:complete,replay});
+  const decision=decideFinalSelection({race,stage,now,baseline:savedBaseline,comparison,complete,odds,
+    meaningful:evaluated.meaningful,boats:allEvaluated,selection:finalSelection,replay});
   const conditions = conditionsSnapshot(race, weather, stage, now, missing);
   const maxSourceAt = Math.max(sourceTime(race), ...sorted.map(sourceTime),
     forecastTime(decision.odds_captured_at) || 0,
     forecastTime(conditions.observed_at) || 0,
     forecastTime(sum.evidence.input_as_of) || 0,
+    forecastTime(venueEvidence.profile?.available_at)||0,
     ...recentEvidence.boats.map(row=>forecastTime(row.available_at)||0),
     ...racerEvidence.boats.flatMap(row=>[forecastTime(row.profile?.source?.available_at)||0,
       forecastTime(row.frame_tendencies?.latest_source_at||row.frame_tendencies?.as_of)||0]));
@@ -585,11 +562,13 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     odds_id: stage === 'FINAL' ? decision.odds_snapshot_id || null : null,
     odds: decision.odds, decision, conditions, sum_evidence: sum.evidence, original_exhibition: sum.original_exhibition,
     racer_evidence:racerHashEvidence,
+    venue_evidence:venueEvidence,final_selection:finalSelection,
     recent_lane_evidence:Object.fromEntries(Object.entries(recentEvidence).filter(([key])=>key!=='as_of')),
     scenario_tickets:scenarios.map(scenario => ({key:scenario.key,tickets:scenario.tickets,revision:scenario.ticket_revision})) });
   const recentKey=recentLaneEvidenceKey(recentEvidence);
+  const venueKey=venueEvidenceKey(venueEvidence);
   return { ok: true, record: {
-    forecast_key: FORECAST_REVISION + ':' + race.race_key + ':' + stage + ':' + (stage === 'FINAL' ? contentHash : recentKey),
+    forecast_key: FORECAST_REVISION + ':' + race.race_key + ':' + stage + ':' + (stage === 'FINAL' ? contentHash : recentKey+':'+venueKey),
     revision: FORECAST_REVISION, race_id: race.id, race_key: race.race_key, race_date: race.race_date,
     venue_code: String(race.venue_code).padStart(2, '0'), venue_name: race.venue_name || '',
     race_number: Number(race.race_number), deadline: race.deadline, stage, generated_at: new Date(now).toISOString(),
@@ -601,12 +580,13 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
     sum_evidence: sum.evidence, original_exhibition: sum.original_exhibition,
     racer_evidence:racerEvidence,
     recent_lane_evidence:recentEvidence,recent_lane_key:recentKey,
+    venue_evidence:venueEvidence,venue_key:venueKey,final_selection:finalSelection,
     score_type: 'UNCALIBRATED_RESEARCH_SCORE', model_label: '展開仮説 V8',
     gender_model: race.is_womens === true ? 'WOMENS' : race.is_womens === false ? 'OPEN' : 'UNKNOWN',
     provenance: {
       source: 'Race_RaceEntry_OddsSnapshot', input_revision: FORECAST_REVISION,
       entry_ids: sorted.map(entry => entry.id), race_updated_at: race.updated_date || race.created_date,
-      baseline_id: priorIdentity, prediction_id: null, decision_revision: 'V8_OWN_FORECAST_1',
+      baseline_id: priorIdentity, prediction_id: null, decision_revision:FINAL_BUY_POLICY_REVISION,
       odds_snapshot_id: stage === 'FINAL' ? decision.odds_snapshot_id || null : null,
       source_times_checked: true, future_inputs_excluded: true,
       exhibition_used: stage === 'FINAL', odds_used: stage === 'FINAL' && decision.price_checked,
@@ -617,6 +597,8 @@ function buildForecast({ race, entries = [], stage, now: nowText, baseline = nul
       scenario_ticket_revision:SCENARIO_TICKET_REVISION,
       racer_parameters_revision:racerEvidence.revision,racer_parameters_used:evaluated.racer_parameters_used,
       recent_lane_revision:recentEvidence.revision,recent_lane_used:recentEvidence.boats.some(row=>row.scoring.used),
+      venue_revision:venueEvidence.revision,venue_snapshot_id:venueEvidence.profile?.snapshot_id||null,venue_used:venueEvidence.used,
+      final_selection_revision:FINAL_SELECTION_REVISION,
       taro_official_strategy_reproduced: false,
       research_only: true, content_fingerprint: contentHash,
       fingerprint_kind: 'FNV1A_CHANGE_DETECTION_NOT_SIGNATURE',

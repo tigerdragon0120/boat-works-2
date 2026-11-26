@@ -3,6 +3,10 @@
   "type": "object",
   "description": "\u5168\u30ec\u30fc\u30b9\u306e\u6bb5\u968e\u5225\u4e88\u60f3\u3092\u516c\u5f0f\u7d50\u679c\u3068\u7167\u5408\u3002\u7de0\u5207\u524d\u306eLIVE\u5b9f\u7e3e\u3068\u4e8b\u5f8c\u518d\u69cb\u6210REPLAY\u306e\u7814\u7a76\u6210\u7e3e\u3092\u533a\u5225\u3057\u3066\u84c4\u7a4d\u3059\u308b\u3002",
   "properties": {
+    "final_selection_result": {
+      "type": "object",
+      "description": "保存時点の最終選抜6〜12点を各100円で独立照合した記録。順位・点数・的中・検証額・払戻を固定し、総合研究8点やBUY限定成績へ重複合算しない。"
+    },
     "race_id": {
       "type": "string"
     },

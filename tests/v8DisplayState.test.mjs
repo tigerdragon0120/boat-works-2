@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import * as study from '../src/components/liveV8/v8StudyView.js';
+import {finalSelectionStats} from '../src/components/liveV8/v8FinalTicketsView.js';
 const root=new URL('../',import.meta.url);
 const source=readFileSync(new URL('src/components/liveV8/v8Client.js',root),'utf8');
 const client=new Function('isReplay',source.replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'')+'\nreturn {displayForecastStatus,displayDecision,latestRows,timeMs};')(study.isReplay);
@@ -54,7 +55,7 @@ test('post-deadline REPLAY stays separate and keeps identity and timing guards',
 test('V8 verification separates stages and modes, tracks pending and refunds, and ignores legacy BUY returns',()=>{
   const verificationSource=readFileSync(new URL('src/components/liveV8/V8Verification.jsx',root),'utf8');
   const summaryBody=verificationSource.split('const summary=useMemo(()=>{')[1].split('},[data,venue]);')[0];
-  const helpers={...study,...client,stats:study.studyStats,settlementIndex:(rows,field)=>new Map(rows.filter(row=>row.status==='SETTLED'&&row[field]).map(row=>[row[field],row]))};
+  const helpers={...study,...client,finalSelectionStats,stats:study.studyStats,settlementIndex:(rows,field)=>new Map(rows.filter(row=>row.status==='SETTLED'&&row[field]).map(row=>[row[field],row]))};
   const summarize=new Function('data','venue',...Object.keys(helpers),summaryBody);
   const forecast=(id,stage,extra={})=>({...final,id,stage,...extra});
   const day=forecast('day','DAY_BEFORE',{generated_at:'2026-11-23T13:59:00Z'});
