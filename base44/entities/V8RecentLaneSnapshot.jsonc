@@ -1,7 +1,7 @@
 {
   "name": "V8RecentLaneSnapshot",
   "type": "object",
-  "description": "BOATCASTの枠番過去10走をレース・選手対応と取得時刻付きで共有保存する。READYは固定し、予想は採用した内容を別途不変保存する。",
+  "description": "BOATCASTの枠番過去10走をレース・選手対応と取得時刻付きで共有保存する。取得内容と予想は固定する。誤読が判明した原本はSUPERSEDEDとして残し、修正データを別IDで追加する。",
   "properties": {
     "revision": {
       "type": "string"
@@ -41,8 +41,15 @@
       "type": "string",
       "enum": [
         "READY",
-        "FAILED"
+        "FAILED",
+        "SUPERSEDED"
       ]
+    },
+    "superseded_at": {
+      "type": "string"
+    },
+    "superseded_reason": {
+      "type": "string"
     },
     "source_url": {
       "type": "string"

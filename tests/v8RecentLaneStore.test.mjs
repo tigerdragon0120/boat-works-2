@@ -96,6 +96,57 @@ test('actual saved entry names with branch/birthplace suffixes match all six WAK
   assert.equal(normalizeRecentLaneName('香川颯太'),'香川颯太');
 });
 
+test('actual Mikuni race 3 engine-failure token stays in known starts and preserves the published 5.67',async()=>{
+  const text=fs.readFileSync(new URL('./fixtures/boatcast_waku10_20261126_10_03.txt',import.meta.url),'utf8');
+  const parsed=parseBoatcastWaku10(text);assert.equal(parsed.ok,true);assert.equal(parsed.racers.length,6);
+  const row=parsed.racers[1];
+  assert.equal(row.normalized_source_name,'安田政彦');assert.equal(row.winning_rate,5.67);
+  assert.equal(row.history.length,10);assert.equal(row.sample_size,10);assert.equal(row.normal_sample_size,9);
+  assert.equal(row.special_count,1);assert.equal(row.absent_count,0);
+  assert.equal(row.history[8].finish_order,null);assert.equal(row.history[8].finish_status,'エ');
+  assert.equal(row.first_rate,20);assert.equal(row.top2_rate,30);assert.equal(row.top3_rate,50);
+  assert.equal(classifyRecentLaneFinish('エ').kind,'SPECIAL');
+  assert.equal(classifyRecentLaneFinish('?').kind,'UNKNOWN');
+  const targetRace={...race,id:'mikuni-r3',race_key:'2026-11-26_10_03',venue_code:'10',race_number:3};
+  const targetEntries=entries().map((entry,index)=>({...entry,race_id:targetRace.id,player_name:parsed.racers[index].source_name}));
+  const now=new Date().toISOString();
+  const normalized=await normalizeRecentLaneSource({text,metadata:{...metadata(now),source_url:recentLaneSourceUrl(targetRace),venue_code:'10',race_number:3},race:targetRace,entries:targetEntries,now});
+  assert.equal(normalized.ok,true);assert.equal(normalized.racers[1].winning_rate,5.67);
+});
+
+test('actual Tokuyama and Tokoname fixtures retain L, エ and absence without replacing published averages',()=>{
+  const tokuyama=parseBoatcastWaku10(fs.readFileSync(new URL('./fixtures/boatcast_waku10_20261126_18_05.txt',import.meta.url),'utf8'));
+  const tokoname=parseBoatcastWaku10(fs.readFileSync(new URL('./fixtures/boatcast_waku10_20261126_08_05.txt',import.meta.url),'utf8'));
+  assert.equal(tokuyama.ok,true);assert.equal(tokoname.ok,true);
+  assert.equal(tokuyama.racers.length,6);assert.equal(tokoname.racers.length,6);
+  const minami=tokuyama.racers[0],takada=tokoname.racers[4],hosokawa=tokoname.racers[1];
+  assert.equal(minami.normalized_source_name,'南佑典');assert.equal(minami.winning_rate,9);
+  assert.equal(minami.sample_size,10);assert.equal(minami.normal_sample_size,8);assert.equal(minami.special_count,2);
+  assert.equal(minami.history[0].finish_status,'L');assert.equal(minami.history[5].finish_status,'エ');
+  assert.equal(takada.normalized_source_name,'高田ひかる');assert.equal(takada.winning_rate,5.2);
+  assert.equal(takada.sample_size,10);assert.equal(takada.normal_sample_size,9);assert.equal(takada.history[8].finish_status,'エ');
+  assert.equal(hosokawa.normalized_source_name,'細川裕子');assert.equal(hosokawa.winning_rate,7.5);
+  assert.equal(hosokawa.history.length,10);assert.equal(hosokawa.sample_size,9);assert.equal(hosokawa.normal_sample_size,9);
+  assert.equal(hosokawa.absent_count,1);assert.equal(hosokawa.history[9].finish_status,'欠');
+});
+
+test('published 10.20 survives source parsing, durable storage and validation without clipping',async()=>{
+  // Official Omura 2026-11-21 11R publishes 10.20 for ten first-place finishes.
+  // https://www.omurakyotei.jp/yosou/syussou.php?day=20261121&race=11
+  const text=sourceText({finishes:Array(10).fill('1'),overrides:{'0:1':'10.20','1:1':'13.00','2:1':'13.01'}});
+  const parsed=parseBoatcastWaku10(text);assert.equal(parsed.ok,true);
+  assert.equal(parsed.racers[0].winning_rate,10.2);assert.equal(parsed.racers[0].first_rate,100);
+  assert.equal(parsed.racers[1].winning_rate,13);assert.equal(parsed.racers[2].winning_rate,null);
+  const p=platform();
+  await withFetch(async()=>responseText(text),async()=>{
+    const saved=await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:[],allowFetch:true});
+    assert.equal(saved.status,'READY');assert.equal(saved.rows[0].winning_rate,10.2);assert.equal(saved.rows[1].winning_rate,13);
+    const reused=await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:p.rows,allowFetch:false});
+    assert.equal(reused.status,'READY');assert.equal(reused.rows[0].winning_rate,10.2);
+    assert.equal(p.rows[0].parser_revision,'BOATCAST_WAKU10_PARSER_1');
+  });
+});
+
 test('blank values stay null, actual zero is retained, and empty history is not ten observations',()=>{
   const parsed=parseBoatcastWaku10(sourceText({finishes:[],overrides:{'0:1':'','0:2':'','0:3':'','1:1':'0','1:2':'0','1:3':'0'}}));
   assert.equal(parsed.ok,true);const [empty,zero]=parsed.racers;
@@ -214,6 +265,42 @@ test('cross-isolate duplicate creation is held and cannot trigger endless additi
     assert.equal((await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:[],allowFetch:true})).status,'CONFLICT');
     assert.equal((await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:p.rows,allowFetch:true})).status,'CONFLICT');
     assert.equal(fetches,1);assert.equal(p.rows.length,2);assert.equal(p.calls.creates,1);
+  });
+});
+
+test('one active snapshot plus retired records is reusable, while two active records still conflict',async()=>{
+  const p=platform();
+  await withFetch(async()=>responseText(sourceText()),async()=>{
+    const result=await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:[],allowFetch:true});
+    assert.equal(result.status,'READY');
+  });
+  const active=structuredClone(p.rows[0]),retired={...structuredClone(active),id:'retired',status:'SUPERSEDED',
+    superseded_at:new Date().toISOString(),superseded_reason:'PUBLISHED_RATE_REPARSE'};
+  await withFetch(async()=>{throw new Error('must not fetch');},async()=>{
+    const reusable=await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:[retired,active],allowFetch:true});
+    assert.equal(reusable.status,'READY');assert.equal(reusable.snapshot.id,active.id);
+    const duplicate={...structuredClone(active),id:'active-duplicate'};
+    assert.equal((await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:[retired,active,duplicate],allowFetch:true})).status,'CONFLICT');
+    assert.equal(p.calls.creates,1);assert.equal(p.calls.updates,0);
+  });
+});
+
+test('retired-only cache can append a new READY observation without modifying the retired payload',async()=>{
+  const p=platform();
+  await withFetch(async()=>responseText(sourceText()),async()=>{
+    assert.equal((await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:[],allowFetch:true})).status,'READY');
+  });
+  // Administrative retirement is supplied by the caller; the normal API has no retirement operation.
+  p.rows[0].status='SUPERSEDED';p.rows[0].superseded_at=new Date().toISOString();p.rows[0].superseded_reason='PUBLISHED_RATE_REPARSE';
+  const before=structuredClone(p.rows[0]);let fetches=0;
+  await withFetch(async()=>{fetches++;return responseText(sourceText({overrides:{'0:1':'10.20'}}));},async()=>{
+    assert.equal((await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:p.rows,allowFetch:false})).status,'MISSING');
+    const replacement=await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:p.rows,allowFetch:true});
+    assert.equal(replacement.status,'READY');assert.equal(replacement.rows[0].winning_rate,10.2);
+    assert.equal(replacement.snapshot.snapshot_key,before.snapshot_key);assert.notEqual(replacement.snapshot.id,before.id);
+    assert.equal(p.rows.length,2);assert.deepEqual(p.rows[0],before);assert.equal(p.calls.updates,0);assert.equal(fetches,1);
+    const reused=await ensureRecentLaneSnapshot(p.client,{race,entries:entries(),cached:p.rows,allowFetch:false});
+    assert.equal(reused.status,'READY');assert.equal(reused.snapshot.id,replacement.snapshot.id);
   });
 });
 

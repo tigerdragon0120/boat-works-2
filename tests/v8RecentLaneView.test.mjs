@@ -33,6 +33,24 @@ test('BOATCAST missing numbers stay missing while genuine zero survives', () => 
   assert.equal(view.winning_rate, 0); assert.equal(recentLaneNumber(view.winning_rate), '0.00');
 });
 
+test('published winning points above ten remain unchanged and distinct from first-place percentages', () => {
+  const row = snapshot(); row.winning_rate = 10.20; row.first_rate = 50;
+  const view = recentLaneSnapshotView(row, {race, entry: entries[0]});
+  assert.equal(view.winning_rate, 10.20);
+  assert.equal(recentLaneNumber(view.winning_rate), '10.20');
+  assert.equal(view.first_rate, 50);
+  const saved = forecast();
+  saved.recent_lane_evidence.boats[0].snapshot.winning_rate = 10.20;
+  Object.assign(saved.recent_lane_evidence.boats[0].scoring, {base_before: 99, base_after: 100, delta: 1});
+  const evidence = recentLaneEvidenceView(saved, 1).leader;
+  assert.equal(evidence.winning_rate, 10.20);
+  assert.equal(evidence.scoring.base_after, 100);
+  row.winning_rate = 13;
+  assert.equal(recentLaneSnapshotView(row, {race, entry: entries[0]}).winning_rate, 13);
+  row.winning_rate = 13.01;
+  assert.equal(recentLaneSnapshotView(row, {race, entry: entries[0]}).winning_rate, null);
+});
+
 test('live table rejects the wrong racer, race, duplicate lane and unverified identity', () => {
   for (const change of [row => row.registration_number = '9999', row => row.race_id = 'old',
     row => row.identity_status = 'UNVERIFIED']) {

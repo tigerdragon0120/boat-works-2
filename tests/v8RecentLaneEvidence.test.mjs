@@ -69,6 +69,19 @@ test('one missing recent history and one missing long-term profile do not discar
   assert.ok(Number.isFinite(record.boats[5].base_score));
 });
 
+test('official winning points above ten remain stored while their comparison-score contribution is capped',()=>{
+  const input=withRecent();input[0].v8_recent_lane.winning_rate=10.2;
+  input[1].v8_recent_lane=snapshot(input[1],{finishes:Array(10).fill(1),winning_rate:13});
+  const out=pre(input),a=out.recent_lane_evidence.boats[0],b=out.recent_lane_evidence.boats[1];
+  assert.equal(a.snapshot.winning_rate,10.2);assert.equal(a.raw.winning_rate,10.2);
+  assert.equal(a.scoring.recent_winning_rate,10.2);assert.equal(a.scoring.recent_frequency_score,72);
+  assert.equal(a.scoring.recent_finish_score,77.6);assert.equal(a.scoring.winning_rate_used,true);
+  assert.equal(b.raw.winning_rate,13);assert.equal(b.scoring.recent_finish_score,100);
+  assert.ok(out.boats.every(row=>row.base_score>=0&&row.base_score<=100));
+  const invalid=structuredClone(input[0].v8_recent_lane);invalid.winning_rate=13.01;
+  assert.equal(validatedRecentLaneSnapshot(invalid,{race,entry:input[0],asOf:preNow}).winning_rate,null);
+});
+
 test('partial ST and ST-rank availability only falls back for the affected racer and metric',()=>{
   const input=withRecent();input[0].v8_recent_lane.avg_start_order=null;input[1].v8_recent_lane.avg_st=null;
   const record=pre(input),a=record.recent_lane_evidence.boats[0],b=record.recent_lane_evidence.boats[1],c=record.recent_lane_evidence.boats[2];

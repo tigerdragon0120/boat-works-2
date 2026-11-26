@@ -78,7 +78,7 @@ export function recentLaneSnapshotView(snapshot, {race, entry} = {}) {
     snapshot_id: snapshot.snapshot_id, row_hash: snapshot.row_hash, fetched_at: snapshot.fetched_at,
     available_at: snapshot.available_at, source_url: snapshot.source_url, source_name: snapshot.source_name,
     sample_size: sample, normal_sample_size: normal, special_count: count(snapshot.special_count), absent_count: count(snapshot.absent_count),
-    winning_rate: sample > 0 ? bounded(snapshot.winning_rate, 0, 10) : null,
+    winning_rate: sample > 0 ? bounded(snapshot.winning_rate, 0, 13) : null,
     avg_st: sample > 0 ? bounded(snapshot.avg_st, 0, 1) : null,
     avg_start_order: sample > 0 ? bounded(snapshot.avg_start_order, 1, 6) : null,
     first_rate: sample > 0 ? bounded(snapshot.first_rate, 0, 100) : null,

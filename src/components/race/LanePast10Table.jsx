@@ -205,7 +205,7 @@ export default function LanePast10Table({ entries, race, v8Forecasts = null }) {
       {current.error && <p role="status" className="px-3 py-2 text-[11px] leading-5 text-amber-200">{current.error}</p>}
       <div className="space-y-1 px-3 py-2 text-[10px] leading-5 text-slate-400">
         <p><span className="font-semibold text-blue-300">BOATCAST {view.available}/{view.total}艇</span>{view.available > 0 && <> · 取得 {recentLaneTime(current.data?.metadata?.fetched_at || view.rows.find(row => row.available)?.fetched_at)}</>}</p>
-        <p>勝率は0〜10の着順点の平均です。1着率（%）とは異なります。平均STは秒、ST順は順位です。</p>
+        <p>勝率は掲載元が集計した着順点の平均です。1着率（%）とは異なります。平均STは秒、ST順は順位です。</p>
         {v8Forecasts && <p>「反映」は保存したV8予想と同じ取得記録・内容を使い、計算に適用した艇だけに表示します。</p>}
       </div>
     </div>

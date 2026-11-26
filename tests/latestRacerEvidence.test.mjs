@@ -319,6 +319,9 @@ test('V8 appends a source-enriched PRE once and retains the original immutable f
   assert.equal(enriched.recent_lane_evidence.boats[0].scoring.used,true);
   const third=await (await handle(request())).json();assert.equal(third.created,0);
   assert.equal(state.table.V8RaceForecast.length,2);
+  observation={status:'READ_FAILED',snapshot:null,rows:[],reason:'SNAPSHOT_READ_FAILED'};
+  const outage=await (await handle(request())).json();assert.equal(outage.created,0);
+  assert.equal(state.table.V8RaceForecast.length,2);assert.deepEqual(state.table.V8RaceForecast[1],enriched);
 });
 
 test('a shared-source read failure does not fan out source requests and still saves a missing-source forecast',async t=>{

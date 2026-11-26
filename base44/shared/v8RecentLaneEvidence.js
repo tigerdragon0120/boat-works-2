@@ -1,6 +1,6 @@
 // Frozen BOATCAST same-frame history. These scores are comparison rules,
 // not win probabilities, and overlapping histories are never pooled as samples.
-import {normalizeRecentLaneName,summarizeRecentLaneHistory,recentLaneSourceUrl} from './v8RecentLaneSource.js';
+import {normalizeRecentLaneName,summarizeRecentLaneHistory,recentLaneSourceUrl,RECENT_LANE_MAX_WINNING_RATE} from './v8RecentLaneSource.js';
 
 export const RECENT_LANE_EVIDENCE_REVISION='V8_RECENT_LANE_EVIDENCE_1';
 export const RECENT_LANE_REVISION='V8_RECENT_LANE_1';
@@ -51,7 +51,9 @@ export function validatedRecentLaneSnapshot(value,{race,entry,asOf}={}){
     boat_number:number,registration_number:reg,source_name:String(value.source_name),identity_status:value.identity_status,
     snapshot_id:String(value.snapshot_id),snapshot_key:String(value.snapshot_key),row_hash:String(value.row_hash),
     source_url:String(value.source_url),fetched_at:value.fetched_at,available_at:value.available_at,
-    winning_rate:bound(value.winning_rate,0,10),avg_st:bound(value.avg_st,0,1),avg_start_order:bound(value.avg_start_order,1,6),
+    // Official winning points may include SG (+2) and final-race (+1) bonuses:
+    // https://www.boatrace.jp/owpc/pc/extra/enjoy/guide/jiten/17/y_164.html
+    winning_rate:bound(value.winning_rate,0,RECENT_LANE_MAX_WINNING_RATE),avg_st:bound(value.avg_st,0,1),avg_start_order:bound(value.avg_start_order,1,6),
     sample_size:summary.sample_size,normal_sample_size:summary.normal_sample_size,special_count:summary.special_count,
     absent_count:summary.absent_count,...Object.fromEntries(rateKeys.map(key=>[key,summary[key]??null])),
     denominator_rule:'KNOWN_STARTS_EXCLUDING_ABSENT',history};
@@ -87,7 +89,9 @@ export function buildRecentLaneEvidence({race,entries=[],stage,now,baseline=null
     const n=summary?.ok?summary.sample_size:0;
     const frequency=n?summary.first_rate*.5+summary.top2_rate*.3+summary.top3_rate*.2:null;
     const points=summary?.normal_sample_size>0?(sameFrame?snapshot?.winning_rate:summary?.winning_rate):null;
-    const finish=finite(frequency)?finite(points)?frequency*.8+points*10*.2:frequency:null;
+    // Preserve published points (up to 13); only their comparison-score
+    // contribution is bounded to 100, never interpreted as a probability.
+    const finish=finite(frequency)?finite(points)?frequency*.8+Math.min(100,points*10)*.2:frequency:null;
     const startAllowed=!!snapshot&&snapshot.sample_size>0&&sameFrame;
     const reason=replay?'REPLAY_CURRENT_SOURCE_EXCLUDED':!snapshot?entry.v8_recent_lane?'SOURCE_INVALID':'SOURCE_NOT_AVAILABLE'
       :!snapshot.sample_size?'NO_KNOWN_STARTS':!n?'NO_MATCHING_COURSE_STARTS':'READY';

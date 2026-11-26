@@ -1,0 +1,8 @@
+data=
+1	0
+上原　　　崚	8.40	0.13	2.7	４		G3	５		IP	１		IP	１		IP	１		IP	１		IP	１		IP	１		IP	１		IP	２		IP
+安田　　政彦	5.67	0.19	3.8	６		G3	１		IP	２		IP	３		IP	５		IP	４		IP	３		IP	１		IP	エ		IP	４		IP
+金山　　立樹	5.30	0.16	2.9	１		G3	５		IP	２	4	IP	３		IP	４		IP	２		IP	３		IP	３		IP	５		IP	６	4	IP
+川崎　　誠志	3.00	0.21	4.2	５	5	G3	６		IP	３		IP	５		IP	４		IP	５		IP	５	5	IP	３		IP	６		IP	４		IP
+片橋　　幸貴	4.80	0.11	1.8	３		G3	４		G3	４		IP	３		IP	１		IP	４		IP	６		IP	３		IP	６		G1	４		G1
+鶴田　　勇雄	3.20	0.20	4.2	５		G3	３		IP	３		IP	４		IP	５		IP	５		IP	４		IP	６		IP	６		IP	４		IP

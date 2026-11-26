@@ -10,6 +10,8 @@ import {loadRacerFrameTendencies,emptyFrameTendencies} from './v8RacerTendencies
 import {loadRecentLaneSnapshots,ensureRecentLaneSnapshot} from './v8RecentLaneStore.js';
 
 const hasExhibition=(entries)=>entries.some(e=>['exhibition_time','exhibition_st','exhibition_course'].some(k=>e[k]!=null&&e[k]!==''));
+// Leave room in the shared service-token read quota for exhibition and result collectors.
+const MAX_FORECASTS_PER_RUN=24;
 export const selectCaptureBaseline=records=>{
   const current=records.filter(row=>row.revision===FORECAST_REVISION);
   const withRecent=current.filter(row=>!!row.provenance?.recent_lane_snapshot_id);
@@ -69,7 +71,7 @@ export async function runV8LiveCapture(client,options={}){
     summary.recent_lane={read_status:recentLaneRead.status,ready:0,unavailable:0};
     const entriesByRace=groupBy(entryRows,'race_id');
     for(const race of todo){
-      if(summary.created>=48){summary.partial=true;break;}
+      if(summary.created>=MAX_FORECASTS_PER_RUN){summary.partial=true;break;}
       if(expired()){stopForBudget();break;}
       if(utcMs(race.deadline)<=Date.now()+90000){hold('CUTOFF');continue;}
       const selected=selectV7RaceEntries(entriesByRace.get(race.id)||[],race);
@@ -101,7 +103,10 @@ export async function runV8LiveCapture(client,options={}){
       const sameRecentSource=record=>!!record?.provenance&&Object.hasOwn(record.provenance,'recent_lane_snapshot_id')
         &&record.provenance.recent_lane_snapshot_id===recentSnapshotId;
       const priorStage=records.filter(row=>row.revision===FORECAST_REVISION&&row.stage===stage).sort(chronological).at(-1);
-      if(stage!=='FINAL'&&sameRecentSource(priorStage)){summary.existing++;continue;}
+      // A temporary source outage cannot append a poorer PRE over a saved rich PRE.
+      if(stage!=='FINAL'&&(sameRecentSource(priorStage)||!recentSnapshotId&&priorStage?.provenance?.recent_lane_snapshot_id)){
+        summary.existing++;continue;
+      }
       const lastFinal=records.filter(r=>r.stage==='FINAL').sort(chronological).at(-1);
       const lastFinalAt=utcMs(lastFinal?.generated_at);
       const lastFinalComplete=lastFinal?.revision===FORECAST_REVISION&&lastFinal?.quality==='CAPTURED'&&lastFinal.exhibition_complete===true
@@ -169,7 +174,14 @@ export async function runV8LiveCapture(client,options={}){
         else {const reason=racerEvidence.provenance.reason||'NOT_APPLIED';summary.racer_term.skipped[reason]=(summary.racer_term.skipped[reason]||0)+1;}
         if(record.decision?.status==='BUY')summary.buys++;
         if(utcMs(record.created_date)==null||utcMs(record.created_date)>=utcMs(record.deadline)-60000)hold('PERSISTED_TOO_LATE_EXCLUDED');
-      }catch(error){if(expired()){stopForBudget();break;}summary.errors++;console.error('[V8_CAPTURE]',race.race_key,String(error?.message||error).slice(0,150));}
+      }catch(error){
+        if(expired()){stopForBudget();break;}
+        const status=error?.http_status??error?.response?.status??error?.status;
+        if(Number(status)===429||/rate limit exceeded/i.test(String(error?.message||error))){
+          summary.partial=true;summary.reasons.RATE_LIMIT_BACKOFF=(summary.reasons.RATE_LIMIT_BACKOFF||0)+1;break;
+        }
+        summary.errors++;console.error('[V8_CAPTURE]',race.race_key,String(error?.message||error).slice(0,150));
+      }
     }
     return finish();
   }catch(error){if(expired()){stopForBudget();return finish();}console.error('[V8_CAPTURE] fatal',String(error?.message||error).slice(0,160));return {...finish(),ok:false,error:'FORECAST_READ_OR_SAVE_FAILED',details:String(error?.message||error).slice(0,120)};}

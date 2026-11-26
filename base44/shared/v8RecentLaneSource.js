@@ -7,6 +7,10 @@ export const RECENT_LANE_REVISION='V8_RECENT_LANE_1';
 export const RECENT_LANE_PARSER_REVISION='BOATCAST_WAKU10_PARSER_1';
 export const RECENT_LANE_SOURCE='BOATCAST_WAKU10';
 export const RECENT_LANE_DENOMINATOR='KNOWN_STARTS_EXCLUDING_ABSENT';
+// Official finish points: ordinary first 10 + SG 2 + championship first 1 = 13.
+// https://www.boatrace.jp/owpc/pc/extra/enjoy/guide/jiten/17/y_164.html
+// Published WAKU10 averages can exceed 10; retain the source value without clipping.
+export const RECENT_LANE_MAX_WINNING_RATE=13;
 const PREFECTURES='北海道|青森(?:県)?|岩手(?:県)?|宮城(?:県)?|秋田(?:県)?|山形(?:県)?|福島(?:県)?|茨城(?:県)?|栃木(?:県)?|群馬(?:県)?|埼玉(?:県)?|千葉(?:県)?|東京(?:都)?|神奈川(?:県)?|新潟(?:県)?|富山(?:県)?|石川(?:県)?|福井(?:県)?|山梨(?:県)?|長野(?:県)?|岐阜(?:県)?|静岡(?:県)?|愛知(?:県)?|三重(?:県)?|滋賀(?:県)?|京都(?:府)?|大阪(?:府)?|兵庫(?:県)?|奈良(?:県)?|和歌山(?:県)?|鳥取(?:県)?|島根(?:県)?|岡山(?:県)?|広島(?:県)?|山口(?:県)?|徳島(?:県)?|香川(?:県)?|愛媛(?:県)?|高知(?:県)?|福岡(?:県)?|佐賀(?:県)?|長崎(?:県)?|熊本(?:県)?|大分(?:県)?|宮崎(?:県)?|鹿児島(?:県)?|沖縄(?:県)?';
 const pairedPrefectureSuffix=new RegExp('(?:[・/／:：])?[（(【\\[]?(?:'+PREFECTURES+')[／/](?:'+PREFECTURES+')[）)】\\]]?$');
 const prefectureSuffix=new RegExp('(?:[・/／:：])?[（(【\\[]?(?:'+PREFECTURES+')[）)】\\]]?$');
@@ -16,7 +20,7 @@ const lane=value=>Number.isInteger(Number(value))&&Number(value)>=1&&Number(valu
 const fail=reason=>({ok:false,reason});
 const points={1:10,2:8,3:6,4:4,5:2,6:1};
 const ABSENT=new Set(['欠','欠場','K','K0','K1']);
-const SPECIAL=new Set(['F','F0','F1','L','L0','L1','S','S0','S1','S2','失','失格','転','転覆','沈','沈没','落','落水','妨','妨害','不','不完走']);
+const SPECIAL=new Set(['F','F0','F1','L','L0','L1','S','S0','S1','S2','失','失格','転','転覆','沈','沈没','落','落水','妨','妨害','不','不完走','エ']);
 
 export function normalizeRecentLaneName(value){
   const name=half(value).replace(/[\s\u3000]/g,'');
@@ -126,7 +130,7 @@ export function parseBoatcastWaku10(text){
     if(!stats.ok)return stats;
     const {ok,...summary}=stats;
     racers.push({boat_number:boat,source_name:name,normalized_source_name:normalizeRecentLaneName(name),
-      ...summary,winning_rate:boundedNumber(parts[1],0,10),avg_st:boundedNumber(parts[2],0,1),
+      ...summary,winning_rate:boundedNumber(parts[1],0,RECENT_LANE_MAX_WINNING_RATE),avg_st:boundedNumber(parts[2],0,1),
       avg_start_order:boundedNumber(parts[3],1,6),history});
   }
   return {ok:true,racers};

@@ -63,7 +63,7 @@ export default function V8RecentLaneEvidencePanel({forecast, scenario}) {
       <p className="mt-2 text-[10px] leading-5 text-slate-500">同じ{leader.boat_number}号艇での出走 {sampleText(leader)}{leader.normal_sample_size != null ? ` · 正常着順 ${leader.normal_sample_size}走` : ''}{leader.special_count > 0 ? ` · F/L等 ${leader.special_count}走` : ''}{leader.absent_count > 0 ? ` · 欠場 ${leader.absent_count}走を除外` : ''}</p>
       <AppliedDetail row={leader}/>
       {leader.available && <Source row={leader}/>}
-      <p className="mt-1 text-[10px] leading-5 text-slate-500">勝率は0〜10の着順点の平均です。1着率（%）とは異なります。平均STの単位は秒です。</p>
+      <p className="mt-1 text-[10px] leading-5 text-slate-500">勝率は掲載元が集計した着順点の平均です。1着率（%）とは異なります。平均STの単位は秒です。</p>
       {forecast.stage === 'FINAL' && leader.source_basis === 'BASELINE_SNAPSHOT' && <p className="mt-1 text-[10px] leading-5 text-slate-500">事前に保存した同じ枠番過去10走を使い、展示による変化を比較しています。</p>}
       {view.evidence?.change_note && <p className="mt-1 text-[10px] leading-5 text-slate-500">{view.evidence.change_note}</p>}
     </>}

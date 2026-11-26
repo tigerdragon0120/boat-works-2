@@ -3,7 +3,7 @@
 import {fetchBoatcastText} from './boatcastClient.js';
 import {readV8Rows} from './v8Repository.js';
 import {utcMs} from './v7FeatureObservation.js';
-import {RECENT_LANE_REVISION,RECENT_LANE_SOURCE,RECENT_LANE_PARSER_REVISION,RECENT_LANE_DENOMINATOR,
+import {RECENT_LANE_REVISION,RECENT_LANE_SOURCE,RECENT_LANE_PARSER_REVISION,RECENT_LANE_DENOMINATOR,RECENT_LANE_MAX_WINNING_RATE,
   buildRecentLaneIdentity,normalizeRecentLaneSource,normalizeRecentLaneName,recentLaneHash,recentLaneSourceUrl,
   summarizeRecentLaneHistory} from './v8RecentLaneSource.js';
 
@@ -45,7 +45,7 @@ export async function validateRecentLaneSnapshot(snapshot,{race,entries,now,iden
       ||racer.race_id!==race.id||racer.race_key!==race.race_key||racer.registration_number!==entry.registration_number
       ||racer.identity_status!=='MATCHED_NAME_AND_ENTRY'||!entry.aliases.includes(normalizeRecentLaneName(racer.source_name))
       ||racer.denominator_rule!==RECENT_LANE_DENOMINATOR||!summary.ok||row_hash!==await recentLaneHash(raw)
-      ||!bounded(racer.winning_rate,0,10)||!bounded(racer.avg_st,0,1)||!bounded(racer.avg_start_order,1,6)
+      ||!bounded(racer.winning_rate,0,RECENT_LANE_MAX_WINNING_RATE)||!bounded(racer.avg_st,0,1)||!bounded(racer.avg_start_order,1,6)
       ||racer.history.some(row=>row.course!==null&&(!Number.isInteger(row.course)||row.course<1||row.course>6)||typeof row.course_inferred!=='boolean'))return empty('INVALID','SNAPSHOT_RACER_INVALID',snapshot);
     for(const key of ['sample_size','normal_sample_size','special_count','absent_count','first_rate','second_rate','third_rate','top2_rate','top3_rate'])
       if(racer[key]!==summary[key])return empty('INVALID','SNAPSHOT_DENOMINATOR_INVALID',snapshot);
@@ -56,7 +56,9 @@ export async function validateRecentLaneSnapshot(snapshot,{race,entries,now,iden
 }
 
 function selectSnapshot(rows,key){
-  const matches=(rows||[]).filter(row=>row.snapshot_key===key);
+  // Administrative retirement keeps the original payload and forecast references intact.
+  // Only active observations compete; normal acquisition never retires or edits one.
+  const matches=(rows||[]).filter(row=>row.snapshot_key===key&&row.status!=='SUPERSEDED');
   return matches.length>1?{duplicate:true,row:null}:{duplicate:false,row:matches[0]||null};
 }
 
