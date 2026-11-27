@@ -4,6 +4,7 @@ import {jstDate,dateValid,readV8Rows,canonicalForecasts,canonicalReplayForecasts
 import {settleForecast,settleReplayForecast,settleExcludedForecast,settleExternal,SETTLEMENT_REVISION} from './v8Settlement.js';
 import {hasCompleteResultDetails} from './v8ResultDetails.js';
 import {utcMs} from './v7FeatureObservation.js';
+import {validateResearchRace} from './v8ResearchRaceDeadline.js';
 
 export async function runV8VerifyForecasts(client    ,options    ={}){
   const sr=client.asServiceRole.entities,started=Date.now();
@@ -57,8 +58,9 @@ export async function runV8VerifyForecasts(client    ,options    ={}){
       if(!hasCompleteResultDetails(verifiedResult,race)){hold('RESULT_DETAILS_PENDING');continue;}
       for(const item of items){
         if(prepared.length>=maxCreated)break;
-        if(item.row.race_key!==race.race_key||utcMs(item.row.deadline)!==utcMs(race.deadline)){hold('RACE_IDENTITY_CHANGED');continue;}
-        const input={forecast:item.row,result:results,provenance:evidence[0],now:new Date().toISOString()};
+        const raceMatch=validateResearchRace(item.row,race,item.kind);
+        if(!raceMatch.ok){hold(raceMatch.reason);continue;}
+        const input={forecast:item.row,race,result:results,provenance:evidence[0],now:new Date().toISOString()};
         let output=item.kind==='FORECAST'?settleForecast(input):item.kind==='REPLAY'?settleReplayForecast(input):settleExternal({...input,external:item.row});
         if(!output.ok&&output.reason==='REFUND_OR_CANCELLATION_REQUIRES_REVIEW'&&item.kind!=='EXTERNAL')output=settleExcludedForecast(input);
         if(!output.ok){hold(output.reason||'SETTLEMENT_HELD');continue;}

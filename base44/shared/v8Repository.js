@@ -1,6 +1,7 @@
 // Shared read/selection rules for V8. No late records or silent truncated ledgers.
 import {fetchAllPaged} from './pagedFetch.js';
 import {utcMs} from './v7FeatureObservation.js';
+import {validateResearchRace} from './v8ResearchRaceDeadline.js';
 
 // Reuse ICU's formatter: verification checks dates for every immutable row,
 // and constructing thousands of identical formatters retains substantial memory.
@@ -136,7 +137,7 @@ export function buildRaceProgress({races,forecasts=[],replayForecasts=[],verific
   const uniqueVerifications=[...groupBy([...verifications,...replayVerifications],'verification_key').values()].filter(group=>group.length===1).map(group=>group[0]);
   for(const [key,group] of groupBy(uniqueVerifications,row=>row.source_kind+':'+row.forecast_id))if(group.length===1&&['SETTLED','EXCLUDED_REFUND'].includes(group[0].status))verified.set(key,group[0]);
   const rows=(races||[]).map(race=>{
-    const matchesRace=row=>row.race_id===race.id&&row.race_key===race.race_key&&utcMs(row.deadline)===utcMs(race.deadline);
+    const matchesRace=row=>validateResearchRace(row,race).ok;
     const liveRows=(liveByRace.get(race.id)||[]).filter(matchesRace),replays=(replayByRace.get(race.id)||[]).filter(matchesRace);
     const byStage=(rows,stage)=>rows.find(row=>row.stage===stage);
     const final=byStage(liveRows,'FINAL')||byStage(replays,'FINAL')||null;

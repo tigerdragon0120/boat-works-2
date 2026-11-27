@@ -3,6 +3,7 @@ import {CUTOFF_MS, evidenceTime, jstDay, validTicket, validateTickets} from './v
 import {eligibleReplayForecast} from './v8Repository.js';
 import {deriveScenarioVerification, SCENARIO_VERIFICATION_REVISION} from './v8ScenarioSettlement.js';
 import {deriveFinalSelectionVerification,validSavedFinalSelection} from './v8FinalSelectionSettlement.js';
+import {validateResearchRace} from './v8ResearchRaceDeadline.js';
 
 export const SETTLEMENT_REVISION = 'V8_SETTLEMENT_2';
 const fail = (reason) => ({ok: false, reason});
@@ -35,9 +36,9 @@ function resolveResult(input, provenance, allowRefund=false) {
   return {ok: true, result: selected};
 }
 
-function checkSource(source, sourceKind, nowMs) {
+function checkSource(source, sourceKind, nowMs, sourceDeadline=null) {
   if (!source?.id || !source.race_id || !source.race_key || !['DAY_BEFORE', 'PRE', 'FINAL'].includes(source.stage)) return fail('INVALID_SOURCE');
-  const deadline = evidenceTime(source.deadline);
+  const deadline = sourceDeadline ?? evidenceTime(source.deadline);
   const generated = evidenceTime(sourceKind === 'EXTERNAL' ? source.recorded_at : source.generated_at);
   const created = evidenceTime(source.created_date);
   if (deadline === null || generated === null || created === null || nowMs === null) return fail('SOURCE_TIMESTAMPS_MISSING');
@@ -87,16 +88,18 @@ const methodKey = (method) => ({
   ESCAPE: 'ESCAPE', SASHI: 'SASHI', MAKURI: 'MAKURI', MAKURISASHI: 'MAKURISASHI',
 }[String(method || '').trim()] || null);
 
-function settle({source, sourceKind, result: resultInput, provenance, now, excludeRefund=false}) {
+function settle({source, sourceKind, race, result: resultInput, provenance, now, excludeRefund=false}) {
   const nowMs = evidenceTime(now);
-  const checked = checkSource(source, sourceKind, nowMs);
+  const raceMatch=race?validateResearchRace(source,race,sourceKind):null;
+  if(raceMatch&&!raceMatch.ok)return fail(raceMatch.reason);
+  const checked = checkSource(source, sourceKind, nowMs,raceMatch?.sourceDeadline);
   if (!checked.ok) return checked;
   const hasRefund=(Array.isArray(resultInput)?resultInput:[resultInput]).filter(Boolean).some(refundOrCancellation);
   if(excludeRefund&&!hasRefund)return fail('NO_REFUND_TO_EXCLUDE');
   const resolved = resolveResult(resultInput, provenance, excludeRefund);
   if (!resolved.ok) return resolved;
   const result = resolved.result;
-  const evidence = verifyResultEvidence({source, result, provenance, nowMs, deadline: checked.deadline});
+  const evidence = verifyResultEvidence({source, result, provenance, nowMs, deadline: raceMatch?.resultDeadline ?? checked.deadline});
   if (!evidence.ok) return evidence;
   const tickets = sourceKind === 'EXTERNAL' ? source.tickets : source.research_tickets;
   if (!validateTickets(tickets)) return fail('INVALID_RESEARCH_TICKETS');
@@ -150,6 +153,7 @@ function settle({source, sourceKind, result: resultInput, provenance, now, exclu
       external_publisher_verified: sourceKind === 'EXTERNAL' ? source.publisher_verified === true : null,
       all_tickets_charged: true, cancelled_or_refunded_included: false, unit_payout_yen: 100,
       planned_stake_only: true, result_and_source_race_matched: true,
+      ...(raceMatch?.changed?{race_deadline_reconciliation:raceMatch.provenance}:{}),
       ...(sourceKind !== 'EXTERNAL' ? {
         sum_revision: source.sum_evidence?.revision || null,
         sum_used_for_scoring: source.sum_evidence?.used_for_scoring === true,
@@ -174,7 +178,7 @@ function settle({source, sourceKind, result: resultInput, provenance, now, exclu
   return {ok:true,record};
 }
 
-export const settleForecast = ({forecast, result, provenance, now}) => settle({source: forecast, sourceKind: 'FORECAST', result, provenance, now});
-export const settleReplayForecast = ({forecast, result, provenance, now}) => settle({source: forecast, sourceKind: 'REPLAY', result, provenance, now});
-export const settleExcludedForecast = ({forecast, result, provenance, now}) => settle({source:forecast,sourceKind:forecast?.record_mode==='REPLAY'?'REPLAY':'FORECAST',result,provenance,now,excludeRefund:true});
-export const settleExternal = ({external, result, provenance, now}) => settle({source: external, sourceKind: 'EXTERNAL', result, provenance, now});
+export const settleForecast = ({forecast, race, result, provenance, now}) => settle({source: forecast, sourceKind: 'FORECAST', race, result, provenance, now});
+export const settleReplayForecast = ({forecast, race, result, provenance, now}) => settle({source: forecast, sourceKind: 'REPLAY', race, result, provenance, now});
+export const settleExcludedForecast = ({forecast, race, result, provenance, now}) => settle({source:forecast,sourceKind:forecast?.record_mode==='REPLAY'?'REPLAY':'FORECAST',race,result,provenance,now,excludeRefund:true});
+export const settleExternal = ({external, race, result, provenance, now}) => settle({source: external, sourceKind: 'EXTERNAL', race, result, provenance, now});
