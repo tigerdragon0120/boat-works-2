@@ -62,10 +62,19 @@ test('the 30-day window and no-data records preserve null rates and never infer 
 });
 
 test('complete internal ledger reads are cached without any external fetches',async()=>{
-  let calls=0;const sr={V8PatternEvidence:{filter:async()=>{calls++;return {items:[evidence()],has_more:false,next_cursor:null};}}};
+  let calls=0;const source=evidence();
+  source.large_unused_detail='unrelated source detail'.repeat(10000);
+  const sr={V8PatternEvidence:{filter:async(_query,options)=>{
+    calls++;
+    assert.ok(Array.isArray(options.fields));
+    assert.ok(options.fields.includes('source.provenance'));assert.ok(options.fields.includes('boat_results.entry_known'));
+    assert.ok(options.fields.includes('boat_results.winning_method'));assert.equal(options.fields.includes('large_unused_detail'),false);
+    return {items:[source],has_more:false,next_cursor:null};
+  }}};
   const first=await loadRacerFrameTendencies(sr,{asOf:AS_OF});
   const next=await loadRacerFrameTendencies(sr,{asOf:'2026-11-26T00:01:00Z'});
   assert.equal(calls,1);assert.equal(first.profiles.size,6);assert.equal(next.summary.accepted_races,1);
+  assert.deepEqual(first,buildRacerFrameTendencies({rows:[source],asOf:AS_OF}));
 });
 
 test('missing or incomplete ledgers are explicit and do not prevent the official course profile',async()=>{

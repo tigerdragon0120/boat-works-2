@@ -10,6 +10,15 @@ const counts = () => Object.fromEntries(METHODS.map(method => [method, 0]));
 const rank = value => Number.isInteger(value) && value >= 1 && value <= 6;
 const round = value => Math.round(value * 1000) / 1000;
 const readerCache = new WeakMap();
+const FRAME_FIELDS=['id','race_id','race_key','race_date','venue_code','race_number','result_trifecta','winner_boat','winner_register',
+  'winning_method','result_finished_at','captured_at','created_date','source.result_id','source.provenance',
+  'boat_results.boat_number','boat_results.registration_number','boat_results.finish','boat_results.entry_known','boat_results.winning_method'];
+const frameReadRow=row=>({
+  ...Object.fromEntries(FRAME_FIELDS.filter(key=>!key.includes('.')).filter(key=>Object.hasOwn(row,key)).map(key=>[key,row[key]])),
+  source:row.source&&typeof row.source==='object'?{result_id:row.source.result_id,provenance:row.source.provenance}:row.source,
+  boat_results:Array.isArray(row.boat_results)?row.boat_results.map(boat=>boat&&typeof boat==='object'
+    ?Object.fromEntries(['boat_number','registration_number','finish','entry_known','winning_method'].filter(key=>Object.hasOwn(boat,key)).map(key=>[key,boat[key]])):boat):row.boat_results,
+});
 
 export function frameWindow(asOf) {
   const at = utcMs(asOf);
@@ -128,7 +137,7 @@ export async function loadRacerFrameTendencies(sr, {asOf = new Date().toISOStrin
       // 30 days across all 24 venues has at most 8,640 standard races. Pagination
       // must complete; a truncated ledger is never presented as a full sample.
       rows = await readV8Rows(entity, {race_date: {$gte: window.window_start, $lte: window.window_end}},
-        {budget, maxPages: 60, sort: '-race_date'});
+        {budget, maxPages: 60, sort: '-race_date',fields:FRAME_FIELDS}).then(rows=>rows.map(frameReadRow));
       readerCache.set(entity, {key, rows, read_at: utcMs(asOf), until: Date.now() + 15 * 60000});
     } catch {
       return unavailable('READ_FAILED');

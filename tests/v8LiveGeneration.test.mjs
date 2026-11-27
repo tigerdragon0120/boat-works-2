@@ -6,6 +6,7 @@ import {runV8LiveGeneration} from '../base44/shared/v8LiveGeneration.js';
 import {buildRaceForecast} from '../base44/shared/v8ForecastEngine.js';
 import {parseOfficialVenueProfile} from '../base44/shared/v8VenueProfileSource.js';
 import {makeVenueProfileRecord} from '../base44/shared/v8VenueStore.js';
+import {emptyFrameTendencies} from '../base44/shared/v8RacerTendencies.js';
 
 const NOW=Date.parse('2026-11-22T03:00:00Z');
 const SOURCE='2026-11-22T02:00:00Z';
@@ -22,8 +23,16 @@ const entriesFor=(race,exhibition=false)=>Array.from({length:6},(_,i)=>({
   ...(exhibition?{exhibition_time:i===0?6.65:6.78+i*.01,exhibition_st:.09+i*.02,exhibition_course:i+1}:{}),
 }));
 
+const projected=(value,fields,prefix='')=>{
+  if(fields.includes(prefix)||value==null||typeof value!=='object')return value;
+  if(Array.isArray(value))return value.map(row=>projected(row,fields,prefix));
+  return Object.fromEntries(Object.entries(value).filter(([key])=>fields.some(field=>{
+    const path=prefix?prefix+'.'+key:key;return field===path||field.startsWith(path+'.');
+  })).map(([key,item])=>[key,projected(item,fields,prefix?prefix+'.'+key:key)]));
+};
 function setup(t,{races=[],entries=[],forecasts=[],results=[],venues=null,before=()=>{}}={}){
   t.mock.timers.enable({apis:['Date'],now:NOW});
+  t.mock.method(console,'info',()=>{});
   const tables={Race:structuredClone(races),RaceEntry:structuredClone(entries),V8RaceForecast:structuredClone(forecasts),
     RaceResult:structuredClone(results),ProcessLock:[],RacerStatsSync:[],PredictionV7:[],OddsSnapshot:[],
     V7WeatherObservation:[],V7StageClaim:[],V7GenerationTrace:[],OnlineFetchLog:[]};
@@ -34,7 +43,11 @@ function setup(t,{races=[],entries=[],forecasts=[],results=[],venues=null,before
   const touch=(name,method,args)=>{calls.push({name,method,args,at:Date.now()});before({name,method,args,tables,t});};
   const entities=Object.fromEntries(Object.entries(tables).map(([name,rows])=>[name,{
     async filter(query={},options,limit){touch(name,'filter',[query,options,limit]);const found=rows.filter(row=>match(row,query));
-      if(options&&typeof options==='object')return {items:structuredClone(found),has_more:false,next_cursor:null};
+      if(options&&typeof options==='object'){
+        const offset=options.cursor?Number(options.cursor):0,more=offset+options.limit<found.length;
+        const page=found.slice(offset,offset+options.limit);
+        return {items:structuredClone(options.fields?page.map(row=>projected(row,options.fields)):page),has_more:more,next_cursor:more?String(offset+options.limit):null};
+      }
       return structuredClone(found.slice(0,limit||found.length));},
     async get(id){touch(name,'get',[id]);return structuredClone(rows.find(row=>row.id===id)||null);},
     async create(doc){touch(name,'create',[doc]);const row={...structuredClone(doc),id:`${name}-${++serial}`,created_date:new Date().toISOString()};rows.push(row);return structuredClone(row);},
@@ -254,4 +267,88 @@ test('a newly available venue source appends a richer PRE without rewriting the 
   assert.notEqual(richer.venue_key,original.venue_key);
   assert.deepEqual(state.tables.V8RaceForecast[0],original);
   assert.equal((await runV8LiveCapture(state.client)).created,0);
+});
+
+test('capture scopes its lightweight full-cursor index to actionable races and hydrates only the selected PRE',async t=>{
+  const active=makeRace('active-index',1,{exhibition_ready:true}),closed=makeRace('closed-index',2,{status:'finished'}),
+    cutoff=makeRace('cutoff-index',3,{deadline:new Date(NOW+90000).toISOString()});
+  const baseline={...buildRaceForecast({race:{...active,exhibition_ready:false},entries:entriesFor(active),stage:'PRE',now:'2026-11-22T02:30:00Z'}).record,
+    id:'chosen-pre',created_date:'2026-11-22T02:30:00Z'};
+  const historical=Array.from({length:200},(_,i)=>({...baseline,id:'history-'+i,forecast_key:'history-'+i,stage:'FINAL',
+    generated_at:SOURCE,created_date:SOURCE,quality:'PARTIAL',boats:[{large:'HEAVY_UNUSED_HISTORY'.repeat(1000)}]}));
+  const excluded=[closed,cutoff].map(r=>({...baseline,id:'excluded-'+r.id,race_id:r.id,race_key:r.race_key,forecast_key:'excluded-'+r.id}));
+  const originals=structuredClone([baseline,...historical,...excluded]);
+  const state=setup(t,{races:[closed,cutoff,active],entries:entriesFor(active,true),forecasts:originals});
+  const result=await runV8LiveCapture(state.client);
+  assert.equal(result.final,1);assert.equal(result.active_races,1);assert.equal(result.prior_index_rows,201);assert.equal(result.hydrated_baselines,1);
+  const reads=state.calls.filter(call=>call.name==='V8RaceForecast'&&call.method==='filter'&&typeof call.args[1]==='object');
+  const index=reads.filter(call=>call.args[1].fields),detail=reads.filter(call=>!call.args[1].fields);
+  assert.equal(index.length,2);assert.equal(index[1].args[1].cursor,'200');
+  assert.ok(index.every(call=>JSON.stringify(call.args[0])===JSON.stringify({race_id:{$in:[active.id]}})));
+  assert.ok(index.every(call=>call.args[1].fields.includes('forecast_key')&&call.args[1].fields.includes('final_selection.ranked_tickets.score')));
+  assert.ok(index.every(call=>!call.args[1].fields.some(field=>/^(boats|scenarios|racer_evidence|recent_lane_evidence|venue_evidence|input_snapshot)(\.|$)/.test(field))));
+  assert.deepEqual(detail.map(call=>call.args[0]),[{forecast_key:baseline.forecast_key}]);
+  assert.ok(state.calls.findIndex(call=>call.name==='Race'&&call.method==='filter')<state.calls.findIndex(call=>call.name==='V8RaceForecast'));
+  assert.equal(state.tables.V8RaceForecast.at(-1).comparison.baseline_id,baseline.id);
+  assert.deepEqual(state.tables.V8RaceForecast.slice(0,-1),originals);
+});
+
+test('closed-only scope does not read prediction history or optional source datasets',async t=>{
+  const race=makeRace('already-closed',1,{status:'finished'}),state=setup(t,{races:[race]});
+  const result=await runV8LiveCapture(state.client);
+  assert.equal(result.created,0);assert.equal(result.active_races,0);
+  assert.equal(state.calls.some(call=>['V8RaceForecast','RaceEntry','RacerStatsSync','V8RecentLaneSnapshot','V8VenueProfileSnapshot'].includes(call.name)),false);
+});
+
+test('a chosen baseline that changes between the index and detail read is held without creating FINAL',async t=>{
+  const cases={
+    id:row=>{row.id='different-id';},key:row=>{row.forecast_key='different-key';},race:row=>{row.race_id='different-race';},
+    stage:row=>{row.stage='FINAL';},time:row=>{row.generated_at='2026-11-22T02:31:00Z';},
+    source:row=>{row.provenance.venue_snapshot_id='different-source';},missing_boats:row=>{delete row.boats;},
+  };
+  for(const [name,mutate] of Object.entries(cases))await t.test(name,async child=>{
+    const race=makeRace('changed-'+name,1,{exhibition_ready:true});
+    const baseline={...buildRaceForecast({race:{...race,exhibition_ready:false},entries:entriesFor(race),stage:'PRE',now:'2026-11-22T02:30:00Z'}).record,
+      id:'chosen-'+name,created_date:'2026-11-22T02:30:00Z'};
+    const state=setup(child,{races:[race],entries:entriesFor(race,true),forecasts:[baseline],before:({name,method,args,tables})=>{
+      if(name==='V8RaceForecast'&&method==='filter'&&args[0].forecast_key===baseline.forecast_key)mutate(tables.V8RaceForecast[0]);
+    }});
+    const result=await runV8LiveCapture(state.client);
+    assert.equal(result.created,0);assert.equal(result.reasons.BASELINE_DETAIL_MISMATCH,1);
+    assert.equal(state.calls.some(call=>call.name==='V8RaceForecast'&&call.method==='create'),false);
+  });
+});
+
+test('a baseline key duplicated outside the active race scope holds FINAL instead of using the visible row',async t=>{
+  const active=makeRace('baseline-active',1,{exhibition_ready:true}),closed=makeRace('baseline-closed',2,{status:'finished'});
+  const baseline={...buildRaceForecast({race:{...active,exhibition_ready:false},entries:entriesFor(active),stage:'PRE',now:'2026-11-22T02:30:00Z'}).record,
+    id:'baseline-key-original',created_date:'2026-11-22T02:30:00Z'};
+  const duplicate={...structuredClone(baseline),id:'baseline-key-cross-race',race_id:closed.id,race_key:closed.race_key};
+  const original=structuredClone([baseline,duplicate]);
+  const state=setup(t,{races:[active,closed],entries:entriesFor(active,true),forecasts:original});
+  const result=await runV8LiveCapture(state.client);
+  assert.equal(result.prior_index_rows,1);assert.equal(result.created,0);assert.equal(result.reasons.BASELINE_DETAIL_MISMATCH,1);
+  const details=state.calls.filter(call=>call.name==='V8RaceForecast'&&call.method==='filter'
+    &&typeof call.args[1]==='object'&&!call.args[1].fields);
+  assert.deepEqual(details.map(call=>call.args[0]),[{forecast_key:baseline.forecast_key}]);
+  assert.deepEqual(state.tables.V8RaceForecast,original);
+});
+
+test('hydration retains the same frozen PRE venue and produces the same before-cutoff forecast',async t=>{
+  const source=await venueSnapshot(),race=karatsu('frozen-baseline',1);race.exhibition_ready=true;
+  const profile={...source.profile,snapshot_id:source.id,snapshot_key:source.snapshot_key,available_at:source.created_date};
+  const baseline={...buildRaceForecast({race:{...race,exhibition_ready:false},entries:entriesFor(race),stage:'PRE',now:'2026-11-22T02:30:00Z',venueProfile:profile}).record,
+    id:'frozen-pre',created_date:'2026-11-22T02:30:00Z'};
+  baseline.provenance.venue_snapshot_id=source.id;
+  const entries=entriesFor(race,true),state=setup(t,{races:[race],entries,forecasts:[baseline]});
+  const result=await runV8LiveCapture(state.client),saved=state.tables.V8RaceForecast.at(-1);
+  const expected=buildRaceForecast({race,entries:entries.map(entry=>({...entry,
+    v8_frame_tendencies:{registration_number:entry.registration_number,...emptyFrameTendencies({asOf:new Date(NOW).toISOString(),status:'UNAVAILABLE'})}})),
+    stage:'FINAL',now:new Date(NOW).toISOString(),baseline}).record;
+  assert.equal(result.final,1);assert.equal(saved.comparison.baseline_id,baseline.id);
+  assert.equal(saved.venue_evidence.source_basis,'BASELINE_SNAPSHOT');
+  assert.deepEqual(saved.venue_evidence.profile,baseline.venue_evidence.profile);
+  assert.equal(saved.forecast_key,expected.forecast_key);
+  assert.deepEqual(saved.scenarios,expected.scenarios);assert.deepEqual(saved.final_selection,expected.final_selection);
+  assert.deepEqual(state.tables.V8RaceForecast[0],baseline);
 });

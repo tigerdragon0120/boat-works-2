@@ -13,6 +13,38 @@ import {loadVenueProfiles,ensureVenueProfile} from './v8VenueStore.js';
 const hasExhibition=(entries)=>entries.some(e=>['exhibition_time','exhibition_st','exhibition_course'].some(k=>e[k]!=null&&e[k]!==''));
 // Leave room in the shared service-token read quota for exhibition and result collectors.
 const MAX_FORECASTS_PER_RUN=24;
+// Read the complete key/stage index without copying immutable boat and source
+// snapshots for every historical FINAL. Only the chosen PRE is hydrated below.
+const FORECAST_INDEX_FIELDS=['id','revision','forecast_key','race_id','race_key','race_date','venue_code','race_number',
+  'stage','record_mode','deadline','generated_at','created_date','updated_date','input_as_of','quality','exhibition_complete','research_tickets',
+  'provenance.recent_lane_snapshot_id','provenance.venue_snapshot_id','provenance.venue_read_snapshot_id',
+  'final_selection.revision','final_selection.policy_revision','final_selection.stage','final_selection.ticket_count',
+  'final_selection.tickets','final_selection.head_boats','final_selection.ranked_tickets.rank',
+  'final_selection.ranked_tickets.ticket','final_selection.ranked_tickets.score'];
+const indexTree={};
+for(const path of FORECAST_INDEX_FIELDS){
+  const keys=path.split('.');let branch=indexTree;
+  keys.forEach((key,index)=>{if(index===keys.length-1)branch[key]=true;else branch=branch[key]||(branch[key]={});});
+}
+const projectIndex=(value,tree=indexTree)=>{
+  if(value==null||typeof value!=='object')return value;
+  if(Array.isArray(value))return value.map(item=>projectIndex(item,tree));
+  const out={};
+  for(const [key,branch] of Object.entries(tree))if(Object.hasOwn(value,key))out[key]=branch===true?value[key]:projectIndex(value[key],branch);
+  return out;
+};
+async function hydrateBaseline(entity,index,race,budget){
+  if(!index)return {baseline:null,reason:null};
+  // Confirm the logical key across the entire store, including a malformed
+  // duplicate attached to a race outside the active index scope.
+  const rows=await readV8Rows(entity,{forecast_key:index.forecast_key},{budget,maxPages:2});
+  const row=rows.length===1?rows[0]:null;
+  if(!row||JSON.stringify(projectIndex(row))!==JSON.stringify(projectIndex(index))
+    ||row.race_id!==race.id||row.race_key!==race.race_key||row.race_date!==race.race_date
+    ||!['DAY_BEFORE','PRE'].includes(row.stage)||canonicalForecasts([row]).rows.length!==1
+    ||!Array.isArray(row.boats)||row.boats.length!==6)return {baseline:null,reason:'BASELINE_DETAIL_MISMATCH'};
+  return {baseline:row,reason:null};
+}
 // A revision change must not discard the valid, source-rich PRE collected by
 // the previous compatible selection policy in favor of an older legacy day.
 const compatiblePreviousBaseline=row=>{
@@ -57,6 +89,10 @@ export async function runV8LiveCapture(client,options={}){
   const phaseBudget=milliseconds=>Math.min(deadlineMs,Date.now()+milliseconds);
   const expired=()=>Date.now()>=deadlineMs;
   const summary={ok:true,revision:FORECAST_REVISION,today,tomorrow,races:0,created:0,day_before:0,pre:0,final:0,buys:0,held:0,existing:0,errors:0,reasons:{}};
+  let phase='START';
+  const trace=next=>{phase=next;console.info('[V8_CAPTURE_PHASE]',JSON.stringify({phase,elapsed_ms:Date.now()-started,
+    races:summary.races,active_races:summary.active_races||0,prior_index_rows:summary.prior_index_rows||0,
+    hydrated_baselines:summary.hydrated_baselines||0,created:summary.created,held:summary.held,errors:summary.errors}));};
   const hold=(reason)=>{summary.held++;summary.reasons[reason]=(summary.reasons[reason]||0)+1;};
   const finish=()=>({...summary,completed_at:new Date().toISOString(),duration_ms:Date.now()-started});
   const stopForBudget=()=>{summary.partial=true;summary.reasons.TIME_BUDGET=(summary.reasons.TIME_BUDGET||0)+1;};
@@ -66,10 +102,22 @@ export async function runV8LiveCapture(client,options={}){
     lock=await acquireLock(client,'V8_FORECAST_CAPTURE','v8CaptureForecasts',120000);
     if(!lock)return {...finish(),skipped:'locked'};
     if(expired()){stopForBudget();return finish();}
-    const budget=phaseBudget(30000);
-    const [races,prior,racerDatasetRead,frameTendencies]=await Promise.all([
-      readV8Rows(sr.Race,scope,{budget,maxPages:8}),
-      readV8Rows(sr.V8RaceForecast,scope,{budget,maxPages:40}),
+    trace('READ_RACES');
+    const races=await readV8Rows(sr.Race,scope,{budget:phaseBudget(30000),maxPages:8});
+    const uniqueRaces=[...groupBy(races,'race_key').values()].filter(group=>group.length===1).map(g=>g[0]);
+    summary.races=uniqueRaces.length;
+    summary.duplicate_race_keys=groupBy(races,'race_key').size-uniqueRaces.length;
+    const active=uniqueRaces.filter(r=>!['finished','cancelled'].includes(r.status)&&utcMs(r.deadline)>Date.now()+90000);
+    // First cover today's closing races; then fill all remaining pre-race plans and tomorrow.
+    active.sort((a,b)=>Number(a.race_date!==today)-Number(b.race_date!==today)||utcMs(a.deadline)-utcMs(b.deadline));
+    const todo=active,activeIds=todo.map(r=>r.id);
+    summary.active_races=todo.length;
+    if(expired()){stopForBudget();return finish();}
+    if(!todo.length){trace('COMPLETE');return finish();}
+    trace('READ_PRIOR_INDEX_AND_SOURCES');
+    const [prior,racerDatasetRead,frameTendencies]=await Promise.all([
+      readV8Rows(sr.V8RaceForecast,{race_id:{$in:activeIds}},{budget:phaseBudget(30000),maxPages:40,fields:FORECAST_INDEX_FIELDS})
+        .then(rows=>rows.map(row=>projectIndex(row))),
       loadLatestRacerDataset(sr,{budget:phaseBudget(15000)})
         .then(dataset=>({dataset,status:dataset?'READY':'ABSENT'}))
         .catch(error=>{console.warn('[V8_RACER_TERM] optional dataset unavailable',String(error?.message||error).slice(0,120));return {dataset:null,status:'READ_FAILED'};}),
@@ -78,16 +126,11 @@ export async function runV8LiveCapture(client,options={}){
     summary.racer_frames=frameTendencies.summary;
     summary.racer_term={status:racerDatasetRead.status,dataset_key:racerDatasetRead.dataset?.metadata?.dataset_key||null,
       term_key:racerDatasetRead.dataset?.metadata?.term_key||null,enriched_forecasts:0,skipped:{}};
+    summary.prior_index_rows=prior.length;
     if(expired()){stopForBudget();return finish();}
-    const uniqueRaces=[...groupBy(races,'race_key').values()].filter(group=>group.length===1).map(g=>g[0]);
-    summary.races=uniqueRaces.length;
-    summary.duplicate_race_keys=groupBy(races,'race_key').size-uniqueRaces.length;
     const canonical=canonicalForecasts(prior),byRace=groupBy(canonical.rows,'race_id'),saved=new Set(prior.map(p=>p.forecast_key));
     summary.ambiguous_forecast_keys=canonical.conflicts.length;
-    const active=uniqueRaces.filter(r=>!['finished','cancelled'].includes(r.status)&&utcMs(r.deadline)>Date.now()+90000);
-    // First cover today's closing races; then fill all remaining pre-race plans and tomorrow.
-    active.sort((a,b)=>Number(a.race_date!==today)-Number(b.race_date!==today)||utcMs(a.deadline)-utcMs(b.deadline));
-    const todo=active;
+    trace('READ_ENTRIES_AND_SNAPSHOTS');
     const [entryRows,recentLaneRead,venueRead]=todo.length?await Promise.all([
       readV8Rows(sr.RaceEntry,{race_id:{$in:todo.map(r=>r.id)}},{budget:phaseBudget(25000),maxPages:25}),
       loadRecentLaneSnapshots(sr,{raceIds:todo.map(r=>r.id),budget:phaseBudget(10000)}),
@@ -97,6 +140,7 @@ export async function runV8LiveCapture(client,options={}){
     summary.venue_profiles={read_status:venueRead.status,ready:0,unavailable:0};
     const venueResults=new Map();
     const entriesByRace=groupBy(entryRows,'race_id');
+    trace('CAPTURE_RACES');
     for(const race of todo){
       if(summary.created>=MAX_FORECASTS_PER_RUN){summary.partial=true;break;}
       if(expired()){stopForBudget();break;}
@@ -187,7 +231,14 @@ export async function runV8LiveCapture(client,options={}){
           weather=weathers.filter(w=>utcMs(w.observed_at)<=Date.now()&&utcMs(w.observed_at)<utcMs(fresh.deadline)-60000).sort((a,b)=>utcMs(b.observed_at)-utcMs(a.observed_at))[0]||null;
         }
         if(expired()){stopForBudget();break;}
-        const baseline=selectCaptureBaseline(records);
+        const baselineIndex=selectCaptureBaseline(records);
+        if(baselineIndex)trace('READ_BASELINE_DETAIL');
+        const hydrated=await hydrateBaseline(sr.V8RaceForecast,baselineIndex,fresh,phaseBudget(10000));
+        if(hydrated.reason){hold(hydrated.reason);continue;}
+        if(expired()){stopForBudget();break;}
+        const baseline=hydrated.baseline;
+        if(baseline)summary.hydrated_baselines=(summary.hydrated_baselines||0)+1;
+        trace('BUILD_FORECAST');
         const generatedAt=new Date().toISOString();
         const racerEvidence=enrichLatestRacerEntries({race:fresh,entries,stage,asOf:generatedAt,dataset:racerDatasetRead.dataset});
         for(const entry of racerEvidence.entries){
@@ -220,6 +271,7 @@ export async function runV8LiveCapture(client,options={}){
         if(same.length){summary.existing++;continue;}
         if(expired()){stopForBudget();break;}
         if(utcMs(fresh.deadline)<=Date.now()+90000){hold('CUTOFF');continue;}
+        trace('SAVE_FORECAST');
         const record=await sr.V8RaceForecast.create(output.record);
         if(!record?.id)throw new Error('SAVE_NOT_CONFIRMED');
         saved.add(output.record.forecast_key);records.push(record);byRace.set(race.id,records);
@@ -237,7 +289,10 @@ export async function runV8LiveCapture(client,options={}){
         summary.errors++;console.error('[V8_CAPTURE]',race.race_key,String(error?.message||error).slice(0,150));
       }
     }
-    return finish();
-  }catch(error){if(expired()){stopForBudget();return finish();}console.error('[V8_CAPTURE] fatal',String(error?.message||error).slice(0,160));return {...finish(),ok:false,error:'FORECAST_READ_OR_SAVE_FAILED',details:String(error?.message||error).slice(0,120)};}
+    trace('COMPLETE');return finish();
+  }catch(error){console.error('[V8_CAPTURE_FAILURE]',JSON.stringify({phase,elapsed_ms:Date.now()-started,
+    kind:['Error','TypeError','RangeError','ReferenceError','SyntaxError','AbortError','TimeoutError'].includes(error?.name)?error.name:'UnknownError',
+    prior_index_rows:summary.prior_index_rows||0,created:summary.created}));
+    if(expired()){stopForBudget();return finish();}return {...finish(),ok:false,error:'FORECAST_READ_OR_SAVE_FAILED',details:String(error?.message||error).slice(0,120)};}
   finally{if(lock)await releaseLock(client,lock).catch(()=>{});}
 }
