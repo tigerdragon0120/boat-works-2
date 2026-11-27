@@ -1,6 +1,6 @@
 {
   "app_id": "6a98c39d253ede3223a54f11",
-  "review_status": "VALIDATED_NOT_APPLIED",
+  "review_status": "APPLIED",
   "phase_offset_minutes": 1,
   "collector": {
     "workflow_id": "6aa2c291cea454b2c3e09261",
@@ -87,5 +87,20 @@
     "https://docs.base44.com/api-reference/update-workflow-not-imported-apps",
     "https://docs.base44.com/developers/references/apps-api/sections/workflows",
     "https://github.com/base44/skills/blob/main/skills/base44-platform-workflows/references/backend-functions.md"
+  ],
+  "applied_at": "2026-11-27T00:53:34.597Z",
+  "actual_workflows": [
+    {
+      "id": "6aa2c291cea454b2c3e09261",
+      "status": "active",
+      "current_version_id": "f027671c753752bfd138dc9a30ad68b00c80ac697c0e0a1f3ec791f8dd1d6eea",
+      "cron": "*/5 6-23 * * *"
+    },
+    {
+      "id": "6b027f5cb1e51751ca879490",
+      "status": "active",
+      "current_version_id": "e8925341ea3092ecd8aa67369867c00c464c4747f8cbdb83329a06c054389f3b",
+      "cron": "1,6,11,16,21,26,31,36,41,46,51,56 6-23 * * *"
+    }
   ]
 }

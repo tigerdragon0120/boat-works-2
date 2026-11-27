@@ -1,0 +1,56 @@
+{
+  "id": "6b027f5cb1e51751ca879490",
+  "app_id": "6a98c39d253ede3223a54f11",
+  "file_key": "V8 Two Stage Forecasts",
+  "name": "V8 Two Stage Forecasts",
+  "description": "保存済みデータからV8の前日・事前・展示後予想を5分ごとに独立実行。取得の1分後（毎日06:01〜23:56 JST）に開始。失敗はこのワークフローで追跡し、取得処理を停止させない。",
+  "status": "active",
+  "status_reason": null,
+  "current_version_id": "e8925341ea3092ecd8aa67369867c00c464c4747f8cbdb83329a06c054389f3b",
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "v8_two_stage_forecasts",
+      "version": "1.2.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "capture": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v8GenerateLiveForecasts",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "V8の事前・展示後予想を保存",
+            "description": "取得済みデータから5分ごとに独立実行。取得より1分ずらし、予想処理の失敗をこの履歴で追跡する。"
+          }
+        }
+      }
+    ]
+  },
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "1,6,11,16,21,26,31,36,41,46,51,56 6-23 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    },
+    "id": "00a0f1e0885f4c62"
+  },
+  "last_run_at": "2026-11-24T04:07:10.208000Z",
+  "last_run_status": "success",
+  "consecutive_failures": 0,
+  "observed_at": "2026-11-27T00:53:34.597Z"
+}

@@ -1,0 +1,58 @@
+{
+  "id": "6aa2c291cea454b2c3e09261",
+  "app_id": "6a98c39d253ede3223a54f11",
+  "file_key": "Daily Auto Update",
+  "name": "Daily Auto Update",
+  "description": "5分ごとに展示・オッズ・結果・番組を収集する取得専用処理。毎日06:00〜23:55 JST。V8予想は独立した既存ワークフローで実行し、取得の継続と失敗履歴を分離する。",
+  "status": "active",
+  "status_reason": null,
+  "current_version_id": "f027671c753752bfd138dc9a30ad68b00c80ac697c0e0a1f3ec791f8dd1d6eea",
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "daily_auto_update",
+      "version": "1.3.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "auto_update": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "runDailyAutoUpdate",
+            "args": {
+              "step": "auto"
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "展示・オッズ・結果を取得",
+            "description": "5分ごとに公式データを保存。予想生成は独立した既存V8ワークフローで実行する。"
+          }
+        }
+      }
+    ]
+  },
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "*/5 6-23 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    },
+    "id": "d6ca3c2d1e994d39"
+  },
+  "last_run_at": "2026-11-27T00:50:37.801000Z",
+  "last_run_status": "success",
+  "consecutive_failures": 0,
+  "observed_at": "2026-11-27T00:53:34.597Z"
+}
