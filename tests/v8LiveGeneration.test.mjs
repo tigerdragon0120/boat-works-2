@@ -445,14 +445,38 @@ test('a global database read failure remains FAILED even when it was a transport
   assert.equal(state.tables.AutoUpdateStatus[0].job_summary.fatal.phase,'READ_RACES');
 });
 
-test('a status write failure cannot return completed or PARTIAL HTTP success',async t=>{
+test('a completed forecast with a transient status write failure remains an explicitly unpersisted PARTIAL',async t=>{
   const race=makeRace('status-write',1),state=setup(t,{races:[race],entries:entriesFor(race),before:({name,method})=>{
     if(name==='AutoUpdateStatus'&&method==='create')throw Object.assign(new Error('private status write failure'),{response:{status:503}});
   }});
   const result=await runV8LiveGeneration(state.client);
-  assert.equal(result.v8.created,1);assert.equal(result.result_status,'FAILED');assert.equal(result.status_persisted,false);
-  assert.equal(result.error,'LIVE_STATUS_SAVE_FAILED');assert.equal(liveResponseStatus(result),503);
+  assert.equal(result.v8.created,1);assert.equal(result.result_status,'PARTIAL');assert.equal(result.status_persisted,false);
+  assert.equal(result.ok,false);assert.equal(result.work_result_status,'COMPLETE');
+  assert.equal(result.error,'LIVE_STATUS_SAVE_FAILED');assert.equal(liveResponseStatus(result),200);
+  assert.equal(result.status_failure.http_status,503);assert.equal(result.next_retry_policy,'NEXT_SCHEDULED_RUN');
   assert.equal(state.tables.AutoUpdateStatus.length,0);
+});
+
+test('a quota shared by forecast and status writes cannot pause scheduling and the next run resumes durable missing keys',async t=>{
+  const a=makeRace('quota-a',1),b=makeRace('quota-b',2),c=makeRace('quota-c',3);let fail=true;
+  const state=setup(t,{races:[a,b,c],entries:[...entriesFor(a),...entriesFor(b),...entriesFor(c)],before:({name,method,args})=>{
+    if(fail&&method==='create'&&(name==='AutoUpdateStatus'||name==='V8RaceForecast'&&args[0].race_id===b.id))
+      throw Object.assign(new Error('rate limited'),{response:{status:429,headers:{'retry-after':'30'}}});
+  }});
+  const handler=generateHandler(state.client),request=()=>new Request('https://test.invalid/generate',{method:'POST',body:'{}'});
+  const response=await handler(request()),body=await response.text(),first=JSON.parse(body);
+  assert.equal(response.status,200);assert.equal(first.ok,false);assert.equal(first.result_status,'PARTIAL');
+  assert.equal(first.status_persisted,false);assert.equal(first.work_result_status,'PARTIAL');
+  assert.equal(first.status_failure.http_status,429);assert.equal(first.next_retry_policy,'NEXT_SCHEDULED_RUN');
+  assert.match(body.slice(0,500),/"status_persisted":false/);assert.match(body.slice(0,500),/"http_status":429/);
+  assert.equal(first.v8.created,1);assert.equal(first.v8.pending_count,2);assert.equal(state.tables.AutoUpdateStatus.length,0);
+  const saved=structuredClone(state.tables.V8RaceForecast[0]);
+  fail=false;t.mock.timers.tick(1000);
+  const retriedResponse=await handler(request()),retried=await retriedResponse.json();
+  assert.equal(retriedResponse.status,200);assert.equal(retried.result_status,'COMPLETE');assert.equal(retried.status_persisted,true);
+  assert.equal(retried.v8.existing,1);assert.equal(retried.v8.created,2);assert.equal(retried.v8.pending_count,0);
+  assert.equal(state.tables.V8RaceForecast.length,3);assert.deepEqual(state.tables.V8RaceForecast.find(row=>row.race_id===a.id),saved);
+  assert.equal(state.tables.AutoUpdateStatus.length,1);assert.equal(state.tables.AutoUpdateStatus[0].status,'success');
 });
 
 test('an overlapping generation lock leaves the previous durable PARTIAL untouched',async t=>{

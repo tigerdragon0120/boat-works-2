@@ -10,5 +10,9 @@ export default async function(req:Request):Promise<Response>{
   if(user?.role!=='admin')return Response.json({ok:false,error:'Forbidden'},{status:403});
   const body=await req.json().catch(()=>({}));
   const summary:any=await runV8LiveGeneration(client,{race_date:body?.race_date,race_keys:body?.race_keys});
-  return Response.json(summary,{status:liveResponseStatus(summary)});
+  // Workflow errors truncate the response text. Keep the outcome and its
+  // classified cause before the potentially large per-race diagnostics.
+  const {ok,result_status,error,work_result_status,worker_completed,status_persisted,status_failure,next_retry_policy,fatal,...details}=summary;
+  return Response.json({ok,result_status,error,work_result_status,worker_completed,status_persisted,status_failure,next_retry_policy,fatal,...details},
+    {status:liveResponseStatus(summary)});
 }

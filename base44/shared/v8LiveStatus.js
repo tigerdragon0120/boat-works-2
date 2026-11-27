@@ -4,7 +4,10 @@ import {readV8Rows,jstDate} from './v8Repository.js';
 import {utcMs} from './v7FeatureObservation.js';
 
 export const LIVE_STATUS_NAME='v8_live_generation';
-export const LIVE_JOB_STATUS_REVISION='V8_LIVE_JOB_STATUS_1';
+export const LIVE_JOB_STATUS_REVISION='V8_LIVE_JOB_STATUS_2';
+const STATUS_SAVE_BUDGET_MS=5000;
+const statusRetryDelays=[250,1000];
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const networkCodes=new Set(['ERR_NETWORK','ECONNRESET','ECONNABORTED','ETIMEDOUT','EAI_AGAIN','ENOTFOUND','UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET']);
 const bugKinds=new Set(['TypeError','RangeError','ReferenceError','SyntaxError','URIError','EvalError']);
 const safeKind=error=>['Error','AxiosError','TypeError','RangeError','ReferenceError','SyntaxError','URIError','EvalError','AbortError','TimeoutError'].includes(error?.name)?error.name:'UnknownError';
@@ -61,7 +64,24 @@ export function liveJobSummary(result){
     next_retry_policy:'NEXT_SCHEDULED_RUN',fatal};
 }
 
-export async function persistLiveStatus(client,result){
+const statusRetryAfterMs=error=>{
+  const headers=error?.response?.headers??error?.headers;let value;
+  try{value=typeof headers?.get==='function'?headers.get('retry-after'):headers?.['retry-after']??headers?.['Retry-After'];}catch{}
+  if(typeof value==='number')return Number.isFinite(value)&&value>=0?value*1000:null;
+  if(typeof value!=='string'||!value.trim())return null;
+  if(/^\d+(?:\.\d+)?$/.test(value.trim()))return Number(value)*1000;
+  const at=Date.parse(value);return Number.isFinite(at)?Math.max(0,at-Date.now()):null;
+};
+const recoverableStatusFailure=failure=>{
+  if(failure?.phase!=='SAVE_JOB_STATUS'||failure.retryable!==true||bugKinds.has(failure.kind))return false;
+  const status=failure.http_status,serverFailure=Number.isInteger(status)&&status>=500&&status<=599;
+  if(failure.code==='RATE_LIMIT_BACKOFF')return status===429;
+  if(failure.code==='SOURCE_REQUEST_TRANSIENT')return status===408||serverFailure;
+  if(failure.code==='SOURCE_READ_TRANSIENT')return status==null||status===408||serverFailure;
+  return failure.code==='SOURCE_TRANSPORT_TRANSIENT'&&status==null;
+};
+
+export async function persistLiveStatus(client,result,{deadlineMs=Date.now()+STATUS_SAVE_BUDGET_MS,sleep=wait}={}){
   const work=result?.v8||result||{};
   // An overlapping invocation must not erase the currently running job's last
   // PARTIAL/FAILED status just because it could not acquire the existing lock.
@@ -69,13 +89,27 @@ export async function persistLiveStatus(client,result){
   if(['INVALID_LIVE_DATE','INVALID_RACE_KEYS'].includes(result?.error||work.error))
     return {...result,ok:false,worker_completed:false,result_status:'REJECTED',status_persisted:false};
   const job=liveJobSummary(result),entity=client?.asServiceRole?.entities?.AutoUpdateStatus;
-  try{
+  const deadline=Math.min(deadlineMs,Date.now()+STATUS_SAVE_BUDGET_MS);
+  let lastError=new Error('STATUS_SAVE_BUDGET_EXHAUSTED'),lastReadError=null,attempts=0;
+  for(let attempt=0;attempt<=statusRetryDelays.length&&Date.now()<deadline;attempt++)try{
+    attempts++;lastReadError=null;
     if(!entity?.filter||!entity?.create||!entity?.update)throw new Error('STATUS_ENTITY_UNAVAILABLE');
-    const rows=await readV8Rows(entity,{name:LIVE_STATUS_NAME},{budget:Date.now()+5000,maxPages:2,
-      fields:['id','name','last_updated','job_summary.started_at']});
+    // Re-read before every retry: a lost create acknowledgement must never
+    // append a second status row with the same logical identity.
+    const reader={filter:async(...args)=>{try{return await entity.filter(...args);}catch(error){lastReadError=error;throw error;}}};
+    const rows=await readV8Rows(reader,{name:LIVE_STATUS_NAME},{budget:deadline,maxPages:2,
+      fields:['id','name','status','last_updated','job_summary.started_at','job_summary.result_status']});
+    lastReadError=null;
     if(rows.length>1)throw new Error('STATUS_IDENTITY_AMBIGUOUS');
     const old=rows[0];
     if(old&&utcMs(old.job_summary?.started_at)>utcMs(job.started_at))throw new Error('STATUS_NEWER_RUN_PRESENT');
+    if(old&&job.result_status==='COMPLETE'&&job.attempted===0&&job.created===0&&job.existing===0&&job.pending_count===0
+      &&(['partial','error','retrying'].includes(old.status)||['PARTIAL','FAILED'].includes(old.job_summary?.result_status))){
+      // A page refresh after cutoff can be a no-op. It is not evidence that
+      // the independently scheduled job's previous failure has recovered.
+      return {...result,ok:false,worker_completed:job.worker_completed,result_status:'SKIPPED',
+        skipped:'no_work_preserved_status',status_persisted:false,previous_status:old.status};
+    }
     const doc={name:LIVE_STATUS_NAME,target_date:result?.race_date||work.today||jstDate(),
       status:job.result_status==='COMPLETE'?'success':job.result_status==='PARTIAL'?'partial':'error',
       current_step:'v8_live_generation',last_updated:new Date().toISOString(),
@@ -86,19 +120,37 @@ export async function persistLiveStatus(client,result){
       job_summary:job};
     const saved=old?await entity.update(old.id,doc):await entity.create(doc);
     if(!saved?.id)throw new Error('STATUS_SAVE_NOT_CONFIRMED');
-    return {...result,result_status:job.result_status,worker_completed:job.worker_completed,status_persisted:true};
+    return {...result,result_status:job.result_status,worker_completed:job.worker_completed,status_persisted:true,status_save_attempts:attempts};
   }catch(error){
-    console.error('[V8_LIVE_STATUS_FAILURE]',JSON.stringify({phase:'SAVE_JOB_STATUS',kind:safeKind(error)}));
-    return {...result,ok:false,result_status:'FAILED',worker_completed:job.worker_completed,status_persisted:false,
-      work_result_status:job.result_status,error:'LIVE_STATUS_SAVE_FAILED',
-      fatal:{phase:'SAVE_JOB_STATUS',code:'STATUS_SAVE_FAILED',kind:safeKind(error),http_status:null}};
+    lastError=error;
+    const failure=classifyLiveFailure(error,'SAVE_JOB_STATUS');
+    // The shared paging helper intentionally sanitizes provider errors. Retain
+    // this read's cooldown locally so an outer retry cannot ignore Retry-After.
+    const delay=Math.max(statusRetryDelays[attempt]??Infinity,statusRetryAfterMs(error)??statusRetryAfterMs(lastReadError)??0);
+    if(!failure.retryable||!Number.isFinite(delay)||Date.now()+delay>=deadline)break;
+    await sleep(delay);
   }
+  const failure=classifyLiveFailure(lastError,'SAVE_JOB_STATUS');
+  console.error('[V8_LIVE_STATUS_FAILURE]',JSON.stringify({...failure,work_result_status:job.result_status,attempts}));
+  // A completed worker has already awaited its immutable prediction writes.
+  // Transient telemetry failure must not stop the existing five-minute job.
+  // No persisted-status success is claimed; the next run scans the durable
+  // source/forecast records again and can recover the missing job summary.
+  const retryPending=result?.worker_completed===true&&['COMPLETE','PARTIAL'].includes(job.result_status)
+    &&!result?.fatal&&!work?.fatal&&recoverableStatusFailure(failure);
+  return {...result,ok:false,result_status:retryPending?'PARTIAL':'FAILED',worker_completed:job.worker_completed,status_persisted:false,
+    work_result_status:job.result_status,error:'LIVE_STATUS_SAVE_FAILED',status_failure:failure,status_save_attempts:attempts,
+    ...(retryPending?{partial:true,next_retry_policy:'NEXT_SCHEDULED_RUN',fatal:null}:{fatal:result?.fatal||work?.fatal||failure})};
 }
 
 export function liveResponseStatus(result){
   const work=result?.v8||result||{};
   if(['INVALID_LIVE_DATE','INVALID_RACE_KEYS'].includes(result?.error||work.error))return 400;
   if(result?.result_status==='SKIPPED'&&(result.skipped==='locked'||work.skipped==='locked'))return 200;
+  if(result?.result_status==='SKIPPED'&&result.skipped==='no_work_preserved_status')return 200;
   if(result?.worker_completed===true&&result?.status_persisted===true&&['COMPLETE','PARTIAL'].includes(result.result_status))return 200;
+  if(result?.worker_completed===true&&result?.status_persisted===false&&result?.result_status==='PARTIAL'
+    &&result.error==='LIVE_STATUS_SAVE_FAILED'&&['COMPLETE','PARTIAL'].includes(result.work_result_status)
+    &&!result.fatal&&!work.fatal&&result.next_retry_policy==='NEXT_SCHEDULED_RUN'&&recoverableStatusFailure(result.status_failure))return 200;
   return 503;
 }
