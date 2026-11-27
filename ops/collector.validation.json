@@ -1,0 +1,16 @@
+{
+  "valid": true,
+  "warnings": [],
+  "errors": [],
+  "supported_task_types": [
+    "call",
+    "switch",
+    "wait"
+  ],
+  "available_activities": [
+    "calculate_field",
+    "compute_seconds_until",
+    "invoke_backend_function",
+    "send_email"
+  ]
+}

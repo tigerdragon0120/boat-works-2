@@ -7,6 +7,15 @@
       "type": "object",
       "description": "公式BOATCASTのオリジナル展示。取得元・取得時刻・日付場R・艇別1周/周り足/直線と公式展示タイムを保持。未取得は欠測のまま扱う。"
     },
+    "exhibition_input_key": {
+      "type": "string",
+      "description": "完全な展示の全必要保存を確認後にコミットする、日付場R・6艇の登録番号・展示タイム/ST/進入/欠場の正規化入力キー。FINALは同じ値の集合を使う。更新途中・失敗時は既存キーを保持する。"
+    },
+    "exhibition_committed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "exhibition_input_keyの対象となる全必要展示入力の保存を確認した実時刻。値が変わらない艇の個別更新時刻は揃えない。"
+    },
     "race_key": {
       "type": "string",
       "description": "\u5171\u901a\u30ad\u30fc YYYY-MM-DD_venueCode_raceNumber"

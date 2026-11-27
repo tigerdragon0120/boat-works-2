@@ -15,7 +15,10 @@ export async function acquireLock(client, lockKey, fnName, ttlMs = LOCK_TTL_MS) 
   const now = Date.now();
   const expires = new Date(now + ttlMs).toISOString();
   // 既存アクティブロックを確認
-  const existing = await sr[LOCK_ENTITY].filter({ lock_key: lockKey, status: "active" }, "-acquired_at", 10).catch(() => []);
+  // Unknown lock state is not evidence that the lock is free. Let callers
+  // record the read failure instead of starting overlapping writers.
+  const existing = await sr[LOCK_ENTITY].filter({ lock_key: lockKey, status: "active" }, "-acquired_at", 10);
+  if (!Array.isArray(existing)) throw new Error('LOCK_READ_INVALID');
   if (existing && existing.length) {
     const stale = existing.filter((l) => new Date(l.expires_at).getTime() <= now);
     if (stale.length === existing.length) {

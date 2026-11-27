@@ -18,7 +18,7 @@ import { normalizeRs1, normalizeRs2, normalizeRaceResult } from "./boatcastNorma
 const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30分以内なら鮮度OK
 
 // BOATCASTから結果を取得(rs1 + rs2 を並列取得 → 正規化 → 統合)
-export async function fetchBoatcastResult(race) {
+export async function fetchBoatcastResult(race, options = {}) {
   try {
     const venueCode = String(race?.venue_code || '').padStart(2, '0');
     const raceDate = String(race?.race_date || '').replace(/-/g, '');
@@ -34,10 +34,26 @@ export async function fetchBoatcastResult(race) {
       fetched_at: new Date().toISOString(),
     };
 
-    const [rs1Raw, rs2Raw] = await Promise.all([
-      fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType: 'RS1' }),
-      fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType: 'RS2' }),
+    const bounded = Number.isFinite(options.deadlineMs);
+    const timeout = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 6000;
+    const stopAt = bounded ? Math.min(options.deadlineMs, Date.now() + timeout) : Infinity;
+    const remaining = stopAt - Date.now();
+    if (remaining <= 0) return {ok:false,reason:'FETCH_TIME_BUDGET',http_access_count:0};
+    const requestOptions = bounded ? {timeoutMs:Math.max(1,Math.floor(remaining)),maxRetries:0} : {};
+    const requests = Promise.all([
+      fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType: 'RS1', ...requestOptions }),
+      fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType: 'RS2', ...requestOptions }),
     ]);
+    let timer;
+    let responses;
+    try {
+      // The shared client can join an older in-flight request. Bound this
+      // collector's wait without aborting a request owned by another caller.
+      responses = bounded ? await Promise.race([requests,new Promise((_,reject)=>{
+        timer=setTimeout(()=>reject(new Error('FETCH_TIME_BUDGET')),Math.max(0,stopAt-Date.now()));
+      })]) : await requests;
+    } finally { if(timer!==undefined)clearTimeout(timer); }
+    const [rs1Raw, rs2Raw] = responses;
 
     // rs1が未公開の場合は結果確定前
     if (!rs1Raw.ok) {
@@ -114,8 +130,8 @@ function checkConflict(existing, incoming) {
 }
 
 // 結果解決メイン: BOATCAST優先、失敗時はnull(LOCAL fallbackは呼出側で処理)
-export async function resolveRaceResult(race) {
-  const boatcastResult = await fetchBoatcastResult(race);
+export async function resolveRaceResult(race, options = {}) {
+  const boatcastResult = await fetchBoatcastResult(race, options);
 
   if (boatcastResult.ok) {
     return {

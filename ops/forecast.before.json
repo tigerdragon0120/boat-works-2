@@ -1,0 +1,55 @@
+{
+  "id": "6b027f5cb1e51751ca879490",
+  "app_id": "6a98c39d253ede3223a54f11",
+  "name": "V8 Two Stage Forecasts",
+  "description": "Daily Auto Updateの取得完了直後にV7→V8予想保存を統合済み。重複実行を避けるため、この独立スケジュールは停止（2026-11-24）。",
+  "status": "inactive",
+  "status_reason": null,
+  "current_version_id": "468a9df0d4187e0ce803ce7d4588f27dffaa80ce382f2769fe5fa77d4c8db2cb",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "2,7,12,17,22,27,32,37,42,47,52,57 6-23 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    },
+    "id": "00a0f1e0885f4c62"
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "v8_two_stage_forecasts",
+      "version": "1.1.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "capture": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v8GenerateLiveForecasts",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "V7→V8 統合予想",
+            "description": "V7保存確認→V8の前日・事前・展示後予想を1回の定期処理で実行。収集から2分ずらし、予算到達時は未完了分を次回へ継続。"
+          }
+        }
+      }
+    ]
+  },
+  "updated_date": "2026-11-24T04:08:15.506000Z",
+  "last_run_at": "2026-11-24T04:07:10.208000Z",
+  "last_run_status": "success",
+  "consecutive_failures": 0
+}

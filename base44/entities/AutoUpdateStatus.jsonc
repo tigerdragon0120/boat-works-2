@@ -89,6 +89,10 @@
       },
       "description": "\u76f4\u8fd1\u30a8\u30e9\u30fc(\u6700\u592720\u4ef6)"
     },
+    "job_summary": {
+      "type": "object",
+      "description": "取得・V8予想保存それぞれの実行結果。未完了件数、再試行待ちのレースと理由、次回再処理方針を保存する。成功記録とは区別する。"
+    },
     "logs": {
       "type": "array",
       "items": {

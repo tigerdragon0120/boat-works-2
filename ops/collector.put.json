@@ -1,0 +1,31 @@
+{
+  "description": "5分ごとに展示・オッズ・結果・番組を収集する取得専用処理。毎日06:00〜23:55 JST。V8予想は独立した既存ワークフローで実行し、取得の継続と失敗履歴を分離する。",
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "daily_auto_update",
+      "version": "1.3.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "auto_update": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "runDailyAutoUpdate",
+            "args": {
+              "step": "auto"
+            }
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "展示・オッズ・結果を取得",
+            "description": "5分ごとに公式データを保存。予想生成は独立した既存V8ワークフローで実行する。"
+          }
+        }
+      }
+    ]
+  },
+  "base_version_id": "609e6827d4cd78fd1ab8d84fdfe01f8ecfaa7e63e3d9fe7823be9939657aad52",
+  "change_summary": "取得専用1stepへ分離。既存V8ワークフローを独立実行に再利用し、予想失敗による取得の連鎖停止を防ぐ。"
+}

@@ -5,6 +5,8 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { selectLiveInputRaces, isSavedExhibitionComplete } from '../base44/shared/liveInputPriority.js';
 import { fetchOriginalExhibition } from '../base44/shared/originalExhibition.js';
+import { readV8Rows } from '../base44/shared/v8Repository.js';
+import { buildCommittedExhibitionKey } from '../base44/shared/exhibitionInputKey.js';
 
 const source = readFileSync(new URL('../base44/functions/runDailyAutoUpdate/entry.ts', import.meta.url), 'utf8');
 const NOW = Date.parse('2026-11-22T10:20:00Z');
@@ -23,6 +25,7 @@ const makeRace = (id = 'race-1', seconds = 600, extra = {}) => ({
 });
 const completeRows = () => Array.from({ length: 6 }, (_, i) => ({
   id: 'entry-' + (i + 1), boat_number: i + 1,
+  race_id:'race-1', race_key:`${TODAY}_01_10`,
   player_name: '選手' + (i + 1), registration_number: String(4101 + i),
   exhibition_time: 6.7 + i * .01, exhibition_st: .1 + i * .01,
   exhibition_st_raw: .1 + i * .01, exhibition_course: i + 1,
@@ -93,7 +96,7 @@ test('AUTO preserves live-input budgets and uses only remaining time for cards b
 function setupExhibition(t, { failedBoat = null, alreadyComplete = true, originalHttpStatus = 200 } = {}) {
   t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const row = makeRace(), incoming = completeRows();
-  const stored = alreadyComplete ? completeRows() : incoming.map(e => ({ id: e.id, boat_number: e.boat_number, player_name: e.player_name, registration_number: e.registration_number }));
+  const stored = alreadyComplete ? completeRows() : incoming.map(e => ({ id: e.id, race_id:e.race_id, race_key:e.race_key, boat_number: e.boat_number, player_name: e.player_name, registration_number: e.registration_number }));
   const entryWrites = [], raceWrites = [], errors = [], originalRequests = [], originalInputs = [];
   const originalText = 'data=\n1\t1\n一周\n' + incoming.map((entry, i) => `${entry.boat_number}\t${entry.player_name}\t${(36 + i * .1).toFixed(2)}`).join('\n') + '\n';
   const entities = {
@@ -102,7 +105,7 @@ function setupExhibition(t, { failedBoat = null, alreadyComplete = true, origina
       update: async (_id, patch) => { raceWrites.push(structuredClone(patch)); Object.assign(row, patch); return structuredClone(row); },
     },
     RaceEntry: {
-      filter: async () => structuredClone(stored),
+      filter: async () => ({items:structuredClone(stored),has_more:false,next_cursor:null}),
       update: async (id, patch) => {
         entryWrites.push(id);
         if (id === 'entry-' + failedBoat) throw new Error('entry save failed');
@@ -111,6 +114,7 @@ function setupExhibition(t, { failedBoat = null, alreadyComplete = true, origina
     },
   };
   const run = bindFunction('fetchAndSaveExhibition', {
+    readV8Rows, buildCommittedExhibitionKey,
     uniqueRacesByKey: rows => rows, uniqueEntriesByBoat: rows => rows,
     selectLiveInputRaces, isSavedExhibitionComplete, VENUE_MAP: { '01': '桐生' },
     buildUrl: (_type, date, venue, number) => `https://boatrace.jp/owpc/pc/race/beforeinfo?rno=${number}&jcd=${venue}&hd=${date.replaceAll('-', '')}`,

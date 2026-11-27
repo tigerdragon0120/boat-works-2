@@ -1,12 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {stripTypeScriptTypes} from 'node:module';
 import {runV8LiveCapture} from '../base44/shared/v8LiveCapture.js';
 import {runV8LiveGeneration} from '../base44/shared/v8LiveGeneration.js';
 import {buildRaceForecast} from '../base44/shared/v8ForecastEngine.js';
 import {parseOfficialVenueProfile} from '../base44/shared/v8VenueProfileSource.js';
 import {makeVenueProfileRecord} from '../base44/shared/v8VenueStore.js';
 import {emptyFrameTendencies} from '../base44/shared/v8RacerTendencies.js';
+import {liveResponseStatus,LIVE_STATUS_NAME} from '../base44/shared/v8LiveStatus.js';
+import {buildCommittedExhibitionKey} from '../base44/shared/exhibitionInputKey.js';
+
+const generateEntry=stripTypeScriptTypes(fs.readFileSync(new URL('../base44/functions/v8GenerateLiveForecasts/entry.ts',import.meta.url),'utf8')
+  .replace(/^import .*;\r?\n/gm,'')).replace('export default async function','return async function');
+const generateHandler=client=>new Function('createClientFromRequest','runV8LiveGeneration','liveResponseStatus',generateEntry)(
+  ()=>({...client,auth:{me:async()=>({role:'admin'})}}),runV8LiveGeneration,liveResponseStatus);
 
 const NOW=Date.parse('2026-11-22T03:00:00Z');
 const SOURCE='2026-11-22T02:00:00Z';
@@ -22,6 +30,11 @@ const entriesFor=(race,exhibition=false)=>Array.from({length:6},(_,i)=>({
   avg_st:i===0?.12:.17+i*.01,section_finishes:i===0?'1-2-1':'3-4-3',updated_date:SOURCE,
   ...(exhibition?{exhibition_time:i===0?6.65:6.78+i*.01,exhibition_st:.09+i*.02,exhibition_course:i+1}:{}),
 }));
+const commitExhibition=(race,entries,at=SOURCE)=>{
+  const key=buildCommittedExhibitionKey(race,entries);
+  if(key)Object.assign(race,{exhibition_input_key:key,exhibition_committed_at:at});
+  return key;
+};
 
 const projected=(value,fields,prefix='')=>{
   if(fields.includes(prefix)||value==null||typeof value!=='object')return value;
@@ -30,12 +43,15 @@ const projected=(value,fields,prefix='')=>{
     const path=prefix?prefix+'.'+key:key;return field===path||field.startsWith(path+'.');
   })).map(([key,item])=>[key,projected(item,fields,prefix?prefix+'.'+key:key)]));
 };
-function setup(t,{races=[],entries=[],forecasts=[],results=[],venues=null,before=()=>{}}={}){
+function setup(t,{races=[],entries=[],forecasts=[],results=[],venues=null,committed=true,before=()=>{}}={}){
   t.mock.timers.enable({apis:['Date'],now:NOW});
   t.mock.method(console,'info',()=>{});
   const tables={Race:structuredClone(races),RaceEntry:structuredClone(entries),V8RaceForecast:structuredClone(forecasts),
     RaceResult:structuredClone(results),ProcessLock:[],RacerStatsSync:[],PredictionV7:[],OddsSnapshot:[],
-    V7WeatherObservation:[],V7StageClaim:[],V7GenerationTrace:[],OnlineFetchLog:[]};
+    V7WeatherObservation:[],V7StageClaim:[],V7GenerationTrace:[],OnlineFetchLog:[],AutoUpdateStatus:[]};
+  // Default complete exhibition fixtures represent the collector's committed
+  // saved input, not a set of individually visible writes in progress.
+  if(committed)for(const race of tables.Race)commitExhibition(race,tables.RaceEntry.filter(entry=>entry.race_id===race.id));
   if(venues!==null)tables.V8VenueProfileSnapshot=structuredClone(venues);
   const calls=[];let serial=0;
   const match=(row,query)=>Object.entries(query||{}).every(([key,value])=>value&&typeof value==='object'
@@ -133,6 +149,7 @@ test('the three-minute throttle never delays completed or corrected exhibition i
   t.mock.timers.tick(30000);
   state.tables.RaceEntry[0].exhibition_time=6.59;
   state.tables.RaceEntry[0].updated_date=new Date(Date.now()).toISOString();
+  commitExhibition(state.tables.Race[0],state.tables.RaceEntry,new Date(Date.now()).toISOString());
   const corrected=await runV8LiveCapture(state.client);
   assert.equal(corrected.final,1);
   assert.equal(state.tables.V8RaceForecast.at(-1).boats[0].exhibition_time,6.59);
@@ -182,17 +199,20 @@ test('a manual refresh saves only the requested V8 race and rejects an empty sco
   assert.equal(state.tables.V8RaceForecast.length,1);
 });
 
-test('a failed V8 forecast write makes the pipeline fail while a budget-only pause remains successful',async t=>{
+test('an unknown forecast write failure stays FAILED while a budget-only pause is durably PARTIAL',async t=>{
   const race=makeRace('write-fails',12);
   const state=setup(t,{races:[race],entries:entriesFor(race),before:({name,method})=>{
     if(name==='V8RaceForecast'&&method==='create')throw new Error('simulated storage failure');
   }});
   const result=await runV8LiveGeneration(state.client);
-  assert.equal(result.ok,false);assert.equal(result.error,'LIVE_CAPTURE_PARTIAL_FAILURE');
-  assert.equal(result.partial,true);assert.equal(result.v8.errors,1);assert.equal(state.tables.V8RaceForecast.length,0);
+  assert.equal(result.ok,false);assert.equal(result.error,'LIVE_CAPTURE_FAILED');
+  assert.equal(result.result_status,'FAILED');assert.equal(liveResponseStatus(result),503);
+  assert.equal(result.v8.errors,1);assert.equal(state.tables.V8RaceForecast.length,0);
+  assert.equal(state.tables.AutoUpdateStatus[0].status,'error');
   assert.ok(state.tables.ProcessLock.every(row=>row.status==='released'));
   const paused=await runV8LiveGeneration(state.client,{timeBudgetMs:0});
-  assert.equal(paused.ok,true);assert.equal(paused.partial,true);assert.equal(paused.skipped,'time_budget');
+  assert.equal(paused.ok,false);assert.equal(paused.partial,true);assert.equal(paused.skipped,'time_budget');
+  assert.equal(paused.result_status,'PARTIAL');assert.equal(paused.status_persisted,true);assert.equal(liveResponseStatus(paused),200);
 });
 
 test('later original timings reach saved V8 forecasts immediately without rewriting the earlier FINAL',async t=>{
@@ -351,4 +371,180 @@ test('hydration retains the same frozen PRE venue and produces the same before-c
   assert.equal(saved.forecast_key,expected.forecast_key);
   assert.deepEqual(saved.scenarios,expected.scenarios);assert.deepEqual(saved.final_selection,expected.final_selection);
   assert.deepEqual(state.tables.V8RaceForecast[0],baseline);
+});
+
+test('a transient forecast write returns durable PARTIAL HTTP 200, continues other races and retries only missing keys',async t=>{
+  const a=makeRace('transient-a',1),b=makeRace('transient-b',2);let fail=true;
+  const state=setup(t,{races:[a,b],entries:[...entriesFor(a),...entriesFor(b)],before:({name,method,args})=>{
+    if(fail&&name==='V8RaceForecast'&&method==='create'&&args[0].race_id===a.id)
+      throw Object.assign(new Error('private provider failure'),{response:{status:503}});
+  }});
+  const request=()=>new Request('https://test.invalid/generate',{method:'POST',body:'{}'}),handler=generateHandler(state.client);
+  const response=await handler(request()),first=await response.json();
+  assert.equal(response.status,200);assert.equal(first.ok,false);assert.equal(first.result_status,'PARTIAL');
+  assert.equal(first.worker_completed,true);assert.equal(first.status_persisted,true);assert.equal(first.v8.created,1);
+  assert.equal(first.v8.pending_count,1);assert.equal(first.v8.retry_pending_count,1);
+  const status=state.tables.AutoUpdateStatus.find(row=>row.name===LIVE_STATUS_NAME);
+  assert.equal(status.status,'partial');assert.equal(status.job_summary.result_status,'PARTIAL');
+  assert.equal(status.job_summary.created,1);assert.equal(status.job_summary.pending_count,1);
+  assert.deepEqual(status.job_summary.pending,[{race_key:a.race_key,stage:'PRE',phase:'SAVE_FORECAST',code:'SOURCE_REQUEST_TRANSIENT',retryable:true}]);
+  assert.doesNotMatch(JSON.stringify(status),/private provider/);
+  const saved=structuredClone(state.tables.V8RaceForecast[0]);assert.equal(saved.race_id,b.id);
+  fail=false;t.mock.timers.tick(1000);
+  const recoveredResponse=await handler(request()),recovered=await recoveredResponse.json();
+  assert.equal(recoveredResponse.status,200);assert.equal(recovered.ok,true);assert.equal(recovered.result_status,'COMPLETE');
+  assert.equal(recovered.v8.created,1);assert.equal(recovered.v8.existing,1);assert.equal(recovered.v8.pending_count,0);
+  assert.equal(state.tables.V8RaceForecast.length,2);assert.deepEqual(state.tables.V8RaceForecast.find(row=>row.race_id===b.id),saved);
+  assert.equal(state.tables.AutoUpdateStatus.length,1);assert.equal(state.tables.AutoUpdateStatus[0].status,'success');
+});
+
+test('a confirmed network read failure stays pending while another race is captured',async t=>{
+  const a=makeRace('read-transient-a',1,{exhibition_ready:true}),b=makeRace('read-transient-b',2,{exhibition_ready:true});
+  const state=setup(t,{races:[a,b],entries:[...entriesFor(a,true),...entriesFor(b,true)],before:({name,method,args})=>{
+    if(name==='OddsSnapshot'&&method==='filter'&&args[0].race_id===a.id)throw Object.assign(new Error('Network Error'),{code:'ERR_NETWORK'});
+  }});
+  const result=await runV8LiveGeneration(state.client);
+  assert.equal(result.result_status,'PARTIAL');assert.equal(liveResponseStatus(result),200);assert.equal(result.v8.created,1);
+  assert.equal(result.v8.retry_pending_count,1);assert.equal(result.v8.pending[0].phase,'READ_QUOTES');
+  assert.equal(result.v8.pending[0].code,'SOURCE_READ_TRANSIENT');assert.equal(state.tables.AutoUpdateStatus[0].status,'partial');
+});
+
+test('rate limiting is recorded as retry pending and backs off before another race request',async t=>{
+  const a=makeRace('limited-a',1),b=makeRace('limited-b',2);
+  const state=setup(t,{races:[a,b],entries:[...entriesFor(a),...entriesFor(b)],before:({name,method})=>{
+    if(name==='V8RaceForecast'&&method==='create')throw Object.assign(new Error('rate limited'),{response:{status:429}});
+  }});
+  const result=await runV8LiveGeneration(state.client);
+  assert.equal(result.result_status,'PARTIAL');assert.equal(liveResponseStatus(result),200);
+  assert.equal(result.v8.attempted,1);assert.equal(result.v8.retry_pending_count,2);assert.equal(result.v8.pending_count,2);
+  assert.ok(result.v8.pending.every(row=>row.code==='RATE_LIMIT_BACKOFF'));
+  assert.equal(state.tables.AutoUpdateStatus[0].job_summary.retry_pending_count,2);
+});
+
+test('implementation and permission failures remain FAILED rather than retryable success',async t=>{
+  for(const kind of ['TypeError','Forbidden'])await t.test(kind,async child=>{
+    const race=makeRace('hard-failure',1),state=setup(child,{races:[race],entries:entriesFor(race),before:({name,method})=>{
+      if(name==='V8RaceForecast'&&method==='create')throw kind==='TypeError'?new TypeError('private bad implementation')
+        :Object.assign(new Error('private access restriction'),{response:{status:403}});
+    }});
+    const result=await runV8LiveGeneration(state.client);
+    assert.equal(result.result_status,'FAILED');assert.equal(result.ok,false);assert.equal(liveResponseStatus(result),503);
+    assert.equal(result.v8.retry_pending_count,0);assert.equal(state.tables.AutoUpdateStatus[0].status,'error');
+    assert.equal(state.tables.AutoUpdateStatus[0].job_summary.fatal.code,kind==='TypeError'?'IMPLEMENTATION_ERROR':'ACCESS_DENIED');
+    assert.doesNotMatch(JSON.stringify(state.tables.AutoUpdateStatus),/private bad|private access/);
+  });
+});
+
+test('a global database read failure remains FAILED even when it was a transport error',async t=>{
+  const race=makeRace('global-read',1),state=setup(t,{races:[race],entries:entriesFor(race),before:({name,method})=>{
+    if(name==='Race'&&method==='filter')throw Object.assign(new Error('Network Error'),{code:'ERR_NETWORK'});
+  }});
+  const result=await runV8LiveGeneration(state.client);
+  assert.equal(result.result_status,'FAILED');assert.equal(liveResponseStatus(result),503);assert.equal(result.v8.created,0);
+  assert.equal(result.v8.fatal.retryable,false);assert.equal(state.tables.AutoUpdateStatus[0].status,'error');
+  assert.equal(state.tables.AutoUpdateStatus[0].job_summary.fatal.phase,'READ_RACES');
+});
+
+test('a status write failure cannot return completed or PARTIAL HTTP success',async t=>{
+  const race=makeRace('status-write',1),state=setup(t,{races:[race],entries:entriesFor(race),before:({name,method})=>{
+    if(name==='AutoUpdateStatus'&&method==='create')throw Object.assign(new Error('private status write failure'),{response:{status:503}});
+  }});
+  const result=await runV8LiveGeneration(state.client);
+  assert.equal(result.v8.created,1);assert.equal(result.result_status,'FAILED');assert.equal(result.status_persisted,false);
+  assert.equal(result.error,'LIVE_STATUS_SAVE_FAILED');assert.equal(liveResponseStatus(result),503);
+  assert.equal(state.tables.AutoUpdateStatus.length,0);
+});
+
+test('an overlapping generation lock leaves the previous durable PARTIAL untouched',async t=>{
+  const state=setup(t),previous={id:'previous-job',name:LIVE_STATUS_NAME,status:'partial',last_updated:SOURCE,
+    job_summary:{result_status:'PARTIAL',pending_count:2,retry_pending_count:1}};
+  state.tables.AutoUpdateStatus.push(structuredClone(previous));
+  state.tables.ProcessLock.push({id:'active-generation',lock_key:'V8_LIVE_GENERATION',status:'active',expires_at:new Date(NOW+120000).toISOString()});
+  const result=await runV8LiveGeneration(state.client);
+  assert.equal(result.skipped,'locked');assert.equal(result.result_status,'SKIPPED');assert.equal(result.worker_completed,false);
+  assert.equal(liveResponseStatus(result),200);assert.deepEqual(state.tables.AutoUpdateStatus,[previous]);
+  assert.equal(state.calls.some(call=>call.name==='AutoUpdateStatus'),false);
+});
+
+test('an unconfirmed forecast write is reconciled on the next run without appending it again',async t=>{
+  const race=makeRace('unconfirmed-write',1),state=setup(t,{races:[race],entries:entriesFor(race)});
+  const entity=state.client.asServiceRole.entities.V8RaceForecast,create=entity.create;
+  entity.create=async doc=>{await create(doc);return null;};
+  const first=await runV8LiveGeneration(state.client);
+  assert.equal(first.result_status,'PARTIAL');assert.equal(first.v8.pending[0].code,'SAVE_NOT_CONFIRMED');assert.equal(liveResponseStatus(first),200);
+  assert.equal(state.tables.V8RaceForecast.length,1);const saved=structuredClone(state.tables.V8RaceForecast[0]);
+  entity.create=create;t.mock.timers.tick(1000);
+  const next=await runV8LiveGeneration(state.client);
+  assert.equal(next.result_status,'COMPLETE');assert.equal(next.v8.created,0);assert.equal(next.v8.existing,1);
+  assert.deepEqual(state.tables.V8RaceForecast,[saved]);
+});
+
+test('a failed lock write without an active lease is FAILED rather than a successful overlap',async t=>{
+  const state=setup(t,{before:({name,method})=>{if(name==='ProcessLock'&&method==='create')throw new Error('private lock write failure');}});
+  const result=await runV8LiveGeneration(state.client);
+  assert.equal(result.result_status,'FAILED');assert.equal(liveResponseStatus(result),503);
+  assert.equal(result.skipped,undefined);assert.equal(state.tables.AutoUpdateStatus[0].status,'error');
+  assert.equal(state.tables.AutoUpdateStatus[0].job_summary.fatal.phase,'LOCK');
+});
+
+test('ambiguous actionable race identities remain visible as an incomplete job',async t=>{
+  const race=makeRace('ambiguous-a',1),state=setup(t,{races:[race,{...race,id:'ambiguous-b'}]});
+  const result=await runV8LiveGeneration(state.client);
+  assert.equal(result.result_status,'PARTIAL');assert.equal(result.ok,false);assert.equal(liveResponseStatus(result),200);
+  assert.equal(result.v8.pending_count,1);assert.equal(result.v8.retry_pending_count,0);
+  assert.equal(result.v8.pending[0].code,'DUPLICATE_RACE_KEY');assert.equal(state.tables.V8RaceForecast.length,0);
+});
+
+test('mixed exhibition writes are held per race until the committed six-boat input matches',async t=>{
+  const a=makeRace('mixed-exhibition',1,{exhibition_ready:true}),b=makeRace('other-pre',2);
+  let finishCollection=true;
+  const state=setup(t,{races:[a,b],entries:[...entriesFor(a,true),...entriesFor(b)],before:({name,method,args,tables})=>{
+    if(finishCollection&&name==='Race'&&method==='get'&&args[0]===a.id){
+      finishCollection=false;
+      const rows=tables.RaceEntry.filter(row=>row.race_id===a.id),fresh=tables.Race.find(row=>row.id===a.id);
+      rows[1].exhibition_st=.07;rows[1].updated_date=new Date().toISOString();
+      commitExhibition(fresh,rows,new Date().toISOString());
+    }
+  }});
+  // The bulk read sees the first correction but not the second. By the fresh
+  // Race read, the collector has committed both, so the mixed snapshot differs.
+  state.tables.RaceEntry[0].exhibition_st=.05;
+  state.tables.RaceEntry[0].updated_date=new Date(NOW-1000).toISOString();
+  const first=await runV8LiveGeneration(state.client);
+  assert.equal(first.result_status,'PARTIAL');assert.equal(liveResponseStatus(first),200);
+  assert.equal(first.v8.created,1);assert.equal(first.v8.final,0);assert.equal(first.v8.retry_pending_count,1);
+  assert.deepEqual(first.v8.pending,[{race_key:a.race_key,stage:'FINAL',phase:'CHECK_EXHIBITION_COMMIT',code:'EXHIBITION_COMMIT_MISMATCH',retryable:true}]);
+  assert.equal(state.tables.V8RaceForecast[0].race_id,b.id);
+  const preserved=structuredClone(state.tables.V8RaceForecast[0]);
+  t.mock.timers.tick(1000);
+  const recovered=await runV8LiveGeneration(state.client),saved=state.tables.V8RaceForecast.find(row=>row.race_id===a.id);
+  assert.equal(recovered.result_status,'COMPLETE');assert.equal(recovered.v8.final,1);assert.equal(saved.exhibition_complete,true);
+  assert.equal(saved.boats[0].exhibition_st,.05);assert.equal(saved.boats[1].exhibition_st,.07);
+  const committedRace=state.tables.Race.find(row=>row.id===a.id);
+  assert.equal(saved.provenance.exhibition_input_key,committedRace.exhibition_input_key);
+  assert.equal(saved.provenance.exhibition_committed_at,committedRace.exhibition_committed_at);
+  assert.ok(Date.parse(saved.input_as_of)>=Date.parse(committedRace.exhibition_committed_at));
+  assert.deepEqual(state.tables.V8RaceForecast.find(row=>row.race_id===b.id),preserved);
+});
+
+test('a complete FINAL needs an available commit marker even when the exhibition ready flag is false',async t=>{
+  for(const kind of ['missing','future'])await t.test(kind,async child=>{
+    const race=makeRace('uncommitted-'+kind,1,{exhibition_ready:false}),entries=entriesFor(race,true);
+    const state=setup(child,{races:[race],entries,committed:false});
+    if(kind==='future')commitExhibition(state.tables.Race[0],state.tables.RaceEntry,new Date(NOW+1000).toISOString());
+    const result=await runV8LiveGeneration(state.client);
+    assert.equal(result.result_status,'PARTIAL');assert.equal(result.v8.final,0);assert.equal(result.v8.retry_pending_count,1);
+    assert.equal(result.v8.pending[0].code,kind==='missing'?'EXHIBITION_COMMIT_MISSING':'EXHIBITION_COMMIT_TIME_INVALID');
+    assert.equal(state.tables.V8RaceForecast.length,0);assert.equal(liveResponseStatus(result),200);
+  });
+});
+
+test('an incomplete FINAL remains saveable without a commit marker',async t=>{
+  const race=makeRace('incomplete-uncommitted',1,{exhibition_ready:true}),entries=entriesFor(race,true);
+  entries[5].exhibition_time=null;
+  const state=setup(t,{races:[race],entries,committed:false}),result=await runV8LiveGeneration(state.client);
+  assert.equal(result.result_status,'PARTIAL');assert.equal(result.v8.final,1);assert.equal(liveResponseStatus(result),200);
+  const saved=state.tables.V8RaceForecast[0];assert.equal(saved.exhibition_complete,false);
+  assert.equal(saved.provenance.exhibition_input_key,undefined);assert.notEqual(saved.decision.status,'BUY');
+  assert.equal(result.v8.pending[0].code,'EXHIBITION_INCOMPLETE_OR_CONFLICTED');
 });

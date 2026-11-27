@@ -33,12 +33,13 @@ const retryAfterMs=error=>{
 export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=40,sort='-created_date',fields}={}) {
   // Match the deployed cursor contract used by existing successful collectors.
   // Arrays and incomplete pages are never interpreted as a complete ledger.
-  let stopped=false,lastHttpStatus=null,retryBudgetExhausted=false;
+  let stopped=false,lastHttpStatus=null,lastTransient=false,retryBudgetExhausted=false;
   const fetchPage=async(q,options)=>{
+    lastTransient=false;
     const pageDeadline=Math.min(budget,Date.now()+READ_PAGE_TIMEOUT_MS);
     for(let attempt=0;attempt<3;attempt++){
       if(stopped||Date.now()>=pageDeadline){retryBudgetExhausted=true;throw new Error('READ_RETRY_BUDGET');}
-      lastHttpStatus=null;
+      lastHttpStatus=null;lastTransient=false;
       try{
         const result=await entity.filter(q,{...options,...(fields==null?{}:{fields})});
         if(stopped||Date.now()>=pageDeadline){retryBudgetExhausted=true;throw new Error('READ_RETRY_BUDGET');}
@@ -47,7 +48,8 @@ export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=
         return result;
       }catch(error){
         lastHttpStatus=readHttpStatus(error);
-        if(stopped||attempt===2||!transientReadError(error,lastHttpStatus))throw new Error('READ_ATTEMPT_FAILED');
+        lastTransient=transientReadError(error,lastHttpStatus);
+        if(stopped||attempt===2||!lastTransient)throw new Error('READ_ATTEMPT_FAILED');
         const delay=Math.max(retryBackoff[attempt],retryAfterMs(error)??0);
         if(!Number.isFinite(delay)||Date.now()+delay>=pageDeadline){retryBudgetExhausted=true;throw new Error('READ_RETRY_BUDGET');}
         await new Promise(resolve=>setTimeout(resolve,delay));
@@ -62,6 +64,9 @@ export async function readV8Rows(entity,query,{budget=Date.now()+25000,maxPages=
     const failure=retryBudgetExhausted?'retry_budget_exhausted':String(page.error||'unknown');
     const error=new Error('INCOMPLETE_READ:'+failure);
     if(lastHttpStatus!=null)error.http_status=lastHttpStatus;
+    // A caller may defer an individual race after a confirmed transport failure.
+    // Never carry an earlier recovered transport error into malformed page data.
+    error.retryable_read=lastTransient&&['page_read_failed_or_timed_out','retry_budget_exhausted'].includes(failure);
     throw error;
   }
   return page.rows;

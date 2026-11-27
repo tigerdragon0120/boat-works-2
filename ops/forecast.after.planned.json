@@ -1,0 +1,44 @@
+{
+  "app_id": "6a98c39d253ede3223a54f11",
+  "workflow_id": "6b027f5cb1e51751ca879490",
+  "name": "V8 Two Stage Forecasts",
+  "target_status": "active",
+  "current_version_id": null,
+  "version_id_note": "Platform-assigned content hash: fill from GET after the root applies the PUT. No remote update has been performed by this reviewer.",
+  "based_on_current_version_id": "468a9df0d4187e0ce803ce7d4588f27dffaa80ce382f2769fe5fa77d4c8db2cb",
+  "description": "保存済みデータからV8の前日・事前・展示後予想を5分ごとに独立実行。取得の1分後（毎日06:01〜23:56 JST）に開始。失敗はこのワークフローで追跡し、取得処理を停止させない。",
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "v8_two_stage_forecasts",
+      "version": "1.2.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "capture": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v8GenerateLiveForecasts",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "V8の事前・展示後予想を保存",
+            "description": "取得済みデータから5分ごとに独立実行。取得より1分ずらし、予想処理の失敗をこの履歴で追跡する。"
+          }
+        }
+      }
+    ]
+  },
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "schedule_mode": "recurring",
+      "cron_expression": "1,6,11,16,21,26,31,36,41,46,51,56 6-23 * * *",
+      "timezone": "Asia/Tokyo",
+      "ends_type": "never"
+    }
+  }
+}

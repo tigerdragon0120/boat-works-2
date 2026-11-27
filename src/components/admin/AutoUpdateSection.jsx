@@ -3,6 +3,7 @@ import { useCreditSavingRead } from "@/hooks/useCreditSavingRead";
 import { getAutoUpdateStatus, runAutoUpdateStep } from "@/lib/dataManagementService";
 import { RefreshCw, Calendar, CheckCircle2, AlertTriangle, Loader2, Clock, Zap, Download, Flag, BarChart3, CloudDownload } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { VENUES } from "@/components/liveV8/v8Client";
 
 async function readAutoUpdateStatus() {
   const response = await getAutoUpdateStatus();
@@ -12,7 +13,7 @@ async function readAutoUpdateStatus() {
 export default function AutoUpdateSection() {
   const [busy, setBusy] = useState(null);
   const [result, setResult] = useState(null);
-  const { data: status, loading, refresh: load } = useCreditSavingRead({
+  const { data: status, loading, error: statusError, refresh: load } = useCreditSavingRead({
     operation: 'getAutoUpdateStatusV2',
     read: readAutoUpdateStatus,
     interval: busy ? 30000 : 300000,
@@ -37,6 +38,14 @@ export default function AutoUpdateSection() {
         <Loader2 className="w-6 h-6 animate-spin text-sky-600" />
       </div>
     );
+  }
+
+  if (statusError) {
+    return <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+      <p className="font-bold">自動処理の状態を確認できませんでした</p>
+      <p className="mt-1">通信を確認して、状態を再読み込みしてください。</p>
+      <button type="button" onClick={() => load()} className="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-2 font-semibold">状態を再読込</button>
+    </div>;
   }
 
   const s = status || {};
@@ -68,7 +77,7 @@ export default function AutoUpdateSection() {
         <h2 className="text-lg font-bold text-slate-900">自動データ更新</h2>
         <span className="px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-bold">5分毎自動収集</span>
       </div>
-      <p className="text-xs text-slate-500">boatrace.jp公式サイトから毎日自動取得。番組表・結果・展示・PRE予想を自動処理。AI不使用・決定論的解析。</p>
+      <p className="text-xs text-slate-500">展示・オッズ・番組・結果の取得と、V8の予想保存はそれぞれ5分ごとに独立して動きます。取得できたデータを先に保存し、未完了分は次の定期実行で再処理します。</p>
 
       {/* ステータスバー */}
       <div className={cn("rounded-xl border p-3 flex items-center justify-between", statusColor[currentStatus])}>
@@ -76,7 +85,7 @@ export default function AutoUpdateSection() {
           {currentStatus === "success" ? <CheckCircle2 className="w-5 h-5" /> :
            currentStatus === "error" ? <AlertTriangle className="w-5 h-5" /> :
            <Clock className="w-5 h-5" />}
-          <span className="font-bold text-sm">{statusLabel[currentStatus] || currentStatus}</span>
+          <span className="font-bold text-sm">データ取得：{statusLabel[currentStatus] || currentStatus}</span>
           {s.current_step && <span className="text-xs opacity-70">({s.current_step})</span>}
         </div>
         <div className="text-xs text-right">
@@ -84,6 +93,8 @@ export default function AutoUpdateSection() {
           <div className="opacity-60">JST {s.jst_time || ""}</div>
         </div>
       </div>
+
+      <ForecastGenerationStatus value={s.forecast_generation} />
 
       {/* 本日データ */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
@@ -172,6 +183,46 @@ export default function AutoUpdateSection() {
       )}
     </div>
   );
+}
+
+function ForecastGenerationStatus({ value }) {
+  const ready = value?.read_status === 'READY';
+  const summary = ready ? value.job_summary : null;
+  const failed = ready && (value.status === 'error' || summary?.result_status === 'FAILED');
+  const partial = ready && (value.status === 'partial' || summary?.result_status === 'PARTIAL');
+  const complete = ready && value.status === 'success' && summary?.worker_completed === true && summary?.result_status === 'COMPLETE';
+  const at = value?.last_updated ? Date.parse(value.last_updated) : NaN;
+  const hour = Number(new Intl.DateTimeFormat('en-GB', {timeZone:'Asia/Tokyo',hour:'2-digit',hourCycle:'h23'}).format(new Date()));
+  const stale = ready && Number.isFinite(at) && Date.now() - at > 12 * 60000 && hour >= 6;
+  const missing = value?.read_status === 'MISSING';
+  const label = !ready ? (missing ? '実行記録待ち' : '状態の読込待ち') : failed ? 'エラーを確認' : stale ? '実行記録の更新を確認' : partial ? '一部を次回再処理' : complete ? '正常' : '実行状態を確認';
+  const tone = failed ? 'border-rose-200 bg-rose-50 text-rose-800' : partial || stale ? 'border-amber-200 bg-amber-50 text-amber-900' : complete ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-700';
+  const count = key => summary && Number.isInteger(summary[key]) && summary[key] >= 0 ? summary[key] : '—';
+  const pending = Array.isArray(summary?.pending) ? summary.pending : [];
+  const raceLabel = key => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})_(\d{2})$/.exec(String(key || ''));
+    return match ? `${Number(match[2])}/${Number(match[3])} ${VENUES[Number(match[4])] || '会場未確認'} ${Number(match[5])}R` : '対象レースを確認中';
+  };
+  return <div className={cn('rounded-xl border p-4 space-y-3', tone)}>
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h3 className="text-sm font-bold">V8予想保存：{label}</h3>
+      <span className="text-xs">最終更新 {Number.isFinite(at) ? new Date(at).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—'}</span>
+    </div>
+    <div className="grid grid-cols-3 gap-2 text-center text-xs">
+      <div className="rounded-lg bg-white/70 p-2"><div className="text-lg font-bold">{count('created')}</div>今回保存</div>
+      <div className="rounded-lg bg-white/70 p-2"><div className="text-lg font-bold">{count('retry_pending_count')}</div>再試行待ち</div>
+      <div className="rounded-lg bg-white/70 p-2"><div className="text-lg font-bold">{count('pending_count')}</div>次回処理</div>
+    </div>
+    <p className="text-xs">{!ready ? (missing ? '独立した予想処理の実行後に表示します。' : '予想保存の状態を取得できていません。保存件数は未確認です。') : failed ? '予想保存でエラーが発生しました。保存済みデータを保持し、データ取得は別の定期処理で続けます。' : stale ? '最終更新から12分以上経過しています。予想保存の実行状況を確認してください。' : partial ? '保存できた予想を保持しています。未完了分は次の定期実行で再処理します。締切後の補完は事後検証として扱います。' : complete ? '保存済みデータから予想を作成しました。次回も不足・更新分を確認します。' : '処理完了を確認できていません。最終更新と実行状況を確認してください。'}</p>
+    {pending.length > 0 && <details className="text-xs">
+      <summary className="cursor-pointer font-semibold">次回処理するレース</summary>
+      <ul className="mt-2 space-y-1">
+        {pending.slice(0,10).map((item,index)=><li key={`${item.race_key}-${index}`}>{raceLabel(item.race_key)} ・ {item.stage === 'FINAL' ? '展示後予想' : item.stage === 'DAY_BEFORE' ? '前日予想' : '事前予想'} ・ {item.retryable ? '取得・保存を再試行' : '次回処理'}</li>)}
+      </ul>
+      {(pending.length > 10 || summary?.pending_truncated) && <p className="mt-1">このほかの未完了分も次回の処理対象です。</p>}
+    </details>}
+    {failed && Array.isArray(value.errors) && value.errors.length > 0 && <p className="text-xs">{value.errors[0]}</p>}
+  </div>;
 }
 
 function StatBox({ label, value, sub, color }) {

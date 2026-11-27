@@ -214,6 +214,7 @@ test('permanent HTTP errors and non-network exceptions never retry or disclose u
     await assert.rejects(readV8Rows({filter:async()=>{calls++;throw readError(status);}},{race_date:'2026-11-22'}),error=>{
       assert.equal(error.message,'INCOMPLETE_READ:page_read_failed_or_timed_out');
       assert.equal(error.http_status,status);
+      assert.equal(error.retryable_read,false);
       assert.equal(error.message.includes('private'),false);
       return true;
     });
@@ -221,7 +222,7 @@ test('permanent HTTP errors and non-network exceptions never retry or disclose u
   }
   let calls=0;
   await assert.rejects(readV8Rows({filter:async()=>{calls++;throw new TypeError('malformed SDK configuration');}},{}),error=>{
-    assert.equal(error.http_status,undefined);return true;
+    assert.equal(error.http_status,undefined);assert.equal(error.retryable_read,false);return true;
   });
   assert.equal(calls,1);
 });
@@ -278,6 +279,7 @@ test('three exhausted attempts expose only the last safe status and never partia
   }},{},{budget:NOW+5000}),error=>{
     assert.equal(error.message,'INCOMPLETE_READ:page_read_failed_or_timed_out');
     assert.equal(error.http_status,504);
+    assert.equal(error.retryable_read,true);
     assert.equal(Object.hasOwn(error,'rows'),false);return true;
   });
   await flush();t.mock.timers.tick(200);await flush();t.mock.timers.tick(500);await flush();await pending;
@@ -292,8 +294,31 @@ test('a recovered transport error cannot mask an invalid response or attach a st
     calls++;if(calls===1)throw readError(503);return [{id:'invalid-array'}];
   }},{},{budget:NOW+5000}),error=>{
     assert.equal(error.message,'INCOMPLETE_READ:page_format_invalid');
-    assert.equal(error.http_status,undefined);return true;
+    assert.equal(error.http_status,undefined);assert.equal(error.retryable_read,false);return true;
   });
   await flush();t.mock.timers.tick(200);await flush();await pending;
   assert.equal(calls,2);
+});
+
+test('only the currently failing confirmed network read carries retryable metadata',async t=>{
+  t.mock.timers.enable({apis:['Date','setTimeout'],now:NOW});
+  let calls=0;
+  const pending=assert.rejects(readV8Rows({filter:async()=>{
+    calls++;throw Object.assign(new Error('Network Error'),{code:'ERR_NETWORK'});
+  }},{},{budget:NOW+5000}),error=>{
+    assert.equal(error.retryable_read,true);assert.equal(error.http_status,undefined);
+    assert.equal(error.message,'INCOMPLETE_READ:page_read_failed_or_timed_out');return true;
+  });
+  await flush();t.mock.timers.tick(200);await flush();t.mock.timers.tick(500);await flush();await pending;
+  assert.equal(calls,3);
+  calls=0;
+  const recovered=assert.rejects(readV8Rows({filter:async(_query,options)=>{
+    calls++;
+    if(calls===1)throw Object.assign(new Error('Network Error'),{code:'ERR_NETWORK'});
+    if(!options.cursor)return {items:[{id:'first'}],has_more:true,next_cursor:'second'};
+    return {items:[{id:'second'}],has_more:true,next_cursor:null};
+  }},{},{budget:Date.now()+5000}),error=>{
+    assert.equal(error.message,'INCOMPLETE_READ:continuation_invalid_or_repeated');assert.equal(error.retryable_read,false);return true;
+  });
+  await flush();t.mock.timers.tick(200);await flush();await recovered;assert.equal(calls,3);
 });

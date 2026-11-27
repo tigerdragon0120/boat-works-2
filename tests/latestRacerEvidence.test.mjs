@@ -16,6 +16,8 @@ import {selectV7RaceEntries} from '../base44/shared/v7RaceEntrySelector.js';
 import {utcMs} from '../base44/shared/v7FeatureObservation.js';
 import {jstDate,groupBy,chronological,canonicalForecasts} from '../base44/shared/v8Repository.js';
 import {loadRacerFrameTendencies,emptyFrameTendencies} from '../base44/shared/v8RacerTendencies.js';
+import {classifyLiveFailure,persistLiveStatus,liveResponseStatus,confirmLiveLockHeld} from '../base44/shared/v8LiveStatus.js';
+import {buildCommittedExhibitionKey} from '../base44/shared/exhibitionInputKey.js';
 import {normalizeRecentLaneSource,recentLaneSourceUrl} from '../base44/shared/v8RecentLaneSource.js';
 
 export const NOW = '2026-11-22T04:00:00.000Z';
@@ -224,13 +226,15 @@ const captureSource=stripTypeScriptTypes(withoutImports(readFileSync(new URL('..
   .replace('export default async function','return async function');
 function fakePlatform({shown=false}={}) {
   const r={...race,exhibition_ready:shown}, table={Race:[r],RaceEntry:entries().map(e=>shown?{...e,exhibition_course:7-e.boat_number,exhibition_st:.15,exhibition_time:6.7}:e),
-    RaceResult:[],OddsSnapshot:[],OnlineFetchLog:[],PredictionV7:[],V7GenerationTrace:[],V8RaceForecast:[],V7WeatherObservation:[],V8PatternEvidence:[],
+    RaceResult:[],OddsSnapshot:[],OnlineFetchLog:[],PredictionV7:[],V7GenerationTrace:[],V8RaceForecast:[],V7WeatherObservation:[],V8PatternEvidence:[],AutoUpdateStatus:[],
     V7StageClaim:['PRE','FINAL'].map(stage=>({id:'claim-'+stage,claim_key:race.race_key+'::'+stage,state:'free'}))};
+  if(shown){r.exhibition_input_key=buildCommittedExhibitionKey(r,table.RaceEntry);r.exhibition_committed_at=r.updated_date;}
   const matches=(row,query)=>Object.entries(query).every(([key,value])=>value&&typeof value==='object'&&'$in' in value?value.$in.includes(row[key]):row[key]===value);
   const sr=Object.fromEntries(Object.entries(table).map(([name,rows])=>[name,{name,rows,
     filter:async(query,sort)=>{const filtered=structuredClone(rows.filter(row=>matches(row,query)));return typeof sort==='object'?{items:filtered,has_more:false,next_cursor:null}:filtered;},
     get:async id=>structuredClone(rows.find(row=>row.id===id)),
     create:async payload=>{const saved={...structuredClone(payload),id:name+'-'+(rows.length+1),created_date:new Date().toISOString()};rows.push(saved);return structuredClone(saved);},
+    update:async(id,payload)=>{const row=rows.find(row=>row.id===id);Object.assign(row,structuredClone(payload));return structuredClone(row);},
     updateMany:async(query,change)=>{const matching=rows.filter(row=>matches(row,query));matching.forEach(row=>Object.assign(row,change.$set));return {updated:matching.length};},
   }]));
   return {table,sr,client:{auth:{me:async()=>({role:'admin'})},asServiceRole:{entities:sr}}};
@@ -246,6 +250,7 @@ function v7Runner(state,load) {
 }
 function v8Handler(state,load,recent={}) {
   const dependencies={createClientFromRequest:()=>state.client,acquireLock:async()=> 'lock',releaseLock:async()=>{},selectV7RaceEntries,utcMs,
+    classifyLiveFailure,persistLiveStatus,liveResponseStatus,confirmLiveLockHeld,buildCommittedExhibitionKey,
     buildRaceForecast,FORECAST_REVISION,jstDate,readV8Rows:async(entity,query)=>entity.filter(query),groupBy,chronological,canonicalForecasts,
     loadLatestRacerDataset:load,enrichLatestRacerEntries,loadRacerFrameTendencies,emptyFrameTendencies,
     loadVenueProfiles:async()=>({status:'UNAVAILABLE',byVenueCode:new Map(),rows:[],reason:'VENUE_ENTITY_UNAVAILABLE'}),
@@ -338,6 +343,7 @@ test('a shared-source read failure does not fan out source requests and still sa
 test('new WAKU10 evidence bypasses the unchanged FINAL throttle',async t=>{
   t.mock.timers.enable({apis:['Date'],now:Date.parse(NOW)});
   const state=fakePlatform({shown:true});state.table.RaceEntry.forEach(row=>{row.exhibition_course=row.boat_number;});
+  state.table.Race[0].exhibition_input_key=buildCommittedExhibitionKey(state.table.Race[0],state.table.RaceEntry);
   const ready=await capturedRecentSource(state);let observation={status:'MISSING',snapshot:null,rows:[]};
   const handle=v8Handler(state,async()=>dataset(),{ensure:async()=>observation});
   const request=()=>new Request('https://test.invalid/capture',{method:'POST'});

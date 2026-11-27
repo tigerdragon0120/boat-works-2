@@ -9,6 +9,8 @@ import {enrichLatestRacerEntries} from './latestRacerEvidence.js';
 import {loadRacerFrameTendencies,emptyFrameTendencies} from './v8RacerTendencies.js';
 import {loadRecentLaneSnapshots,ensureRecentLaneSnapshot} from './v8RecentLaneStore.js';
 import {loadVenueProfiles,ensureVenueProfile} from './v8VenueStore.js';
+import {classifyLiveFailure,confirmLiveLockHeld} from './v8LiveStatus.js';
+import {buildCommittedExhibitionKey} from './exhibitionInputKey.js';
 
 const hasExhibition=(entries)=>entries.some(e=>['exhibition_time','exhibition_st','exhibition_course'].some(k=>e[k]!=null&&e[k]!==''));
 // Leave room in the shared service-token read quota for exhibition and result collectors.
@@ -88,30 +90,60 @@ export async function runV8LiveCapture(client,options={}){
   const deadlineMs=Math.min(started+requestedBudget,Number.isFinite(options.deadlineMs)?options.deadlineMs:Infinity);
   const phaseBudget=milliseconds=>Math.min(deadlineMs,Date.now()+milliseconds);
   const expired=()=>Date.now()>=deadlineMs;
-  const summary={ok:true,revision:FORECAST_REVISION,today,tomorrow,races:0,created:0,day_before:0,pre:0,final:0,buys:0,held:0,existing:0,errors:0,reasons:{}};
+  const summary={ok:true,revision:FORECAST_REVISION,today,tomorrow,races:0,created:0,day_before:0,pre:0,final:0,buys:0,held:0,existing:0,errors:0,attempted:0,reasons:{}};
+  const pending=new Map();
+  let currentRace=null,currentStage=null,racePhase='QUEUE';
+  const waitFor=(code,retryable=false)=>{
+    if(currentRace)pending.set(currentRace.id,{race_key:currentRace.race_key,stage:currentStage,phase:racePhase,code,retryable});
+  };
+  const pendingQueue=code=>{for(const row of pending.values())if(row.phase==='QUEUE')row.code=code;};
   let phase='START';
   const trace=next=>{phase=next;console.info('[V8_CAPTURE_PHASE]',JSON.stringify({phase,elapsed_ms:Date.now()-started,
     races:summary.races,active_races:summary.active_races||0,prior_index_rows:summary.prior_index_rows||0,
     hydrated_baselines:summary.hydrated_baselines||0,created:summary.created,held:summary.held,errors:summary.errors}));};
-  const hold=(reason)=>{summary.held++;summary.reasons[reason]=(summary.reasons[reason]||0)+1;};
-  const finish=()=>({...summary,completed_at:new Date().toISOString(),duration_ms:Date.now()-started});
-  const stopForBudget=()=>{summary.partial=true;summary.reasons.TIME_BUDGET=(summary.reasons.TIME_BUDGET||0)+1;};
+  const hold=(reason,retryable=false)=>{
+    summary.held++;summary.reasons[reason]=(summary.reasons[reason]||0)+1;
+    if(['CUTOFF','RACE_CHANGED_OR_CLOSED','RESULT_ALREADY_AVAILABLE','PERSISTED_TOO_LATE_EXCLUDED'].includes(reason))pending.delete(currentRace?.id);
+    else waitFor(reason,retryable);
+  };
+  const savedWork=record=>{
+    if(record.stage==='FINAL'&&record.exhibition_complete!==true)waitFor('EXHIBITION_INCOMPLETE_OR_CONFLICTED');
+    else pending.delete(currentRace?.id);
+  };
+  const finish=()=>{
+    const result_status=summary.ok===false?'FAILED':pending.size||summary.partial?'PARTIAL':'COMPLETE';
+    const reason_counts={};for(const row of pending.values())reason_counts[row.code]=(reason_counts[row.code]||0)+1;
+    if(!pending.size&&summary.partial)Object.assign(reason_counts,summary.reasons);
+    return {...summary,ok:result_status==='COMPLETE',partial:result_status==='PARTIAL'||summary.partial===true,worker_completed:true,result_status,
+      started_at:new Date(started).toISOString(),completed_at:new Date().toISOString(),duration_ms:Date.now()-started,
+      pending_count:pending.size,retry_pending_count:[...pending.values()].filter(row=>row.retryable).length,
+      pending:[...pending.values()].slice(0,50),pending_truncated:pending.size>50,reason_counts};
+  };
+  const stopForBudget=()=>{summary.partial=true;summary.reasons.TIME_BUDGET=(summary.reasons.TIME_BUDGET||0)+1;pendingQueue('TIME_BUDGET');};
   let lock=null;
   try{
     if(expired()){stopForBudget();return finish();}
     lock=await acquireLock(client,'V8_FORECAST_CAPTURE','v8CaptureForecasts',120000);
-    if(!lock)return {...finish(),skipped:'locked'};
+    if(!lock){
+      if(await confirmLiveLockHeld(client,'V8_FORECAST_CAPTURE'))return {...finish(),ok:true,skipped:'locked',worker_completed:false,result_status:'SKIPPED'};
+      throw new Error('LOCK_ACQUISITION_NOT_CONFIRMED');
+    }
     if(expired()){stopForBudget();return finish();}
     trace('READ_RACES');
     const races=await readV8Rows(sr.Race,scope,{budget:phaseBudget(30000),maxPages:8});
-    const uniqueRaces=[...groupBy(races,'race_key').values()].filter(group=>group.length===1).map(g=>g[0]);
+    const raceGroups=groupBy(races,'race_key');
+    const uniqueRaces=[...raceGroups.values()].filter(group=>group.length===1).map(g=>g[0]);
     summary.races=uniqueRaces.length;
     summary.duplicate_race_keys=groupBy(races,'race_key').size-uniqueRaces.length;
+    for(const [key,group] of raceGroups)if(group.length>1&&group.some(r=>!['finished','cancelled'].includes(r.status)&&utcMs(r.deadline)>Date.now()+90000))
+      pending.set('duplicate:'+key,{race_key:key,stage:null,phase:'READ_RACES',code:'DUPLICATE_RACE_KEY',retryable:false});
     const active=uniqueRaces.filter(r=>!['finished','cancelled'].includes(r.status)&&utcMs(r.deadline)>Date.now()+90000);
     // First cover today's closing races; then fill all remaining pre-race plans and tomorrow.
     active.sort((a,b)=>Number(a.race_date!==today)-Number(b.race_date!==today)||utcMs(a.deadline)-utcMs(b.deadline));
     const todo=active,activeIds=todo.map(r=>r.id);
     summary.active_races=todo.length;
+    for(const race of todo)pending.set(race.id,{race_key:race.race_key,stage:race.race_date===tomorrow?'DAY_BEFORE':race.exhibition_ready?'FINAL':'PRE',
+      phase:'QUEUE',code:'NOT_PROCESSED',retryable:true});
     if(expired()){stopForBudget();return finish();}
     if(!todo.length){trace('COMPLETE');return finish();}
     trace('READ_PRIOR_INDEX_AND_SOURCES');
@@ -142,14 +174,17 @@ export async function runV8LiveCapture(client,options={}){
     const entriesByRace=groupBy(entryRows,'race_id');
     trace('CAPTURE_RACES');
     for(const race of todo){
-      if(summary.created>=MAX_FORECASTS_PER_RUN){summary.partial=true;break;}
+      if(summary.created>=MAX_FORECASTS_PER_RUN){summary.partial=true;pendingQueue('BATCH_LIMIT');break;}
       if(expired()){stopForBudget();break;}
+      currentRace=race;currentStage=pending.get(race.id)?.stage||null;racePhase='SELECT_ENTRIES';summary.attempted++;
       if(utcMs(race.deadline)<=Date.now()+90000){hold('CUTOFF');continue;}
       const selected=selectV7RaceEntries(entriesByRace.get(race.id)||[],race);
       if(selected.reason){hold(selected.reason);continue;}
       const entries=selected.entries;
       const isFinal=race.race_date===today&&(race.exhibition_ready===true||hasExhibition(entries));
       const stage=race.race_date===tomorrow?'DAY_BEFORE':isFinal?'FINAL':'PRE';
+      currentStage=stage;
+      if(pending.has(race.id))pending.get(race.id).stage=stage;
       const records=byRace.get(race.id)||[];
       // The shared source is acquired once per race identity. A prior forecast
       // without WAKU10 can be supplemented when the source becomes available.
@@ -200,7 +235,7 @@ export async function runV8LiveCapture(client,options={}){
       const sourceLost=!!priorStage&&(!recentSnapshotId&&!!priorStage.provenance?.recent_lane_snapshot_id
         ||!venueSnapshotId&&!!priorStage.provenance?.venue_snapshot_id);
       if(stage!=='FINAL'&&(sameRecentSource(priorStage)&&sameVenueSource(priorStage)||sourceLost)){
-        summary.existing++;continue;
+        summary.existing++;pending.delete(race.id);continue;
       }
       const lastFinal=records.filter(r=>r.stage==='FINAL').sort(chronological).at(-1);
       const lastFinalAt=utcMs(lastFinal?.generated_at);
@@ -212,15 +247,18 @@ export async function runV8LiveCapture(client,options={}){
       });
       // Throttle only complete, unchanged forecasts. Exhibition corrections and
       // newly completed inputs must reach the existing source-time/cutoff checks now.
-      if(stage==='FINAL'&&lastFinalComplete&&unchangedInputs&&sameRecentSource(lastFinal)&&sameVenueSource(lastFinal)&&Date.now()-lastFinalAt<180000){summary.existing++;continue;}
+      if(stage==='FINAL'&&lastFinalComplete&&unchangedInputs&&sameRecentSource(lastFinal)&&sameVenueSource(lastFinal)&&Date.now()-lastFinalAt<180000){summary.existing++;pending.delete(race.id);continue;}
       try{
+        racePhase='READ_RACE';
         const fresh=await sr.Race.get(race.id);
         if(!fresh||fresh.race_key!==race.race_key||['finished','cancelled'].includes(fresh.status)||utcMs(fresh.deadline)<=Date.now()+90000){hold('RACE_CHANGED_OR_CLOSED');continue;}
+        racePhase='READ_RESULT';
         const results=await readV8Rows(sr.RaceResult,{race_id:race.id},{budget:phaseBudget(8000),maxPages:2});
         if(expired()){stopForBudget();break;}
         if(results.some(r=>r.is_finished||r.result_status==='RESULT_FINAL')){hold('RESULT_ALREADY_AVAILABLE');continue;}
         let odds=null,weather=null;
         if(stage==='FINAL'){
+          racePhase='READ_QUOTES';
           const readBudget=phaseBudget(15000);
           const [quotes,weathers]=await Promise.all([
             readV8Rows(sr.OddsSnapshot,{race_id:race.id},{budget:readBudget,maxPages:3,sort:'-captured_at'}),
@@ -232,12 +270,14 @@ export async function runV8LiveCapture(client,options={}){
         }
         if(expired()){stopForBudget();break;}
         const baselineIndex=selectCaptureBaseline(records);
+        racePhase='READ_BASELINE_DETAIL';
         if(baselineIndex)trace('READ_BASELINE_DETAIL');
         const hydrated=await hydrateBaseline(sr.V8RaceForecast,baselineIndex,fresh,phaseBudget(10000));
         if(hydrated.reason){hold(hydrated.reason);continue;}
         if(expired()){stopForBudget();break;}
         const baseline=hydrated.baseline;
         if(baseline)summary.hydrated_baselines=(summary.hydrated_baselines||0)+1;
+        racePhase='BUILD_FORECAST';
         trace('BUILD_FORECAST');
         const generatedAt=new Date().toISOString();
         const racerEvidence=enrichLatestRacerEntries({race:fresh,entries,stage,asOf:generatedAt,dataset:racerDatasetRead.dataset});
@@ -254,6 +294,19 @@ export async function runV8LiveCapture(client,options={}){
         const output=buildRaceForecast({race:fresh,entries:racerEvidence.entries,stage,now:generatedAt,baseline,odds,weather,
           originalExhibition:stage==='FINAL'?fresh.original_exhibition:null,venueProfile});
         if(!output.ok){hold(output.reason||'BUILD_HELD');continue;}
+        if(stage==='FINAL'&&output.record.exhibition_complete===true){
+          racePhase='CHECK_EXHIBITION_COMMIT';
+          // Entry updates are not atomic. Only a completed collection whose
+          // normalized six-boat inputs match this snapshot may become a
+          // complete FINAL. An incomplete FINAL keeps its existing history.
+          const entryKey=buildCommittedExhibitionKey(fresh,entries),committedAt=utcMs(fresh.exhibition_committed_at);
+          if(!entryKey||!fresh.exhibition_input_key||committedAt==null){hold('EXHIBITION_COMMIT_MISSING',true);continue;}
+          if(committedAt>utcMs(generatedAt)){hold('EXHIBITION_COMMIT_TIME_INVALID',true);continue;}
+          if(fresh.exhibition_input_key!==entryKey){hold('EXHIBITION_COMMIT_MISMATCH',true);continue;}
+          output.record.provenance.exhibition_input_key=entryKey;
+          output.record.provenance.exhibition_committed_at=new Date(committedAt).toISOString();
+          output.record.input_as_of=new Date(Math.max(utcMs(output.record.input_as_of),committedAt)).toISOString();
+        }
         output.record.provenance.racer_term_evidence=racerEvidence.provenance;
         output.record.provenance.recent_lane_snapshot_id=recentSnapshotId;
         output.record.provenance.recent_lane_read_status=recentLane.status;
@@ -263,36 +316,45 @@ export async function runV8LiveCapture(client,options={}){
         if(racerEvidence.provenance.applied_boats>0){
           output.record.input_as_of=new Date(Math.max(utcMs(output.record.input_as_of),utcMs(racerEvidence.provenance.source.available_at))).toISOString();
         }
-        if(saved.has(output.record.forecast_key)){summary.existing++;continue;}
+        if(saved.has(output.record.forecast_key)){
+          if(canonical.conflicts.includes(output.record.forecast_key))hold('FORECAST_KEY_CONFLICT');
+          else {summary.existing++;savedWork(output.record);}
+          continue;
+        }
         if(utcMs(fresh.deadline)<=Date.now()+90000){hold('CUTOFF');continue;}
         // Re-read the exact logical key before append. Duplicate-key readers fail closed.
+        racePhase='CHECK_FORECAST_KEY';
         const same=await sr.V8RaceForecast.filter({forecast_key:output.record.forecast_key},'-created_date',2);
         if(!Array.isArray(same))throw new Error('KEY_READ_INVALID');
-        if(same.length){summary.existing++;continue;}
+        if(same.length){if(same.length>1)hold('FORECAST_KEY_CONFLICT');else {summary.existing++;savedWork(output.record);}continue;}
         if(expired()){stopForBudget();break;}
         if(utcMs(fresh.deadline)<=Date.now()+90000){hold('CUTOFF');continue;}
         trace('SAVE_FORECAST');
+        racePhase='SAVE_FORECAST';
         const record=await sr.V8RaceForecast.create(output.record);
         if(!record?.id)throw new Error('SAVE_NOT_CONFIRMED');
         saved.add(output.record.forecast_key);records.push(record);byRace.set(race.id,records);
         summary.created++;summary[stage==='DAY_BEFORE'?'day_before':stage==='PRE'?'pre':'final']++;
+        savedWork(record);
         if(racerEvidence.provenance.applied_boats>0)summary.racer_term.enriched_forecasts++;
         else {const reason=racerEvidence.provenance.reason||'NOT_APPLIED';summary.racer_term.skipped[reason]=(summary.racer_term.skipped[reason]||0)+1;}
         if(record.decision?.status==='BUY')summary.buys++;
         if(utcMs(record.created_date)==null||utcMs(record.created_date)>=utcMs(record.deadline)-60000)hold('PERSISTED_TOO_LATE_EXCLUDED');
       }catch(error){
+        const failure=classifyLiveFailure(error,racePhase);
+        summary.errors++;waitFor(failure.code,failure.retryable);
+        console.error('[V8_CAPTURE_RACE_FAILURE]',JSON.stringify({race_key:race.race_key,stage,...failure}));
+        if(!failure.retryable){summary.ok=false;summary.error='LIVE_CAPTURE_FAILED';summary.fatal=failure;break;}
+        summary.partial=true;
+        if(failure.http_status===429){summary.reasons.RATE_LIMIT_BACKOFF=(summary.reasons.RATE_LIMIT_BACKOFF||0)+1;pendingQueue('RATE_LIMIT_BACKOFF');break;}
         if(expired()){stopForBudget();break;}
-        const status=error?.http_status??error?.response?.status??error?.status;
-        if(Number(status)===429||/rate limit exceeded/i.test(String(error?.message||error))){
-          summary.partial=true;summary.reasons.RATE_LIMIT_BACKOFF=(summary.reasons.RATE_LIMIT_BACKOFF||0)+1;break;
-        }
-        summary.errors++;console.error('[V8_CAPTURE]',race.race_key,String(error?.message||error).slice(0,150));
       }
     }
     trace('COMPLETE');return finish();
   }catch(error){console.error('[V8_CAPTURE_FAILURE]',JSON.stringify({phase,elapsed_ms:Date.now()-started,
     kind:['Error','TypeError','RangeError','ReferenceError','SyntaxError','AbortError','TimeoutError'].includes(error?.name)?error.name:'UnknownError',
     prior_index_rows:summary.prior_index_rows||0,created:summary.created}));
-    if(expired()){stopForBudget();return finish();}return {...finish(),ok:false,error:'FORECAST_READ_OR_SAVE_FAILED',details:String(error?.message||error).slice(0,120)};}
+    summary.ok=false;summary.errors++;summary.fatal={...classifyLiveFailure(error,phase),retryable:false};
+    return {...finish(),error:'FORECAST_READ_OR_SAVE_FAILED'};}
   finally{if(lock)await releaseLock(client,lock).catch(()=>{});}
 }

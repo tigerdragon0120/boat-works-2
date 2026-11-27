@@ -1,0 +1,71 @@
+{
+  "id": "6aa2c291cea454b2c3e09261",
+  "app_id": "6a98c39d253ede3223a54f11",
+  "name": "Daily Auto Update",
+  "description": "5分ごとに展示・オッズ・結果・番組を収集し、完了直後にV8自身の買い目を保存。新規取得0件でも保存済み入力から補完。毎日06:00〜23:55 JST。",
+  "status": "active",
+  "status_reason": null,
+  "current_version_id": "609e6827d4cd78fd1ab8d84fdfe01f8ecfaa7e63e3d9fe7823be9939657aad52",
+  "trigger": {
+    "condition": null,
+    "config": {
+      "trigger_type": "scheduled",
+      "events": [],
+      "schedule_mode": "recurring",
+      "cron_expression": "*/5 6-23 * * *",
+      "one_time_date": null,
+      "timezone": "Asia/Tokyo",
+      "interval_value": null,
+      "interval_unit": null,
+      "interval_anchor": null,
+      "ends_type": "never",
+      "ends_on_date": null,
+      "ends_after_count": null
+    },
+    "id": "d6ca3c2d1e994d39"
+  },
+  "definition": {
+    "document": {
+      "dsl": "1.0.0",
+      "name": "daily_auto_update",
+      "version": "1.2.0",
+      "namespace": "base44"
+    },
+    "do": [
+      {
+        "auto_update": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "runDailyAutoUpdate",
+            "args": {
+              "step": "auto"
+            }
+          },
+          "then": "capture_forecasts",
+          "x-base44": {
+            "title": "展示・オッズを取得",
+            "description": "5分ごとに公式データを取得し、完了後は待機を挟まずV8予想へ進む。"
+          }
+        }
+      },
+      {
+        "capture_forecasts": {
+          "call": "invoke_backend_function",
+          "with": {
+            "function_name": "v8GenerateLiveForecasts",
+            "args": {}
+          },
+          "then": "end",
+          "x-base44": {
+            "title": "取得後すぐV8の買い目を保存",
+            "description": "取得済みデータで前日・展示前・展示後予想を保存する。新規取得0件でも既存データから補完する。"
+          }
+        }
+      }
+    ]
+  },
+  "updated_date": "2026-11-27T00:12:18.159000Z",
+  "last_run_at": "2026-11-27T00:25:58.779000Z",
+  "last_run_status": "success",
+  "consecutive_failures": 0
+}

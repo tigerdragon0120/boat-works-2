@@ -11,6 +11,7 @@ import { selectLiveInputRaces, isSavedExhibitionComplete } from '../../shared/li
 import { readV8Rows } from '../../shared/v8Repository.js';
 import { planRaceCardEntries } from '../../shared/raceCardEntryPlan.js';
 import { fetchOriginalExhibition } from '../../shared/originalExhibition.js';
+import { buildCommittedExhibitionKey } from '../../shared/exhibitionInputKey.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -21,9 +22,10 @@ const str = (v: any) => (v != null ? String(v).trim() : '');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Base44 Entity APIのRate limit(429)を指数バックオフで吸収
-async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 8): Promise<T> {
+async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 8, deadlineMs = Infinity): Promise<T> {
   let lastError: any;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (Date.now() >= deadlineMs) throw new Error('COLLECTOR_TIME_BUDGET');
     try {
       return await fn();
     } catch (e: any) {
@@ -32,7 +34,9 @@ async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 8): Prom
       const isRateLimit = /rate\s*limit|too many requests|429/i.test(msg);
       if (!isRateLimit || attempt === maxRetries) throw e;
       const delay = Math.min(30000, 1000 * Math.pow(2, attempt));
-      await sleep(delay + Math.floor(Math.random() * 500));
+      const wait = delay + Math.floor(Math.random() * 500);
+      if (Date.now() + wait >= deadlineMs) throw e;
+      await sleep(wait);
     }
   }
   throw lastError;
@@ -107,7 +111,7 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
   const startTime = Date.now();
 
   const indexUrl = buildUrl('index', raceDate, '', 0);
-  const indexRes = await fetchHtml(indexUrl);
+  const indexRes = await fetchHtml(indexUrl, 0, {timeoutMs:6000, deadlineMs:startTime + timeBudgetMs});
   if (!indexRes.ok) {
     errors.push(`レース指数取得失敗: HTTP ${indexRes.status}`);
     return { venues: 0, races: 0, entries: 0, skipped: 0, errors };
@@ -156,7 +160,7 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     let deadlineTimes: string[] = [];
     let seriesName = '';
     try {
-      const sched = await fetchHtml(buildUrl('racelist', raceDate, venueCode, 1));
+      const sched = await fetchHtml(buildUrl('racelist', raceDate, venueCode, 1), 0, {timeoutMs:6000, deadlineMs:startTime + timeBudgetMs});
       if (sched.ok) {
         deadlineTimes = parseDeadlineTimes(sched.html);
         seriesName = parseSeriesName(sched.html);
@@ -220,7 +224,7 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       const batch = targetRaceNos.slice(i, i + 4);
       const got = await Promise.all(batch.map(async (rno) => {
         try {
-          const res = await fetchHtml(buildUrl('racelist', raceDate, venueCode, rno));
+          const res = await fetchHtml(buildUrl('racelist', raceDate, venueCode, rno), 0, {timeoutMs:6000, deadlineMs:startTime + timeBudgetMs});
           if (!res.ok) return { rno, error: `HTTP ${res.status}` };
           const parsed = parseRaceCard(res.html, raceDate, venueCode, venueName, rno);
           const race = parsed.data?.venues?.[0]?.races?.[0];
@@ -330,9 +334,9 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     const entryPlan=planRaceCardEntries(freshEntries,incomingEntries);
     for(const held of entryPlan.held)errors.push(venueName + ': ' + held.race_key + ' ' + held.reason + '（既存行を保持）');
     const entryCreates=entryPlan.creates,entryUpdates=entryPlan.updates;
-    if (entryCreates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkCreate(entryCreates))
+    if (entryCreates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkCreate(entryCreates), 1, startTime + timeBudgetMs)
       .catch((e: any) => errors.push(`${venueName}: RaceEntry作成 ${e.message}`));
-    if (entryUpdates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkUpdate(entryUpdates))
+    if (entryUpdates.length) await withRateLimitRetry(() => sr.RaceEntry.bulkUpdate(entryUpdates), 1, startTime + timeBudgetMs)
       .catch((e: any) => errors.push(`${venueName}: RaceEntry更新 ${e.message}`));
 
     // Preserve raw duplicate history. Ambiguous slots are held, never deleted here.
@@ -387,7 +391,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
     // ============================================================
     let resultSaved = false;
     try {
-      const boatcastResult = await resolveRaceResult(race);
+      const boatcastResult = await resolveRaceResult(race, {deadlineMs:startTime + timeBudgetMs,timeoutMs:6000});
       if (boatcastResult.source === 'BOATCAST' && boatcastResult.result?.result_trifecta) {
         await upsertBoatcastResultAndVerify(base44, race, boatcastResult, { verifyLegacy: false });
         fetched++;
@@ -402,7 +406,7 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
     // BOATCAST失敗時はLOCAL fallback
     if (!resultSaved) {
       const url = buildUrl('raceresult', raceDate, venueCode, raceNumber);
-      const res = await fetchHtml(url);
+      const res = await fetchHtml(url, 0, {timeoutMs:6000, deadlineMs:startTime + timeBudgetMs});
       if (!res.ok) continue;
 
       const parsed = parseResult(res.html, raceDate, venueCode, venueName);
@@ -514,17 +518,54 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
 
     const url = buildUrl('beforeinfo', raceDate, venueCode, raceNumber);
     const res = await fetchHtml(url, 0, { timeoutMs: 6000, deadlineMs: startTime + timeBudgetMs });
-    if (!res.ok) continue;
+    if (!res.ok) {
+      errors.push(`${venueName} R${raceNumber}: 展示取得を完了できませんでした（HTTP ${res.status || 0}・次回再取得）`);
+      continue;
+    }
 
     const exhibitionCapturedAt = new Date().toISOString();
     const parsed = parseBeforeInfo(res.html);
     if (!parsed.ok || !parsed.data?.entries?.length) continue;
 
-    const entries = uniqueEntriesByBoat(await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []));
-    const entryByBoat = new Map(entries.map((e: any) => [e.boat_number, e]));
+    let entries: any[];
+    try {
+      const stored = await readV8Rows(sr.RaceEntry, {race_key:race.race_key},
+        {budget:Math.min(startTime + timeBudgetMs, Date.now() + 8000), maxPages:2, sort:'-updated_date'});
+      // A failed/partial read is not an empty ledger. Do not downgrade READY or
+      // replace the saved original exhibition when its stored inputs are unknown.
+      if (!stored.length || stored.length>6 || stored.some((entry: any) => entry.race_id !== race.id || entry.race_key !== race.race_key
+          || !Number.isInteger(Number(entry.boat_number)) || Number(entry.boat_number)<1 || Number(entry.boat_number)>6)
+        || new Set(stored.map((entry: any) => Number(entry.boat_number))).size !== stored.length) {
+        errors.push(`${venueName} R${raceNumber}: 保存済み展示の出走者対応を確認できないため更新を保留`);
+        continue;
+      }
+      entries = stored;
+    } catch (e: any) {
+      const status = Number(e?.http_status ?? e?.response?.status ?? e?.status);
+      if ([401,403].includes(status) || ['TypeError','ReferenceError','SyntaxError','RangeError'].includes(e?.name)) throw e;
+      errors.push(`${venueName} R${raceNumber}: 保存済み展示の読取に失敗したため既存データを保持（次回再取得）`);
+      continue;
+    }
+    const entryByBoat = new Map(entries.map((e: any) => [Number(e.boat_number), e]));
+    const registration = (entry: any) => String(entry?.registration_number ?? entry?.register_number ?? '').trim();
+    if (parsed.data.entries.some((entry: any) => {
+      const stored = entryByBoat.get(Number(entry.boat_number)), sourceRegistration = registration(entry);
+      return !stored || (sourceRegistration && sourceRegistration !== registration(stored));
+    })) {
+      errors.push(`${venueName} R${raceNumber}: 展示元と保存済み選手の対応が異なるため更新を保留`);
+      continue;
+    }
+    // Associate the source with the saved roster, but never fill a missing
+    // source measurement from an older stored exhibition.
+    const sourceEntries = parsed.data.entries.map((entry: any) => ({
+      ...entry, race_id:race.id, race_key:race.race_key,
+      registration_number:registration(entryByBoat.get(Number(entry.boat_number))),
+      exhibition_st_raw:entry.exhibition_st,
+    }));
 
     let updated = 0;
     let criticalChanged = false;
+    let entryWritesConfirmed = true;
     for (const pe of parsed.data.entries) {
       const bn = pe.boat_number;
       const existing = entryByBoat.get(bn);
@@ -555,7 +596,8 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
         const courseChanged = Object.prototype.hasOwnProperty.call(update, 'exhibition_course');
         const previousCourse = existing.exhibition_course;
         try {
-          await sr.RaceEntry.update(existing.id, update);
+          const savedEntry = await sr.RaceEntry.update(existing.id, update);
+          if (savedEntry?.id !== existing.id) throw new Error('ENTRY_SAVE_UNCONFIRMED');
           Object.assign(existing, update); // Only confirmed writes count as saved evidence.
           updated++;
           criticalChanged = true;
@@ -563,6 +605,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
             logs.push(`${venueName} R${raceNumber}: ${bn}号艇の進入変更を検知 ${previousCourse ?? '未取得'}→${pe.exhibition_course}`);
           }
         } catch (e: any) {
+          entryWritesConfirmed = false;
           errors.push(`${venueName} R${raceNumber}: ${bn}号艇の展示更新失敗 ${e.message}`);
         }
       }
@@ -577,6 +620,10 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const scratchedBoats = [...new Set([...storedScratched, ...parsedScratched])].filter((n: any) => n >= 1 && n <= 6).sort((a: any,b: any) => a-b);
     const activeBoatCount = parsed.data.active_boat_count || Math.max(1, 6 - scratchedBoats.length);
     const complete = isSavedExhibitionComplete(entries, scratchedBoats);
+    const commitRace = {...race,scratched_boats:scratchedBoats};
+    const sourceKey = buildCommittedExhibitionKey(commitRace, sourceEntries);
+    const savedKey = buildCommittedExhibitionKey(commitRace, entries);
+    const sourceCommitted = entryWritesConfirmed && sourceKey != null && sourceKey === savedKey;
     const original = await fetchOriginalExhibition({
       race: { ...race, scratched_boats: scratchedBoats }, entries, exhibitionEntries: parsed.data.entries,
       exhibitionSourceUrl: url, exhibitionCapturedAt,
@@ -584,6 +631,13 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       deadlineMs: Math.min(startTime + timeBudgetMs - 1500, deadlineMs > Date.now() ? deadlineMs - 65000 : Infinity),
     });
     const raceUpdate: any = {};
+    // The marker and READY flag are one Race write after every required entry
+    // write has succeeded. Older markers survive incomplete/failed refreshes.
+    const committedAt = Date.parse(race.exhibition_committed_at || '');
+    if (sourceCommitted && (race.exhibition_input_key !== sourceKey || !Number.isFinite(committedAt) || committedAt>Date.now())) {
+      raceUpdate.exhibition_input_key = sourceKey;
+      raceUpdate.exhibition_committed_at = new Date().toISOString();
+    }
     if (JSON.stringify(original.snapshot) !== JSON.stringify(race.original_exhibition)) raceUpdate.original_exhibition = original.snapshot;
     if (JSON.stringify(storedScratched) !== JSON.stringify(scratchedBoats)) raceUpdate.scratched_boats = scratchedBoats;
     if (race.exhibition_ready !== complete) raceUpdate.exhibition_ready = complete;
@@ -599,7 +653,8 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     let raceSaved = true;
     if (Object.keys(raceUpdate).length) {
       try {
-        await withRateLimitRetry(() => sr.Race.update(race.id, raceUpdate), 1);
+        const savedRace = await withRateLimitRetry(() => sr.Race.update(race.id, raceUpdate), 1, startTime + timeBudgetMs);
+        if (savedRace?.id !== race.id) throw new Error('RACE_SAVE_UNCONFIRMED');
         Object.assign(race, raceUpdate);
       } catch (e: any) {
         raceSaved = false;
@@ -607,7 +662,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       }
     }
     // Recheck complete saved values even when the source has not changed.
-    if (complete && raceSaved && deadlineMs > Date.now() + 90000) forecastReadyKeys.add(race.race_key);
+    if (complete && sourceCommitted && raceSaved && deadlineMs > Date.now() + 90000) forecastReadyKeys.add(race.race_key);
     if (updated > 0 || complete) {
       fetched++;
       logs.push(`${venueName} R${raceNumber}: 展示${updated}艇更新 / 保存済み${complete?'全艇確認':'一部不足'} (取得${realCount}/${activeBoatCount}) / SUM元データ ${original.snapshot.status}`);
@@ -616,7 +671,7 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     await sleep(300);
   }
 
-  // Scheduled collection continues directly into the V8 workflow step.
+  // Scheduled collection saves inputs for the independent V8 forecast worker.
   // Manual exhibition collection uses only its remaining budget for saved V8 forecasts.
   let v8: any = null;
   if (forecastReadyKeys.size && !options.deferForecasts) {
@@ -658,7 +713,7 @@ async function checkCompleteness(base44: any, raceDate: string, logs: string[]) 
   // Count persisted V8 hypotheses so the admin status matches the current forecast store.
   const savedPre = await readV8Rows(sr.V8RaceForecast,
     {race_date: raceDate, stage: {$in: ['DAY_BEFORE', 'PRE']}},
-    {budget: Date.now() + 10000, maxPages: 12});
+    {budget: Date.now() + 10000, maxPages: 12, fields:['id','race_id']});
   const raceIds = new Set(races.map((race: any) => race.id));
   const preCount = new Set(savedPre.filter((row: any) => raceIds.has(row.race_id)).map((row: any) => row.race_id)).size;
 
@@ -681,35 +736,45 @@ async function checkCompleteness(base44: any, raceDate: string, logs: string[]) 
 async function updateAutoUpdateStatus(base44: any, today: string, tomorrow: string, step: string, result: any) {
   const sr = base44.asServiceRole.entities;
   try {
-    const todayStats = await checkCompleteness(base44, today, []);
-    const tomorrowStats = await checkCompleteness(base44, tomorrow, []);
-
-    const status = result.ok === false || result.errors?.length > 0 ? 'partial' : 'success';
+    // Persist the worker outcome directly. Counting full ledgers after an
+    // 80-second collection can prevent the completion record itself being saved.
+    const status = result.failed === true ? 'error' : result.ok === false || result.partial === true || result.errors?.length > 0 ? 'partial' : 'success';
     const doc: any = {
       name: 'default',
       target_date: today,
       tomorrow_date: tomorrow,
-      today_venues: todayStats.venues,
-      today_races: todayStats.races,
-      today_results: todayStats.results,
-      tomorrow_venues: tomorrowStats.venues,
-      tomorrow_races: tomorrowStats.races,
-      tomorrow_entries: tomorrowStats.entries,
-      pre_predictions: todayStats.pre_predictions,
       status,
       last_updated: new Date().toISOString(),
       current_step: step,
       error_count: result.errors?.length || 0,
       errors: (result.errors || []).slice(0, 20),
+      logs: (result.logs || []).slice(-50),
+      job_summary: {phase:step,status,phases:result.phases || [],
+        next_retry:step==='auto' && status!=='success' ? 'NEXT_SCHEDULED_RUN' : null},
     };
-
-    const existing = await sr.AutoUpdateStatus.filter({ name: 'default' }, '-last_updated', 1).catch(() => []);
+    // Manual completeness already computed these counts; other workers leave
+    // existing count fields untouched. Dashboard readers calculate fresh counts.
+    if (step==='completeness' && result.today && result.tomorrow) Object.assign(doc, {
+      today_venues:result.today.venues,today_races:result.today.races,today_results:result.today.results,
+      tomorrow_venues:result.tomorrow.venues,tomorrow_races:result.tomorrow.races,tomorrow_entries:result.tomorrow.entries,
+      pre_predictions:result.today.pre_predictions,
+    });
+    // Keep the established latest-default policy; never erase older status rows.
+    // A failed read must not be treated as absence and create another default.
+    const existing = await sr.AutoUpdateStatus.filter({ name: 'default' }, '-last_updated', 1);
+    if (!Array.isArray(existing) || existing.length>1 || (existing.length && !existing[0]?.id)) throw new Error('STATUS_READ_INVALID');
+    let saved;
     if (existing?.[0]) {
-      await sr.AutoUpdateStatus.update(existing[0].id, doc);
+      saved = await sr.AutoUpdateStatus.update(existing[0].id, doc);
     } else {
-      await sr.AutoUpdateStatus.create(doc);
+      saved = await sr.AutoUpdateStatus.create(doc);
     }
-  } catch {}
+    if (!saved?.id) throw new Error('STATUS_SAVE_UNCONFIRMED');
+    return {saved:true};
+  } catch {
+    console.warn('[AUTO_STATUS_SAVE_FAILED]', JSON.stringify({step,reason:'STATUS_READ_OR_SAVE_FAILED'}));
+    return {saved:false};
+  }
 }
 
 // =====================================================
@@ -808,40 +873,58 @@ async function fetchLiveOdds(base44: any, raceDate: string, timeBudgetMs: number
 }
 
 async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudgetMs: number, logs: string[], errors: string[]) {
-  const sr = base44.asServiceRole.entities, started = Date.now();
+  const started = Date.now();
   const remaining = () => Math.max(0, timeBudgetMs - (Date.now() - started));
   const jstHour = parseInt(nowJSTTime().split(':')[0], 10), steps: string[] = [];
-  const todayRaces = await sr.Race.filter({race_date:today}, 'deadline', 300);
+  const phases: any[] = [];
+  const runPhase = async (phase: string, work: () => Promise<any>, fallback: any) => {
+    if (remaining() <= 0) return {...fallback, deferred:true};
+    const before = errors.length;
+    try {
+      const result = await work();
+      phases.push({phase,status:errors.length > before ? 'PARTIAL' : 'SUCCESS'});
+      return result;
+    } catch (e: any) {
+      const status = Number(e?.http_status ?? e?.response?.status ?? e?.status);
+      // Credentials and programming faults are not routine acquisition gaps.
+      if ([401,403].includes(status) || ['TypeError','ReferenceError','SyntaxError','RangeError'].includes(e?.name)) throw e;
+      phases.push({phase,status:'FAILED',reason:'READ_OR_SAVE_FAILED'});
+      errors.push(`${phase}: 取得・保存を完了できませんでした（次回再取得）`);
+      logs.push(`${phase}: 保存済みデータを保持して後続処理へ`);
+      return {...fallback,failed:true};
+    }
+  };
 
   // Time-sensitive inputs come first. V1-V6 PRE/FINAL expansion is retired from AUTO.
-  if (todayRaces.length && jstHour >= 8 && jstHour <= 22) {
+  if (jstHour >= 8 && jstHour <= 22) {
     logs.push('AUTO: 締切前の展示・オッズを最優先で取得（V8）');
-    const exhibition = await fetchAndSaveExhibition(base44, today, Math.min(30000, remaining()), logs, errors, {liveOnly:true,deferForecasts:true});
-    steps.push(`exhibition: ${exhibition.fetched}R`);
+    const exhibition = await runPhase('exhibition', () => fetchAndSaveExhibition(base44, today, Math.min(30000, remaining()), logs, errors, {liveOnly:true,deferForecasts:true}), {fetched:0,ready_keys:[]});
+    steps.push(`exhibition: ${exhibition.failed ? '保留' : exhibition.fetched + 'R'}`);
     const odds = remaining() > 3000
-      ? await fetchLiveOdds(base44, today, Math.min(18000, remaining()), logs, errors)
+      ? await runPhase('live_odds', () => fetchLiveOdds(base44, today, Math.min(18000, remaining()), logs, errors), {saved:0,ready_keys:[]})
       : {saved:0,ready_keys:[]};
-    steps.push(`live_odds: ${odds.saved}R`);
+    steps.push(`live_odds: ${odds.failed ? '保留' : odds.saved + 'R'}`);
     const keys = [...new Set([...exhibition.ready_keys, ...odds.ready_keys])];
     steps.push(`forecast_inputs_ready: ${keys.length}R`);
-    // The five-minute unified forecast workflow owns V7 -> V8 generation.
+    // The independent five-minute V8 workflow owns forecast generation.
     // This collector saves inputs only; independent generation also covers PRE and DAY_BEFORE.
   }
 
   // Maintenance only uses time left after time-sensitive inputs.
-  if (remaining() > 8000 && todayRaces.length && jstHour >= 8) {
-    const r = await fetchAndSaveResults(base44, today, Math.min(15000, remaining()), logs, errors);
-    steps.push(`today_results: ${r.fetched}R`);
+  if (remaining() > 8000 && jstHour >= 8) {
+    const r = await runPhase('today_results', () => fetchAndSaveResults(base44, today, Math.min(15000, remaining()), logs, errors), {fetched:0});
+    steps.push(`today_results: ${r.failed ? '保留' : r.fetched + 'R'}`);
   }
   if (remaining() > 8000) {
-    const r = await fetchAndSaveRaceCards(base44, today, Math.min(20000, remaining()), logs, errors);
-    steps.push(`today_card: +${r.races}R/+${r.entries}艇`);
+    const r = await runPhase('today_card', () => fetchAndSaveRaceCards(base44, today, Math.min(20000, remaining()), logs, errors), {races:0,entries:0});
+    steps.push(`today_card: ${r.failed ? '保留' : '+' + r.races + 'R/+' + r.entries + '艇'}`);
   }
   if (remaining() > 8000 && jstHour >= 16) {
-    const r = await fetchAndSaveRaceCards(base44, tomorrow, remaining(), logs, errors);
-    steps.push(`tomorrow_card: +${r.races}R/+${r.entries}艇`);
+    const r = await runPhase('tomorrow_card', () => fetchAndSaveRaceCards(base44, tomorrow, remaining(), logs, errors), {races:0,entries:0});
+    steps.push(`tomorrow_card: ${r.failed ? '保留' : '+' + r.races + 'R/+' + r.entries + '艇'}`);
   }
-  return {steps,logs,errors};
+  return {ok:errors.length===0,partial:errors.length>0 || remaining()<=0,
+    failed:phases.length>0 && phases.every(row=>row.status==='FAILED'),phases,steps,logs,errors};
 }
 
 // =====================================================
@@ -851,6 +934,7 @@ export default async function(req: Request) {
   // 失敗時にも「どこまで進んだか」を返せるよう、ログはハンドラの外側で保持する。
   const logs: string[] = [];
   const errors: string[] = [];
+  let statusContext: any = null;
   try {
     const base44 = createClientFromRequest(req);
 
@@ -869,6 +953,7 @@ export default async function(req: Request) {
     const today = getTodayJST();
     const tomorrow = getTomorrowJST();
     const TIME_BUDGET = 80000;
+    statusContext = {base44,today,tomorrow,step};
 
     let result;
     switch (step) {
@@ -910,16 +995,9 @@ export default async function(req: Request) {
         break;
       case 'auto':
       default:
-        // 429等の一時的な失敗で実行全体を失敗扱いにしない。
-        // 失敗が続くとワークフロー自体が停止し、直前予想が生成されなくなるため、
-        // 短い待機後に一度だけ再試行する。
-        try {
-          result = await autoUpdate(base44, today, tomorrow, TIME_BUDGET, logs, errors);
-        } catch (e: any) {
-          errors.push(`AUTO: ${e?.message || e} — 再試行`);
-          await sleep(8000);
-          result = await autoUpdate(base44, today, tomorrow, 45000, logs, errors);
-        }
+        // Each phase reports its own failure. Do not restart a partially saved
+        // 80-second run; the next scheduled collection resumes missing inputs.
+        result = await autoUpdate(base44, today, tomorrow, TIME_BUDGET, logs, errors);
         break;
     }
 
@@ -932,20 +1010,27 @@ export default async function(req: Request) {
     if (result?.ok === false && errors.length === 0) errors.push(result.error || 'V8予想の一部が未完了です。');
 
     // ステータス更新
-    await updateAutoUpdateStatus(base44, today, tomorrow, step, { ...result, errors });
+    const statusSave = await updateAutoUpdateStatus(base44, today, tomorrow, step, { ...result, errors, logs });
+    if (!statusSave.saved) errors.push('実行状況を保存できませんでした（保存済みの取得データは保持）');
 
     return Response.json({
       ...result,
-      ok: result?.ok !== false && errors.length === 0,
+      ok: statusSave.saved && result?.ok !== false && errors.length === 0,
+      partial: result?.partial === true || errors.length>0,
+      status_saved: statusSave.saved,
       step,
       today,
       tomorrow,
       jst_time: nowJSTTime(),
       logs,
       errors,
-    });
+    }, {status:statusSave.saved && result?.failed !== true ? 200 : 503});
   } catch (error: any) {
     // 失敗時もログを返し、どのステップで止まったかを追えるようにする。
-    return Response.json({ ok: false, error: error.message, logs, errors }, { status: 500 });
+    const status = Number(error?.http_status ?? error?.response?.status ?? error?.status);
+    errors.push('自動取得を完了できませんでした。実行エラーの確認が必要です。');
+    const saved = statusContext ? await updateAutoUpdateStatus(statusContext.base44,statusContext.today,statusContext.tomorrow,statusContext.step,
+      {ok:false,failed:true,errors,logs}) : {saved:false};
+    return Response.json({ ok: false, failed: true, status_saved:saved.saved, error: error.message, logs, errors }, { status: [401,403].includes(status) ? status : 500 });
   }
 }
