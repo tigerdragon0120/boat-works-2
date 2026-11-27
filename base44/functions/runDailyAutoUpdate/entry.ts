@@ -510,7 +510,12 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     if (options.liveOnly && deadlineMs <= nowMs + 90000) continue;
     if (nowMs < deadlineMs - 60 * 60 * 1000 || nowMs > deadlineMs + 30 * 60 * 1000) continue;
     const inFinalRefreshWindow = nowMs >= deadlineMs - 12 * 60 * 1000 && nowMs <= deadlineMs - 1 * 60 * 1000;
-    if (race.exhibition_ready && !inFinalRefreshWindow) continue;
+    // Page/manual collection can have saved values before the commit marker was
+    // introduced. READY alone must not postpone the source-confirmed repair.
+    const savedCommitAt = Date.parse(race.exhibition_committed_at || '');
+    const hasSavedCommit = typeof race.exhibition_input_key === 'string' && race.exhibition_input_key.length > 0
+      && Number.isFinite(savedCommitAt) && savedCommitAt <= nowMs;
+    if (race.exhibition_ready && hasSavedCommit && !inFinalRefreshWindow) continue;
 
     const venueCode = race.venue_code;
     const raceNumber = race.race_number;

@@ -3,6 +3,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.60';
 import { upsertResultAndVerify } from '../../shared/predictionService.js';
 import { buildRaceKey } from '../../shared/raceKey.js';
 import { runV8LiveGeneration } from '../../shared/v8LiveGeneration.js';
+import { readV8Rows } from '../../shared/v8Repository.js';
+import { buildCommittedExhibitionKey } from '../../shared/exhibitionInputKey.js';
 import { fetchOriginalExhibition } from '../../shared/originalExhibition.js';
 import { fetchHtml, parseBeforeInfo, parseResult, parseOdds3t, parseRaceCard, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 
@@ -82,18 +84,35 @@ async function processSection(base44: any, race: any, parsed: any) {
 }
 
 // === 展示データ処理(決定論的パーサー出力 → RaceEntry更新) ===
-// FINAL予想は展示取得のみでは生成しない。オッズ取得後に生成する。
+// A complete confirmed collection is committed before the V8 worker reads it.
 async function processExhibition(base44: any, race: any, parsed: any, source: any) {
   const sr = base44.asServiceRole.entities;
   const parsedEntries = parsed.entries || [];
-  const entryRows = await sr.RaceEntry.filter({ race_key: race.race_key }, '-updated_date', 100).catch(() => []);
-  const existingEntries = uniqueEntriesByBoat(entryRows);
+  const existingEntries = await readV8Rows(sr.RaceEntry, {race_key:race.race_key},
+    {budget:Date.now()+8000,maxPages:2,sort:'-updated_date'});
+  const present = (value: any) => value != null && String(value).trim() !== '';
+  const registration = (entry: any) => {
+    const values = [entry?.registration_number,entry?.register_number].filter(present).map((value: any)=>String(value).trim());
+    return values.length && values.every((value: string)=>/^\d{4}$/.test(value)) && new Set(values).size===1 ? values[0] : null;
+  };
+  if (existingEntries.length!==6 || existingEntries.some((entry: any)=>!entry.id || entry.race_id!==race.id || entry.race_key!==race.race_key
+      || (present(entry.race_date) && entry.race_date!==race.race_date)
+      || !Number.isInteger(Number(entry.boat_number)) || Number(entry.boat_number)<1 || Number(entry.boat_number)>6 || !registration(entry))
+    || new Set(existingEntries.map((entry: any)=>Number(entry.boat_number))).size!==6
+    || new Set(existingEntries.map(registration)).size!==6) throw new Error('EXHIBITION_ROSTER_UNCONFIRMED');
   const entryByBoat = new Map(existingEntries.map((e: any) => [Number(e.boat_number), e]));
-  const original = await fetchOriginalExhibition({
-    race, entries: existingEntries, exhibitionEntries: parsedEntries,
-    exhibitionSourceUrl: source.url, exhibitionCapturedAt: source.captured_at,
-    deadlineMs: Date.now() + 2500,
-  });
+  if (!Array.isArray(parsedEntries) || new Set(parsedEntries.map((entry: any)=>Number(entry.boat_number))).size!==parsedEntries.length
+    || parsedEntries.some((entry: any)=>{
+      const stored=entryByBoat.get(Number(entry.boat_number));
+      return !stored || ['race_id','race_key','race_date'].some(key=>present(entry[key]) && entry[key]!==race[key==='race_id'?'id':key])
+        || ([entry.registration_number,entry.register_number].some(present) && registration(entry)!==registration(stored))
+        || ['is_absent','is_scratched'].some(key=>entry[key]!=null && typeof entry[key]!=='boolean');
+    })) throw new Error('EXHIBITION_SOURCE_IDENTITY_MISMATCH');
+  // Associate only roster identity. Never fill a missing source observation from
+  // older saved values, even if those old rows happen to look complete.
+  const sourceEntries=parsedEntries.map((entry: any)=>({...entry,race_id:race.id,race_key:race.race_key,
+    registration_number:registration(entryByBoat.get(Number(entry.boat_number))),
+    exhibition_st_raw:entry.exhibition_st_raw ?? entry.exhibition_st}));
 
   let updated = 0;
   for (const pe of parsedEntries) {
@@ -104,46 +123,68 @@ async function processExhibition(base44: any, race: any, parsed: any, source: an
 
     // 保護付き更新: nullで既存値を上書きしない
     const update: any = {};
-    if (pe.exhibition_time != null) update.exhibition_time = pe.exhibition_time;
-    if (pe.exhibition_st != null) {
-      update.exhibition_st = pe.exhibition_st;
-      update.exhibition_st_raw = pe.exhibition_st_raw ?? pe.exhibition_st;
+    for (const field of ['exhibition_time','exhibition_st','exhibition_course','tilt']) {
+      if (present(pe[field]) && String(existing[field])!==String(pe[field])) update[field]=pe[field];
     }
-    if (pe.exhibition_course != null) update.exhibition_course = pe.exhibition_course;
-    if (pe.tilt != null) update.tilt = pe.tilt;
-    if (pe.is_absent) { update.is_absent = true; update.is_scratched = true; }
+    const rawStart=pe.exhibition_st_raw ?? pe.exhibition_st;
+    if (present(rawStart) && String(existing.exhibition_st_raw)!==String(rawStart)) update.exhibition_st_raw=rawStart;
+    if (pe.is_absent || pe.is_scratched) {
+      if (existing.is_absent!==true) update.is_absent=true;
+      if (existing.is_scratched!==true) update.is_scratched=true;
+    }
 
     if (Object.keys(update).length) {
-      await sr.RaceEntry.update(existing.id, update);
+      const savedEntry=await sr.RaceEntry.update(existing.id, update);
+      if (savedEntry?.id!==existing.id) throw new Error('EXHIBITION_ENTRY_SAVE_UNCONFIRMED');
+      Object.assign(existing,update);
       updated++;
     }
   }
 
-  // Race展示取得済フラグ + 天候情報更新
-  // 実展示値(展示タイム+ST)がACTIVE_BOATS(6-欠場艇)揃った場合のみ exhibition_ready=true
+  // Commit the source-equivalent saved inputs and READY in one Race write.
+  // A partial source leaves the last complete marker and READY state intact.
   const realCount = parsed.real_exhibition_count || 0;
   const parsedScratched = Array.isArray(parsed.scratched_boats) ? parsed.scratched_boats.map(Number) : [];
   const storedScratched = Array.isArray(race.scratched_boats) ? race.scratched_boats.map(Number) : [];
   const scratchedBoats = [...new Set([...storedScratched, ...parsedScratched])].filter((n: any) => n >= 1 && n <= 6).sort((a: any,b: any) => a-b);
   const activeBoatCount = parsed.active_boat_count || Math.max(1, 6 - scratchedBoats.length);
+  const commitRace={...race,scratched_boats:scratchedBoats};
+  const sourceKey=buildCommittedExhibitionKey(commitRace,sourceEntries);
+  const savedKey=buildCommittedExhibitionKey(commitRace,existingEntries);
+  const sourceCommitted=sourceKey!=null && sourceKey===savedKey;
+  const original = await fetchOriginalExhibition({
+    race:commitRace,entries:existingEntries,exhibitionEntries:parsedEntries,
+    exhibitionSourceUrl:source.url,exhibitionCapturedAt:source.captured_at,
+    deadlineMs:Date.now()+2500,
+  });
   const raceUpdate: any = { original_exhibition: original.snapshot };
   if (scratchedBoats.length) raceUpdate.scratched_boats = scratchedBoats;
-  if (realCount >= activeBoatCount) raceUpdate.exhibition_ready = true;
+  if (sourceCommitted) {
+    raceUpdate.exhibition_ready=true;
+    const committedAt=Date.parse(race.exhibition_committed_at || '');
+    if (race.exhibition_input_key!==sourceKey || !Number.isFinite(committedAt) || committedAt>Date.now()) {
+      raceUpdate.exhibition_input_key=sourceKey;
+      raceUpdate.exhibition_committed_at=new Date().toISOString();
+    }
+  }
   if (parsed.weather) raceUpdate.weather = parsed.weather;
   if (parsed.wind_speed != null) raceUpdate.wind_speed = parsed.wind_speed;
   if (parsed.water_temp != null) raceUpdate.water_temp = parsed.water_temp;
   if (parsed.air_temp != null) raceUpdate.air_temp = parsed.air_temp;
   if (parsed.wave_height != null) raceUpdate.wave_height = parsed.wave_height;
-  await sr.Race.update(race.id, raceUpdate);
+  const savedRace=await sr.Race.update(race.id, raceUpdate);
+  if (savedRace?.id!==race.id) throw new Error('EXHIBITION_RACE_SAVE_UNCONFIRMED');
+  Object.assign(race,raceUpdate);
 
   // Save V8's own forecast immediately after this race's exhibition is saved.
-  const forecasts = realCount >= activeBoatCount
+  const forecasts = sourceCommitted
     ? await runV8LiveGeneration(base44, { race_keys: [race.race_key], timeBudgetMs: 30000 })
     : null;
 
   return {
     entries_updated: updated,
-    exhibition_ready: realCount >= activeBoatCount,
+    exhibition_ready: race.exhibition_ready===true,
+    exhibition_committed: sourceCommitted,
     real_exhibition_count: realCount,
     active_boat_count: activeBoatCount,
     original_exhibition_status: original.snapshot.status,

@@ -9,10 +9,10 @@ import {buildCommittedExhibitionKey} from '../base44/shared/exhibitionInputKey.j
 const source=readFileSync(new URL('../base44/functions/runDailyAutoUpdate/entry.ts',import.meta.url),'utf8');
 const start=source.indexOf('async function fetchAndSaveExhibition('),end=source.indexOf('\n}',start)+2;
 const NOW=Date.parse('2026-11-27T00:00:00Z'),OLD=new Date(NOW-3600000).toISOString();
-function setup(t,{failedBoat=null,sourceMissing=false}={}){
+function setup(t,{failedBoat=null,sourceMissing=false,minutesToDeadline=10}={}){
   t.mock.timers.enable({apis:['Date'],now:NOW});
   const race={id:'race-1',race_key:'2026-11-27_14_02',race_date:'2026-11-27',venue_code:'14',race_number:2,
-    status:'scheduled',deadline:new Date(NOW+600000).toISOString(),exhibition_ready:true,original_exhibition:{status:'AVAILABLE'}};
+    status:'scheduled',deadline:new Date(NOW+minutesToDeadline*60000).toISOString(),exhibition_ready:true,original_exhibition:{status:'AVAILABLE'}};
   const entries=Array.from({length:6},(_,i)=>({id:'entry-'+(i+1),race_id:race.id,race_key:race.race_key,boat_number:i+1,
     registration_number:String(4001+i),player_name:'選手'+i,exhibition_time:6.7,exhibition_st:.1,exhibition_st_raw:.1,
     exhibition_course:i+1,updated_date:OLD}));
@@ -64,5 +64,32 @@ test('a missing source ST cannot be filled from stored data to publish a new com
   assert.equal(isSavedExhibitionComplete(state.entries),true);
   assert.equal(state.race.exhibition_input_key,state.prior.key);assert.equal(state.race.exhibition_committed_at,state.prior.at);
   assert.equal(state.raceWrites.some(row=>'exhibition_input_key'in row||'exhibition_committed_at'in row),false);
+  assert.deepEqual(result.ready_keys,[]);
+});
+
+test('READY inputs with no commit are collected and committed before the final refresh window',async t=>{
+  const state=setup(t,{minutesToDeadline:30});
+  delete state.race.exhibition_input_key;
+  delete state.race.exhibition_committed_at;
+  for(const entry of state.incoming)entry.exhibition_st=.1;
+  const result=await state.run();
+  assert.deepEqual(state.entryWrites,[]);
+  assert.equal(state.race.exhibition_input_key,buildCommittedExhibitionKey(state.race,state.entries));
+  assert.equal(state.race.exhibition_committed_at,new Date(NOW).toISOString());
+  assert.deepEqual(result.ready_keys,[state.race.race_key]);
+});
+
+test('a future-dated commit is repaired before the final refresh window',async t=>{
+  const state=setup(t,{minutesToDeadline:30});
+  state.race.exhibition_committed_at=new Date(NOW+60000).toISOString();
+  const result=await state.run();
+  assert.equal(state.race.exhibition_committed_at,new Date(NOW).toISOString());
+  assert.deepEqual(result.ready_keys,[state.race.race_key]);
+});
+
+test('READY inputs with an established commit retain the regular refresh schedule',async t=>{
+  const state=setup(t,{minutesToDeadline:30}),result=await state.run();
+  assert.deepEqual(state.entryWrites,[]);assert.deepEqual(state.raceWrites,[]);
+  assert.equal(state.race.exhibition_input_key,state.prior.key);
   assert.deepEqual(result.ready_keys,[]);
 });
