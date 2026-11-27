@@ -13,6 +13,10 @@ module.exports = {
   		colors: {
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
+            'decision-buy': {
+                DEFAULT: 'hsl(var(--decision-buy))',
+                foreground: 'hsl(var(--decision-buy-foreground))'
+            },
   			card: {
   				DEFAULT: 'hsl(var(--card))',
   				foreground: 'hsl(var(--card-foreground))'

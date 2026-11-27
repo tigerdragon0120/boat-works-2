@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {useAuth} from '@/lib/AuthContext';
 import RaceScenarioDiagram from './RaceScenarioDiagram';
 import V8ExternalPanel from './V8ExternalPanel';
@@ -8,6 +8,7 @@ import V8RacerEvidencePanel from './V8RacerEvidencePanel';
 import V8RecentLaneEvidencePanel from './V8RecentLaneEvidencePanel';
 import V8VenueEvidencePanel from './V8VenueEvidencePanel';
 import V8FinalTicketPanel from './V8FinalTicketPanel';
+import V8DecisionSummary from '@/components/liveV8/V8DecisionSummary';
 import {finalSelectionView, finalSelectionDecision, finalSelectionResultView} from './v8FinalTicketsView';
 import {selectJourneyBaseline} from './v8RacerEvidenceView';
 import {originalTimingSummary, savedSumView, SUM_LABELS, sumModelStatus, sumTimeText} from './v8SumView';
@@ -119,7 +120,14 @@ export default function V8RaceJourney({race,onForecastSnapshots}) {
   const {user}=useAuth(), admin=user?.role==='admin', now=useClock();
   const {data,loading,error,refresh}=useV8Dashboard({mode:'race',race_id:race?.id},!!race?.id);
   const [tab,setTab]=useState('JOURNEY'),[baseMode,setBaseMode]=useState('AUTO');
-  useEffect(()=>{setTab('JOURNEY');setBaseMode('AUTO');},[race?.id]);
+  const finalTicketsRef=useRef(null),[showTickets,setShowTickets]=useState(false);
+  useEffect(()=>{setTab('JOURNEY');setBaseMode('AUTO');setShowTickets(false);},[race?.id]);
+  useEffect(()=>{
+    if(!showTickets || tab!=='JOURNEY' || !finalTicketsRef.current)return;
+    finalTicketsRef.current.scrollIntoView({behavior:'smooth',block:'start'});
+    finalTicketsRef.current.focus({preventScroll:true});
+    setShowTickets(false);
+  },[showTickets,tab]);
   const liveRecords=data?.forecasts || [], replayRecords=data?.replay_forecasts || [], records=[...liveRecords,...replayRecords];
   const dayBefore=latestStage(liveRecords,'DAY_BEFORE'), pre=latestStage(liveRecords,'PRE') || latestStage(replayRecords,'PRE'), final=latestStudyStage(liveRecords,'FINAL') || latestStudyStage(replayRecords,'FINAL');
   const referenceId=final?.comparison?.baseline_id || final?.baseline_id;
@@ -146,12 +154,14 @@ export default function V8RaceJourney({race,onForecastSnapshots}) {
   const settlementMap=useMemo(()=>studySettlementIndex([...(data?.verifications || []),...(data?.replay_verifications || [])]),[data?.verifications,data?.replay_verifications]);
   const finalSettlement=settlementMap.get(final?.id), baselineSettlement=settlementMap.get(baseline?.id);
   const finalPlan=finalSelectionView(final), finalDecision=finalSelectionDecision(final,currentRace,now,{blocked:oddsBlocked});
+  const savedBuy=(data?.buy_forecasts || []).find(row=>row.race_id===currentRace?.id && row.race_key===currentRace?.race_key) || null;
   const finalResult=finalSelectionResultView(final,finalSettlement);
   const settles=finalSettlement?[finalSettlement]:[];
   const comparison=final?.comparison, priorChoiceCount=Number(!!dayBefore)+Number(!!pre);
   if (!race?.id) return null;
   return <section className="overflow-hidden rounded-2xl border border-sky-200 bg-white shadow-sm" aria-label="事前展開と展示後の比較">
     <header className="border-b border-slate-100 bg-gradient-to-r from-sky-50 via-white to-white p-4 sm:p-5">
+      <V8DecisionSummary forecast={final} savedBuy={savedBuy} view={finalPlan} decision={finalDecision} race={currentRace} blocked={oddsBlocked} onShowTickets={()=>{setTab('JOURNEY');setShowTickets(true);}}/>
       <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-extrabold tracking-[0.2em] text-sky-700">BOAT WORKS 2 · RACE JOURNEY</p><h3 className="mt-1 text-lg font-black text-slate-900 sm:text-xl">事前の読みから、展示・結果の検証へ</h3><p className="mt-1 text-xs leading-6 text-slate-500">全レースの予想を蓄積し、展示で変わった読みを結果と照合する。</p></div><button type="button" disabled={loading} onClick={()=>void refresh()} className={BUTTON_CLASS} aria-label="展開予想を再読込">{loading?'読込中…':'再読込'}</button></div>
       <ol className="mt-4 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">{[{label:'事前の展開',ready:!!(dayBefore || pre),detail:baseline?isReplay(baseline)?'事後補完済み':baseline.stage==='DAY_BEFORE'?'前日保存あり':'展示前を保存':'補完待ち'},{label:'展示で照合',ready:!!final,detail:final?isReplay(final)?'事後補完済み':COMPARE[comparison?.status] || '展示後を保存':finalEmpty.step},{label:'最終買い目',ready:finalPlan.available,detail:finalPlan.available?`${finalDecision.label} · ${finalPlan.count}点`:'展示後に選抜'},{label:'結果で検証',ready:finalResult.available,detail:finalResult.status==='SETTLED'?'最終選抜を照合済み':finalResult.status==='EXCLUDED_REFUND'?'返還等を確認':'最終選抜の結果待ち'}].map((step,index)=><li key={step.label} className={`rounded-lg px-2 py-2 ${step.ready?'bg-sky-50':'bg-slate-50'}`}><span className={`block text-xs font-bold ${step.ready?'text-sky-800':'text-slate-500'}`}>{index+1}. {step.label}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{step.detail}</span></li>)}</ol>
     </header>
@@ -167,7 +177,9 @@ export default function V8RaceJourney({race,onForecastSnapshots}) {
           <ForecastCard forecast={final} verification={finalSettlement} displayOdds={data?.display_odds} race={currentRace} now={now} oddsBlocked={oddsBlocked} title="展示後の展開予想" subtitle="進入・ST・タイムを加えて照合" step="2" empty={finalEmpty.title} emptyDetail={finalEmpty.detail}/>
         </div>
         {final&&<div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-bold text-slate-900">展示で何が変わったか</h4><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${comparison?.status==='SUPPORTED'?'bg-emerald-100 text-emerald-800':comparison?.status==='CHANGED'?'bg-amber-100 text-amber-900':'bg-white text-slate-500'}`}>{COMPARE[comparison?.status] || '照合記録を確認中'}</span></div>{linked?<p className="mt-2 text-[11px] text-slate-500">比較元：{studyStageLabel(linked)}{isReplay(linked)?'（事後検証）':''} {formatTime(linked.generated_at,true)} 保存{baseline?.id!==linked.id?'（現在左側に表示中の版とは異なります）':''}</p>:<p className="mt-2 text-xs leading-5 text-amber-800">この展示後予想に紐づく事前記録を確認中です。補完が済むと、展示を加える前後で結果を比較できます。</p>}<ul className="mt-2 space-y-1 text-xs leading-6 text-slate-700">{(comparison?.changes || []).map((text,index)=><li key={index}>・{text}</li>)}</ul></div>}
-        <V8FinalTicketPanel forecast={final || baseline} baseline={linked || baseline} verification={finalSettlement} race={currentRace} now={now} blocked={oddsBlocked}/>
+        <div ref={finalTicketsRef} tabIndex={-1} className="scroll-mt-32 rounded-2xl focus:outline-none" aria-label="最終買い目の詳細">
+          <V8FinalTicketPanel forecast={final || baseline} baseline={linked || baseline} verification={finalSettlement} race={currentRace} now={now} blocked={oddsBlocked}/>
+        </div>
         <details className="rounded-xl border border-slate-200 bg-white p-4">
           <summary className="cursor-pointer text-sm font-bold text-slate-700">比較用の総合研究8点・事前／展示後の結果検証</summary>
           <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-sm font-bold text-slate-900">総合研究買い目の結果検証</h4>{(finalSettlement||baselineSettlement)&&<span className="text-xs text-slate-600">確定 <strong className="font-mono text-base text-slate-900">{(finalSettlement||baselineSettlement).result_trifecta || '返還等を確認'}</strong></span>}</div>
