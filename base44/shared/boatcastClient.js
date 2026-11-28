@@ -235,10 +235,14 @@ async function fetchWithRetry(url, { timeoutMs = FETCH_TIMEOUT_MS, maxRetries = 
 // 同一 race_date + venue_code + race_number + data_type の
 // 短時間に同じデータの重複取得を防止する
 // ============================================================
-export async function fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType, timeoutMs, maxRetries }) {
+export async function fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType, timeoutMs, maxRetries, maxCacheAgeMs }) {
   const url = buildUrl(dataType, venueCode, raceDate, raceNumber);
   const cacheKey = buildCacheKey(dataType, venueCode, raceDate, raceNumber);
-  const ttl = getTtl(dataType);
+  // A live collector can shorten cache reuse without extending a data type's
+  // existing policy. In particular, an unpublished 200 must not last two runs.
+  const policyTtl = getTtl(dataType);
+  const ttl = Number.isFinite(maxCacheAgeMs) && maxCacheAgeMs >= 0
+    ? Math.min(policyTtl, maxCacheAgeMs) : policyTtl;
 
   // キャッシュ確認(同一データへの連続アクセス防止)
   const cached = cache.get(cacheKey);

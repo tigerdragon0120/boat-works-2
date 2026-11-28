@@ -12,6 +12,8 @@ import { readV8Rows } from '../../shared/v8Repository.js';
 import { planRaceCardEntries } from '../../shared/raceCardEntryPlan.js';
 import { fetchOriginalExhibition } from '../../shared/originalExhibition.js';
 import { buildCommittedExhibitionKey } from '../../shared/exhibitionInputKey.js';
+import { fetchExhibitionSource } from '../../shared/exhibitionSource.js';
+import { refreshOfficialDeadlines, hasConfirmedOfficialDeadline } from '../../shared/officialLiveDeadlines.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -174,10 +176,18 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       const rn = Number(er.race_number);
       const t = deadlineTimes[rn - 1];
       if (!rn || !t) continue;
+      if (['finished','cancelled'].includes(er.status) || hasConfirmedOfficialDeadline(er,{date:raceDate})) continue;
       const correctDeadline = `${raceDate}T${t}:00+09:00`;
-      if (er.deadline !== correctDeadline) deadlineFixes.push({ id: er.id, deadline: correctDeadline });
+      if (Date.parse(er.deadline) !== Date.parse(correctDeadline)) deadlineFixes.push({ race:er, deadline:correctDeadline });
     }
-    if (deadlineFixes.length) await sr.Race.bulkUpdate(deadlineFixes).catch((e: any) => errors.push(`${venueName}: 締切補正 ${e.message}`));
+    for (const fix of deadlineFixes) {
+      const old=fix.race;
+      // A concurrently refreshed live deadline or completed race must win over
+      // this HTML snapshot, even when it arrived after the initial card read.
+      await sr.Race.updateMany({id:old.id,deadline:old.deadline??null,status:old.status,
+        ...(old.updated_date?{updated_date:old.updated_date}:{})},{$set:{deadline:fix.deadline}})
+        .catch((e:any)=>errors.push(`${venueName}: 締切補正 ${e.message}`));
+    }
 
     // 大会名と女子戦フラグをRaceへ保存する。
     // 値が変わったレースだけ書き込むため、2回目以降は書き込みが発生しない。
@@ -275,7 +285,17 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
         if(current.length>1)throw new Error('RACE_IDENTITY_AMBIGUOUS');
         const old=current[0];
         if(old&&(old.race_date!==raceDate||String(old.venue_code).padStart(2,'0')!==venueCode||Number(old.race_number)!==rno))throw new Error('RACE_IDENTITY_CONFLICT');
-        saved=old?await sr.Race.update(old.id,{...doc,status:old.status||doc.status}):await sr.Race.create(doc);
+        if(old){
+          if(doc.deadline&&!['finished','cancelled'].includes(old.status)&&!hasConfirmedOfficialDeadline(old,{date:raceDate})
+            &&Date.parse(old.deadline)!==Date.parse(doc.deadline)){
+            await sr.Race.updateMany({id:old.id,deadline:old.deadline??null,status:old.status,
+              ...(old.updated_date?{updated_date:old.updated_date}:{})},{$set:{deadline:doc.deadline}});
+          }
+          // Deadline updates have their own conditional guard. Card metadata
+          // cannot undo a live correction or change the race's current status.
+          const metadata={...doc};delete metadata.deadline;delete metadata.status;
+          saved=await sr.Race.update(old.id,metadata);
+        }else saved=await sr.Race.create(doc);
       } catch(e: any) {
         errors.push(venueName + ' R' + rno + ': Race保存を保留 ' + String(e?.message||'READ_OR_WRITE_FAILED').slice(0,100));
       }
@@ -495,9 +515,13 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
   let fetched = 0;
   // 展示が揃ったレースは、この回の最後にV7のFINAL判定へ回す
   const forecastReadyKeys = new Set<string>();
+  let primaryAccessDenied = false;
 
   for (const race of races) {
-    if (Date.now() - startTime > timeBudgetMs) break;
+    if (Date.now() - startTime > timeBudgetMs) {
+      errors.push('展示取得の時間枠に達したため、残りのレースは次回に再取得します');
+      break;
+    }
     if (race.status === 'finished' || race.status === 'cancelled') continue;
 
     // 直前情報は締切の60分前〜締切30分後まで取得する（遅延・復旧時も回収）。
@@ -521,17 +545,6 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
     const raceNumber = race.race_number;
     const venueName = race.venue_name || race.venue || VENUE_MAP[venueCode] || venueCode;
 
-    const url = buildUrl('beforeinfo', raceDate, venueCode, raceNumber);
-    const res = await fetchHtml(url, 0, { timeoutMs: 6000, deadlineMs: startTime + timeBudgetMs });
-    if (!res.ok) {
-      errors.push(`${venueName} R${raceNumber}: 展示取得を完了できませんでした（HTTP ${res.status || 0}・次回再取得）`);
-      continue;
-    }
-
-    const exhibitionCapturedAt = new Date().toISOString();
-    const parsed = parseBeforeInfo(res.html);
-    if (!parsed.ok || !parsed.data?.entries?.length) continue;
-
     let entries: any[];
     try {
       const stored = await readV8Rows(sr.RaceEntry, {race_key:race.race_key},
@@ -551,6 +564,18 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       errors.push(`${venueName} R${raceNumber}: 保存済み展示の読取に失敗したため既存データを保持（次回再取得）`);
       continue;
     }
+    const acquired = await fetchExhibitionSource({race,entries,
+      deadlineMs:startTime + timeBudgetMs,skipPrimary:primaryAccessDenied});
+    if (acquired.primary_http_status === 403) primaryAccessDenied = true;
+    if (!acquired.ok) {
+      errors.push(`${venueName} R${raceNumber}: 展示の公式取得経路を確認できません（${acquired.reason}・次回再取得）`);
+      continue;
+    }
+    const parsed = {data:acquired.data};
+    const url = acquired.source.url;
+    const exhibitionCapturedAt = acquired.source.captured_at;
+    if (acquired.source.provider === 'BOATCAST') logs.push(`${venueName} R${raceNumber}: BOATCASTの標準展示を照合して取得`);
+    if (!acquired.complete) errors.push(`${venueName} R${raceNumber}: 展示が未公開または一部不足（次回再取得）`);
     const entryByBoat = new Map(entries.map((e: any) => [Number(e.boat_number), e]));
     const registration = (entry: any) => String(entry?.registration_number ?? entry?.register_number ?? '').trim();
     if (parsed.data.entries.some((entry: any) => {
@@ -636,6 +661,10 @@ async function fetchAndSaveExhibition(base44: any, raceDate: string, timeBudgetM
       deadlineMs: Math.min(startTime + timeBudgetMs - 1500, deadlineMs > Date.now() ? deadlineMs - 65000 : Infinity),
     });
     const raceUpdate: any = {};
+    if (sourceCommitted) raceUpdate.exhibition_collection = {
+      ...acquired.source,revision:'EXHIBITION_SOURCE_2',input_key:sourceKey,
+      primary_http_status:acquired.primary_http_status,
+    };
     // The marker and READY flag are one Race write after every required entry
     // write has succeeded. Older markers survive incomplete/failed refreshes.
     const committedAt = Date.parse(race.exhibition_committed_at || '');
@@ -902,7 +931,14 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
 
   // Time-sensitive inputs come first. V1-V6 PRE/FINAL expansion is retired from AUTO.
   if (jstHour >= 8 && jstHour <= 22) {
-    logs.push('AUTO: 締切前の展示・オッズを最優先で取得（V8）');
+    logs.push('AUTO: 最新の公式締切を確認して展示・オッズを取得（V8）');
+    const schedule = await runPhase('live_deadlines', async () => {
+      const result = await refreshOfficialDeadlines(base44,
+        {date:today,deadlineMs:Date.now()+Math.min(8000,remaining())});
+      if (result.ok === false) errors.push(`公式締切の確認を完了できませんでした（${result.reason||'次回再取得'}）`);
+      return result;
+    }, {ok:false,updated:0,checked:0});
+    steps.push(`live_deadlines: ${Number(schedule.updated||0)}R補正`);
     const exhibition = await runPhase('exhibition', () => fetchAndSaveExhibition(base44, today, Math.min(30000, remaining()), logs, errors, {liveOnly:true,deferForecasts:true}), {fetched:0,ready_keys:[]});
     steps.push(`exhibition: ${exhibition.failed ? '保留' : exhibition.fetched + 'R'}`);
     const odds = remaining() > 3000

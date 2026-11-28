@@ -17,6 +17,66 @@ function inputs(text = ASHIYA, date = '2026-11-24', venue = '21') {
   };
 }
 const parse = (text = ASHIYA, overrides = {}) => parseOriginalExhibition(text, { ...inputs(), ...overrides });
+const BOATCAST_TKZ = 'https://race.boatcast.jp/hp_txt/21/bc_j_tkz_20261124_21_07.txt';
+
+test('a canonical BOATCAST TKZ exhibition source fetches SUM independently and preserves valid cached SUM across source switches', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(CAPTURED) });
+  const options = { ...inputs(), exhibitionSourceUrl: BOATCAST_TKZ };
+  let requests = 0;
+  const fetcher = async (url, request) => {
+    requests++;
+    assert.equal(url, 'https://race.boatcast.jp/txt/21/bc_oriten_20261124_21_07.txt');
+    assert.equal(request.redirect, 'manual');
+    return new Response(ASHIYA, { status: 200 });
+  };
+  const fresh = await fetchOriginalExhibition({ ...options, fetcher });
+  assert.equal(fresh.fetched, true); assert.equal(fresh.snapshot.status, 'AVAILABLE');
+  assert.equal(fresh.snapshot.entries.length, 6); assert.equal(fresh.snapshot.entries[0].lap_time, 36.04);
+  assert.equal(fresh.snapshot.exhibition_source_url, BOATCAST_TKZ);
+  for (const previous of [fresh.snapshot, parse()]) {
+    options.race.original_exhibition = previous;
+    const reused = await fetchOriginalExhibition({ ...options, fetcher });
+    assert.equal(reused.reused, true); assert.equal(reused.snapshot, previous);
+  }
+  assert.equal(requests, 1, 'a standard-source switch must not replace available matching SUM with unavailable');
+});
+
+test('BOATCAST TKZ matching rejects other races and every non-canonical URL before requesting SUM', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(CAPTURED) });
+  const urls = [
+    BOATCAST_TKZ.replace('20261124', '20261125'),
+    BOATCAST_TKZ.replace('/hp_txt/21/', '/hp_txt/20/'),
+    BOATCAST_TKZ.replace('_21_07', '_20_07'),
+    BOATCAST_TKZ.replace('_07.txt', '_08.txt'),
+    BOATCAST_TKZ.replace('_tkz_', '_stt_'),
+    BOATCAST_TKZ.replace('https:', 'http:'),
+    BOATCAST_TKZ.replace('race.boatcast.jp', 'race.boatcast.jp.evil.invalid'),
+    BOATCAST_TKZ.replace('race.boatcast.jp', 'user@race.boatcast.jp'),
+    BOATCAST_TKZ.replace('race.boatcast.jp', 'race.boatcast.jp:443'),
+    BOATCAST_TKZ.replace('/bc_j_tkz_', '/%62c_j_tkz_'),
+    BOATCAST_TKZ.replace('/hp_txt/', '/other/../hp_txt/'),
+    BOATCAST_TKZ + '?race=7', BOATCAST_TKZ + '#race', ' ' + BOATCAST_TKZ,
+  ];
+  for (const exhibitionSourceUrl of urls) {
+    const result = await fetchOriginalExhibition({ ...inputs(), exhibitionSourceUrl,
+      fetcher: async () => assert.fail('an invalid exhibition source must not fetch SUM') });
+    assert.equal(result.fetched, false, exhibitionSourceUrl);
+    assert.deepEqual(result.snapshot.reasons, ['EXHIBITION_SOURCE_MISMATCH'], exhibitionSourceUrl);
+  }
+});
+
+test('a valid TKZ URL still requires matching active racers, complete SUM rows and valid observation time', () => {
+  const options = () => ({ ...inputs(), exhibitionSourceUrl: BOATCAST_TKZ });
+  const different = options(); different.exhibitionEntries[2].registration_number = '5555';
+  assert.deepEqual(parseOriginalExhibition(ASHIYA, different).reasons, ['EXHIBITION_RACER_MISMATCH']);
+  const missing = options(); missing.exhibitionEntries.pop();
+  assert.deepEqual(parseOriginalExhibition(ASHIYA, missing).reasons, ['EXHIBITION_RACER_MISMATCH']);
+  assert.deepEqual(parseOriginalExhibition(ASHIYA.replace('桑原', '別人'), options()).reasons, ['SOURCE_RACER_MISMATCH']);
+  const future = options(); future.exhibitionCapturedAt = '2026-11-24T02:20:01.000Z';
+  assert.deepEqual(parseOriginalExhibition(ASHIYA, future).reasons, ['SOURCE_TIME_INVALID']);
+  const partial = parseOriginalExhibition(ASHIYA.trimEnd().split('\n').slice(0,8).join('\n'), options());
+  assert.equal(partial.status, 'PARTIAL'); assert.deepEqual(partial.reasons, ['ORIGINAL_TIMES_PARTIAL']);
+});
 
 test('observed public Ashiya source preserves the boat, lap, turn and straight values', () => {
   const data = parse();

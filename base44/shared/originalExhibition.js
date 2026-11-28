@@ -52,6 +52,11 @@ export function buildOriginalExhibitionUrl(race) {
 function sourceMatches(url, race) {
   const id = identity(race);
   if (!id) return false;
+  // The standard BOATCAST fallback supplies this exact TKZ URL after validating
+  // its paired STT source. Do not admit normalized paths, query strings or aliases.
+  const boatcastTkz = 'https://race.boatcast.jp/hp_txt/' + id.venue_code + '/bc_j_tkz_'
+    + id.race_date.replaceAll('-', '') + '_' + id.venue_code + '_' + String(id.race_number).padStart(2, '0') + '.txt';
+  if (url === boatcastTkz) return true;
   try {
     const parsed = new URL(url);
     return parsed.protocol === 'https:' && !parsed.username && !parsed.password

@@ -22,7 +22,7 @@ const boats=r=>Array.from({length:6},(_,i)=>({id:r.id+'-'+(i+1),race_id:r.id,rac
 
 for(const failure of ['read','truncated','identity'])test(`failed ${failure} of the first race preserves saved READY and original data while the next race proceeds`,async t=>{
   t.mock.timers.enable({apis:['Date'],now:NOW});
-  const races=[race(1),race(2)],original=structuredClone(races[0]),writes=[],errors=[],originalCalls=[];
+  const races=[race(1),race(2)],original=structuredClone(races[0]),writes=[],errors=[],originalCalls=[],sourceCalls=[];
   const rows=races.flatMap(boats);
   const entities={Race:{filter:async()=>structuredClone(races),update:async(id,patch)=>{
     writes.push({id,patch});Object.assign(races.find(row=>row.id===id),patch);return {id,...patch};
@@ -37,16 +37,58 @@ for(const failure of ['read','truncated','identity'])test(`failed ${failure} of 
   },update:async()=>assert.fail('unchanged saved inputs need no writes')}};
   const run=bind('fetchAndSaveExhibition',{
     uniqueRacesByKey:rows=>rows,readV8Rows,selectLiveInputRaces,isSavedExhibitionComplete,buildCommittedExhibitionKey,VENUE_MAP:{'14':'鳴門'},
-    buildUrl:(_kind,_date,_venue,no)=>String(no),
-    fetchHtml:async(url,_retries,options)=>{assert.ok(options.deadlineMs<=NOW+30000);return {ok:true,html:url};},
-    parseBeforeInfo:html=>({ok:true,data:{entries:boats(races[Number(html)-1]),scratched_boats:[],real_exhibition_count:6,active_boat_count:6}}),
+    fetchExhibitionSource:async({race,entries,deadlineMs,skipPrimary})=>{
+      sourceCalls.push(race.id);assert.ok(deadlineMs<=NOW+30000);assert.equal(entries.length,6);assert.equal(skipPrimary,false);
+      return {ok:true,complete:true,primary_http_status:200,
+        data:{entries:boats(race),scratched_boats:[],real_exhibition_count:6,active_boat_count:6},
+        source:{provider:'BOATRACE',url:'official-beforeinfo',urls:['official-beforeinfo'],captured_at:new Date(NOW).toISOString()}};
+    },
     fetchOriginalExhibition:async({race})=>{originalCalls.push(race.id);return {snapshot:race.original_exhibition};},
     withRateLimitRetry:async fn=>fn(),sleep:async()=>{},runV8LiveGeneration:()=>assert.fail('collection must not invoke forecasts'),
   });
   const result=await run({asServiceRole:{entities}},TODAY,30000,[],errors,{liveOnly:true,deferForecasts:true});
   assert.deepEqual(races[0],original);assert.equal(writes.some(row=>row.id===original.id),false);
   assert.equal(races[1].exhibition_ready,true);assert.deepEqual(originalCalls,['race-2']);
+  assert.deepEqual(sourceCalls,['race-2'],'source acquisition cannot run against an unconfirmed saved roster');
   assert.deepEqual(result.ready_keys,[races[1].race_key]);assert.equal(errors.length,1);
+});
+
+test('a complete BOATCAST fallback saves F values and skips a denied primary for the next race in the same batch',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:NOW});
+  const races=[race(1),race(2)].map(row=>({...row,exhibition_ready:false}));
+  const incoming=races.flatMap(boats).map(row=>row.boat_number===1?{...row,exhibition_st:-.04,exhibition_st_raw:-.04}:row);
+  const stored=incoming.map(({exhibition_time,exhibition_st,exhibition_st_raw,exhibition_course,...row})=>row);
+  const sourceCalls=[],entryWrites=[],raceWrites=[],errors=[];
+  const entities={Race:{filter:async()=>structuredClone(races),update:async(id,patch)=>{
+    raceWrites.push({id,patch:structuredClone(patch)});Object.assign(races.find(row=>row.id===id),patch);return {id,...patch};
+  }},RaceEntry:{filter:async query=>({items:structuredClone(stored.filter(row=>row.race_key===query.race_key)),has_more:false,next_cursor:null}),
+    update:async(id,patch)=>{entryWrites.push(id);const row=stored.find(row=>row.id===id);Object.assign(row,patch);return structuredClone(row);}}};
+  const run=bind('fetchAndSaveExhibition',{
+    uniqueRacesByKey:rows=>rows,readV8Rows,selectLiveInputRaces,isSavedExhibitionComplete,buildCommittedExhibitionKey,VENUE_MAP:{'14':'鳴門'},
+    fetchExhibitionSource:async({race,entries,deadlineMs,skipPrimary})=>{
+      sourceCalls.push({id:race.id,skipPrimary});assert.equal(entries.length,6);assert.equal(deadlineMs,NOW+30000);
+      const url='boatcast-fixture/'+race.race_key;
+      return {ok:true,complete:true,primary_http_status:skipPrimary?null:403,
+        data:{entries:structuredClone(incoming.filter(row=>row.race_key===race.race_key)),scratched_boats:[],real_exhibition_count:6,active_boat_count:6},
+        source:{provider:'BOATCAST',url,urls:[url,url+'/starts'],captured_at:new Date(NOW).toISOString()}};
+    },
+    fetchOriginalExhibition:async({race})=>({snapshot:race.original_exhibition}),
+    withRateLimitRetry:async fn=>fn(),sleep:async()=>{},runV8LiveGeneration:()=>assert.fail('deferred collection must not generate forecasts'),
+  });
+  const result=await run({asServiceRole:{entities}},TODAY,30000,[],errors,{liveOnly:true,deferForecasts:true});
+  assert.deepEqual(sourceCalls,[{id:'race-1',skipPrimary:false},{id:'race-2',skipPrimary:true}]);
+  assert.equal(entryWrites.length,12);assert.equal(raceWrites.length,2);
+  for(const row of races){
+    const entries=stored.filter(entry=>entry.race_key===row.race_key);
+    assert.equal(row.exhibition_ready,true);assert.equal(entries[0].exhibition_st,-.04);assert.equal(entries[0].exhibition_st_raw,-.04);
+    assert.equal(row.exhibition_input_key,buildCommittedExhibitionKey(row,entries));
+    assert.deepEqual(JSON.parse(row.exhibition_input_key).boats[0][3],[-.04,'F']);
+    assert.equal(row.exhibition_collection.provider,'BOATCAST');
+    assert.equal(row.exhibition_collection.input_key,row.exhibition_input_key);
+    assert.deepEqual(row.exhibition_collection.urls,['boatcast-fixture/'+row.race_key,'boatcast-fixture/'+row.race_key+'/starts']);
+    assert.equal(row.exhibition_collection.captured_at,new Date(NOW).toISOString());
+  }
+  assert.deepEqual(result.ready_keys,races.map(row=>row.race_key));assert.deepEqual(errors,[]);
 });
 
 function auto(t,failures={}){
@@ -55,38 +97,40 @@ function auto(t,failures={}){
   const phase=name=>async(_client,_date,budget)=>{
     calls.push({name,budget,at:Date.now()});
     if(failures[name]){t.mock.timers.tick(failures[name].spend||0);throw failures[name].error;}
-    return {fetched:1,saved:1,ready_keys:[],races:1,entries:6};
+    return {ok:true,updated:1,checked:2,fetched:1,saved:1,ready_keys:[],races:1,entries:6};
   };
-  const run=bind('autoUpdate',{nowJSTTime:()=> '19:00',fetchAndSaveExhibition:phase('exhibition'),
+  const run=bind('autoUpdate',{nowJSTTime:()=> '19:00',
+    refreshOfficialDeadlines:async(client,{date,deadlineMs})=>{assert.equal(date,TODAY);return phase('deadlines')(client,date,deadlineMs-Date.now());},
+    fetchAndSaveExhibition:phase('exhibition'),
     fetchLiveOdds:phase('odds'),fetchAndSaveResults:phase('results'),fetchAndSaveRaceCards:phase('cards')});
   return {calls,errors,run:()=>run({},TODAY,TOMORROW,80000,logs,errors)};
 }
 
 test('a failed exhibition phase does not restart saved work or stop odds and maintenance',async t=>{
   const state=auto(t,{exhibition:{error:new Error('upstream unavailable'),spend:30000}}),result=await state.run();
-  assert.deepEqual(state.calls.map(row=>row.name),['exhibition','odds','results','cards','cards']);
+  assert.deepEqual(state.calls.map(row=>row.name),['deadlines','exhibition','odds','results','cards','cards']);
   assert.equal(result.ok,false);assert.equal(result.partial,true);assert.equal(result.failed,false);
-  assert.equal(result.phases[0].status,'FAILED');assert.equal(state.errors.length,1);
+  assert.equal(result.phases.find(row=>row.phase==='exhibition').status,'FAILED');assert.equal(state.errors.length,1);
   assert.ok(state.calls.every(row=>row.at+row.budget<=NOW+80000));
 });
 
 test('an exhausted phase returns deferred work for the next invocation without an extra retry budget',async t=>{
-  const state=auto(t,{exhibition:{error:new Error('deadline exceeded'),spend:80000}}),result=await state.run();
-  assert.deepEqual(state.calls.map(row=>row.name),['exhibition']);assert.equal(result.partial,true);
+  const state=auto(t,{deadlines:{error:new Error('schedule unavailable')},exhibition:{error:new Error('deadline exceeded'),spend:80000}}),result=await state.run();
+  assert.deepEqual(state.calls.map(row=>row.name),['deadlines','exhibition']);assert.equal(result.partial,true);
   assert.equal(result.failed,true);assert.equal(Date.now()-NOW,80000);
 });
 
 test('all acquisition failures remain explicitly failed rather than reporting successful zero counts',async t=>{
-  const failures=Object.fromEntries(['exhibition','odds','results','cards'].map(name=>[name,{error:new Error('unavailable')}]));
+  const failures=Object.fromEntries(['deadlines','exhibition','odds','results','cards'].map(name=>[name,{error:new Error('unavailable')}]));
   const state=auto(t,failures),result=await state.run();
-  assert.equal(result.ok,false);assert.equal(result.failed,true);assert.equal(result.phases.length,5);
-  assert.ok(result.phases.every(row=>row.status==='FAILED'));assert.equal(state.errors.length,5);
+  assert.equal(result.ok,false);assert.equal(result.failed,true);assert.equal(result.phases.length,6);
+  assert.ok(result.phases.every(row=>row.status==='FAILED'));assert.equal(state.errors.length,6);
 });
 
 for(const error of [Object.assign(new Error('forbidden'),{http_status:403}),new TypeError('invalid program input')]){
   test(`${error.name} ${error.http_status||'programming fault'} is not hidden as a routine partial acquisition`,async t=>{
     const state=auto(t,{exhibition:{error}});
-    await assert.rejects(state.run(),e=>e===error);assert.deepEqual(state.calls.map(row=>row.name),['exhibition']);
+    await assert.rejects(state.run(),e=>e===error);assert.deepEqual(state.calls.map(row=>row.name),['deadlines','exhibition']);
   });
 }
 

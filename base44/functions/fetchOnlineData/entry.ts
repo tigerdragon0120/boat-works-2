@@ -6,7 +6,8 @@ import { runV8LiveGeneration } from '../../shared/v8LiveGeneration.js';
 import { readV8Rows } from '../../shared/v8Repository.js';
 import { buildCommittedExhibitionKey } from '../../shared/exhibitionInputKey.js';
 import { fetchOriginalExhibition } from '../../shared/originalExhibition.js';
-import { fetchHtml, parseBeforeInfo, parseResult, parseOdds3t, parseRaceCard, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
+import { fetchExhibitionSource } from '../../shared/exhibitionSource.js';
+import { fetchHtml, parseResult, parseOdds3t, parseRaceCard, buildUrl, VENUE_MAP } from '../../shared/boatraceOfficialParser.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -42,11 +43,15 @@ async function shouldSkipRecentFailure(base44: any, fetchType: string, raceDate:
   const sr = base44.asServiceRole.entities;
   try {
     const logs = await sr.OnlineFetchLog.filter(
-      { fetch_type: fetchType, race_date: raceDate, venue_code: venueCode, race_number: raceNumber },
+      { fetch_type: fetchType, race_date: raceDate, venue_code: venueCode, race_number: raceNumber,
+        status: {$in:['success','failed','no_data','not_ready']} },
       '-fetched_at', 3
     );
-    if (!logs || !logs.length) return false;
-    const last = logs[0];
+    const last = Array.isArray(logs) ? logs[0] : logs?.items?.[0];
+    if (!last) return false;
+    // An old primary-only 403 must not suppress the newly available official
+    // alternative. Failures after both sources were attempted keep the cooldown.
+    if (fetchType === 'exhibition' && last.http_status === 403 && /^HTTP 403$/.test(last.error_message || '')) return false;
     if (last.status === 'failed' || last.status === 'no_data') {
       const fetchedAt = new Date(last.fetched_at).getTime();
       const fiveMinAgo = Date.now() - 5 * 60 * 1000;
@@ -161,6 +166,7 @@ async function processExhibition(base44: any, race: any, parsed: any, source: an
   if (scratchedBoats.length) raceUpdate.scratched_boats = scratchedBoats;
   if (sourceCommitted) {
     raceUpdate.exhibition_ready=true;
+    if (source.provider) raceUpdate.exhibition_collection={...source,revision:'EXHIBITION_SOURCE_2',input_key:sourceKey};
     const committedAt=Date.parse(race.exhibition_committed_at || '');
     if (race.exhibition_input_key!==sourceKey || !Number.isFinite(committedAt) || committedAt>Date.now()) {
       raceUpdate.exhibition_input_key=sourceKey;
@@ -334,6 +340,23 @@ export default async function(req: Request) {
     // URL構築(正しいURL形式: jcd パラメータ使用)
     const url = buildUrl(fetch_type === 'exhibition' ? 'beforeinfo' : fetch_type === 'odds' ? 'odds3t' : fetch_type === 'section' ? 'racelist' : 'raceresult', race_date, vc, rn);
 
+    let parsed: any;
+    let sourceCapturedAt: string;
+    let exhibitionSource: any = null;
+    if (fetch_type === 'exhibition') {
+      const sourceBudget = Date.now()+12000;
+      const entries = await readV8Rows(sr.RaceEntry,{race_key:race.race_key},
+        {budget:Math.min(sourceBudget,Date.now()+4000),maxPages:2,sort:'-updated_date'});
+      const acquired = await fetchExhibitionSource({race,entries,deadlineMs:sourceBudget});
+      if (!acquired.ok) {
+        await sr.OnlineFetchLog.create({fetch_type,race_id:race.id,race_date,venue_code:vc,race_number:rn,
+          status:'no_data',fetched_at:now,http_status:acquired.http_status||0,
+          error_message:'EXHIBITION_SOURCES_UNAVAILABLE: '+acquired.reason});
+        return Response.json({ok:false,status:'no_data',message:'公式展示の取得を完了できませんでした。次回再取得します。',reason:acquired.reason});
+      }
+      parsed=acquired.data;sourceCapturedAt=acquired.source.captured_at;
+      exhibitionSource={...acquired.source,primary_http_status:acquired.primary_http_status};
+    } else {
     // HTML取得(決定論的パーサー使用、InvokeLLM不使用)
     const fetchRes = await fetchHtml(url);
     if (!fetchRes.ok) {
@@ -345,18 +368,13 @@ export default async function(req: Request) {
       return Response.json({ ok: false, status: fetchRes.status === 0 ? 'failed' : 'no_data', message: fetchRes.error || `HTTP ${fetchRes.status}` });
     }
 
-    const sourceCapturedAt = new Date().toISOString();
+    sourceCapturedAt = new Date().toISOString();
     // 決定論的HTML解析(InvokeLLM不使用)
-    let parsed: any;
     try {
       if (fetch_type === 'section') {
         const venueName = race.venue_name || race.venue || VENUE_MAP[vc] || vc;
         const p = parseRaceCard(fetchRes.html, race_date, vc, venueName, rn);
         if (!p.ok) throw new Error((p.errors || []).join('; ') || '節間成績解析失敗');
-        parsed = p.data;
-      } else if (fetch_type === 'exhibition') {
-        const p = parseBeforeInfo(fetchRes.html);
-        if (!p.ok) throw new Error(p.errors.join('; ') || '展示データ解析失敗');
         parsed = p.data;
       } else if (fetch_type === 'odds') {
         parsed = parseOdds3t(fetchRes.html);
@@ -376,6 +394,8 @@ export default async function(req: Request) {
       return Response.json({ ok: false, status: 'failed', message: 'HTML解析失敗: ' + e.message });
     }
 
+    }
+
     // データ処理
     try {
       let resultData: any = {};
@@ -384,7 +404,7 @@ export default async function(req: Request) {
           resultData = await processSection(base44, race, parsed);
           break;
         case 'exhibition':
-          resultData = await processExhibition(base44, race, parsed, { url, captured_at: sourceCapturedAt });
+          resultData = await processExhibition(base44, race, parsed, exhibitionSource || { url, captured_at: sourceCapturedAt });
           break;
         case 'odds':
           resultData = await processOdds(base44, race, parsed);
@@ -399,8 +419,8 @@ export default async function(req: Request) {
       let notReadyReason = '';
       if (fetch_type === 'section' && Number(resultData.entries_updated || 0) < 1) {
         notReadyReason = '節間成績の保存件数が0件';
-      } else if (fetch_type === 'exhibition' && resultData.exhibition_ready !== true) {
-        notReadyReason = `展示データ未完了: ${Number(resultData.real_exhibition_count || 0)}/${Number(resultData.active_boat_count || 6)}艇`;
+      } else if (fetch_type === 'exhibition' && (resultData.exhibition_ready !== true || resultData.exhibition_committed !== true)) {
+        notReadyReason = `今回取得した展示データの保存未完了: ${Number(resultData.real_exhibition_count || 0)}/${Number(resultData.active_boat_count || 6)}艇`;
       } else if (fetch_type === 'odds' && Number(resultData.odds_count || 0) < 120) {
         notReadyReason = `3連単オッズ未完了: ${Number(resultData.odds_count || 0)}/120組`;
       } else if (fetch_type === 'result' && !resultData.result_trifecta) {

@@ -42,6 +42,11 @@ function setupAuto(t, { spendBudgets = false } = {}) {
   const legacy = () => { calls.push('legacy'); throw new Error('Legacy prediction must not run in AUTO'); };
   const run = bindFunction('autoUpdate', {
     nowJSTTime: () => '19:20',
+    refreshOfficialDeadlines: async (_client, { date, deadlineMs }) => {
+      calls.push('deadlines'); assert.equal(date, TODAY); assert.equal(deadlineMs, Date.now() + 8000);
+      spend('deadlines', deadlineMs - Date.now());
+      return { ok: true, updated: 1, checked: 2 };
+    },
     fetchAndSaveExhibition: async (_client, date, budget, _logs, _errors, options) => {
       calls.push('exhibition'); assert.equal(date, TODAY); assert.equal(budget, 30000);
       assert.deepEqual(options, { liveOnly: true, deferForecasts: true });
@@ -71,22 +76,23 @@ function setupAuto(t, { spendBudgets = false } = {}) {
   return { run: () => run(client, TODAY, TOMORROW, 80000, logs, errors), calls, budgets, errors };
 }
 
-test('AUTO saves exhibition and prices before maintenance without duplicating V7, V8 or legacy generation', async t => {
+test('AUTO confirms deadlines and saves exhibition and prices before maintenance without duplicate generation', async t => {
   const state = setupAuto(t);
   const result = await state.run();
-  assert.deepEqual(state.calls, ['exhibition', 'odds', 'results', 'cards:' + TODAY, 'cards:' + TOMORROW]);
+  assert.deepEqual(state.calls, ['deadlines', 'exhibition', 'odds', 'results', 'cards:' + TODAY, 'cards:' + TOMORROW]);
   assert.deepEqual(state.errors, []);
   assert.ok(result.steps.includes('forecast_inputs_ready: 1R'), 'the same race from exhibition and odds is counted once');
+  assert.ok(result.steps.includes('live_deadlines: 1R補正'));
   assert.ok(result.steps.includes('exhibition: 1R'));
   assert.ok(result.steps.includes('live_odds: 1R'));
-  assert.deepEqual(state.budgets, [['exhibition', 30000], ['odds', 18000], ['results', 15000], ['cards:' + TODAY, 20000], ['cards:' + TOMORROW, 80000]]);
+  assert.deepEqual(state.budgets, [['deadlines', 8000], ['exhibition', 30000], ['odds', 18000], ['results', 15000], ['cards:' + TODAY, 20000], ['cards:' + TOMORROW, 80000]]);
 });
 
 test('AUTO preserves live-input budgets and uses only remaining time for cards before stopping', async t => {
   const state = setupAuto(t, { spendBudgets: true });
   const result = await state.run();
-  assert.deepEqual(state.calls, ['exhibition', 'odds', 'results', 'cards:' + TODAY]);
-  assert.deepEqual(state.budgets, [['exhibition', 30000], ['odds', 18000], ['results', 15000], ['cards:' + TODAY, 17000]]);
+  assert.deepEqual(state.calls, ['deadlines', 'exhibition', 'odds', 'results', 'cards:' + TODAY]);
+  assert.deepEqual(state.budgets, [['deadlines', 8000], ['exhibition', 30000], ['odds', 18000], ['results', 15000], ['cards:' + TODAY, 9000]]);
   assert.equal(Date.now() - NOW, 80000);
   assert.ok(result.steps.includes('forecast_inputs_ready: 1R'));
   assert.equal(result.steps.some(step => step.startsWith('tomorrow_card:')), false);
@@ -117,12 +123,13 @@ function setupExhibition(t, { failedBoat = null, alreadyComplete = true, origina
     readV8Rows, buildCommittedExhibitionKey,
     uniqueRacesByKey: rows => rows, uniqueEntriesByBoat: rows => rows,
     selectLiveInputRaces, isSavedExhibitionComplete, VENUE_MAP: { '01': '桐生' },
-    buildUrl: (_type, date, venue, number) => `https://boatrace.jp/owpc/pc/race/beforeinfo?rno=${number}&jcd=${venue}&hd=${date.replaceAll('-', '')}`,
-    fetchHtml: async (_url, retries, options) => {
-      assert.equal(retries, 0); assert.equal(options.timeoutMs, 6000);
-      return { ok: true, html: 'fixture' };
+    fetchExhibitionSource: async ({ race, entries, deadlineMs, skipPrimary }) => {
+      assert.equal(race.id, row.id); assert.equal(entries.length, 6); assert.equal(deadlineMs, NOW + 30000); assert.equal(skipPrimary, false);
+      const url = `https://boatrace.jp/owpc/pc/race/beforeinfo?rno=${race.race_number}&jcd=${race.venue_code}&hd=${race.race_date.replaceAll('-', '')}`;
+      return { ok: true, complete: true, primary_http_status: 200,
+        data: { entries: structuredClone(incoming), real_exhibition_count: 6, active_boat_count: 6, scratched_boats: [] },
+        source: { provider: 'BOATRACE', url, urls: [url], captured_at: new Date(NOW).toISOString() } };
     },
-    parseBeforeInfo: () => ({ ok: true, data: { entries: structuredClone(incoming), real_exhibition_count: 6, active_boat_count: 6, scratched_boats: [] } }),
     fetchOriginalExhibition: async options => {
       originalInputs.push(structuredClone(options));
       return fetchOriginalExhibition({ ...options, fetcher: async url => {
@@ -160,6 +167,7 @@ test('a failed last-boat write cannot promote partial saved exhibition to ready 
   assert.equal(state.entryWrites.length, 6);
   assert.equal(state.row.exhibition_ready, false);
   assert.equal(state.raceWrites.some(patch => patch.exhibition_ready === true), false);
+  assert.equal(state.raceWrites.some(patch => 'exhibition_input_key' in patch || 'exhibition_collection' in patch), false);
   assert.deepEqual(result.ready_keys, []);
   assert.equal(isSavedExhibitionComplete(state.stored), false);
   assert.equal(state.errors.length, 1);

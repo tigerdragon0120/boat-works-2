@@ -9,7 +9,7 @@ import {buildCommittedExhibitionKey} from '../base44/shared/exhibitionInputKey.j
 const source=readFileSync(new URL('../base44/functions/runDailyAutoUpdate/entry.ts',import.meta.url),'utf8');
 const start=source.indexOf('async function fetchAndSaveExhibition('),end=source.indexOf('\n}',start)+2;
 const NOW=Date.parse('2026-11-27T00:00:00Z'),OLD=new Date(NOW-3600000).toISOString();
-function setup(t,{failedBoat=null,sourceMissing=false,minutesToDeadline=10}={}){
+function setup(t,{failedBoat=null,failedRace=false,sourceMissing=false,minutesToDeadline=10}={}){
   t.mock.timers.enable({apis:['Date'],now:NOW});
   const race={id:'race-1',race_key:'2026-11-27_14_02',race_date:'2026-11-27',venue_code:'14',race_number:2,
     status:'scheduled',deadline:new Date(NOW+minutesToDeadline*60000).toISOString(),exhibition_ready:true,original_exhibition:{status:'AVAILABLE'}};
@@ -18,21 +18,25 @@ function setup(t,{failedBoat=null,sourceMissing=false,minutesToDeadline=10}={}){
     exhibition_course:i+1,updated_date:OLD}));
   race.exhibition_input_key=buildCommittedExhibitionKey(race,entries);
   race.exhibition_committed_at=OLD;
-  const prior={key:race.exhibition_input_key,at:race.exhibition_committed_at};
+  race.exhibition_collection={provider:'BOATRACE',captured_at:OLD,input_key:race.exhibition_input_key};
+  const prior={key:race.exhibition_input_key,at:race.exhibition_committed_at,collection:structuredClone(race.exhibition_collection)};
   const incoming=entries.map(({boat_number,player_name,exhibition_time,exhibition_course})=>({
     boat_number,player_name,exhibition_time,exhibition_course,exhibition_st:boat_number===1?.08:boat_number===2?.09:.1,
   }));
   if(sourceMissing)delete incoming[1].exhibition_st;
   const entryWrites=[],raceWrites=[],errors=[];
   const entities={Race:{filter:async()=>[structuredClone(race)],update:async(id,doc)=>{
-    raceWrites.push(structuredClone(doc));Object.assign(race,doc);return {id,...doc};
+    raceWrites.push(structuredClone(doc));if(failedRace)throw new Error('race write failed');
+    Object.assign(race,doc);return {id,...doc};
   }},RaceEntry:{filter:async()=>({items:structuredClone(entries),has_more:false,next_cursor:null}),update:async(id,doc)=>{
     entryWrites.push(id);if(id==='entry-'+failedBoat)throw new Error('write failed');
     const row=entries.find(entry=>entry.id===id);Object.assign(row,doc,{updated_date:new Date().toISOString()});return structuredClone(row);
   }}};
   const dependencies={readV8Rows,selectLiveInputRaces,isSavedExhibitionComplete,buildCommittedExhibitionKey,
-    uniqueRacesByKey:rows=>rows,VENUE_MAP:{'14':'鳴門'},buildUrl:()=> 'official-beforeinfo',
-    fetchHtml:async()=>({ok:true,html:'source'}),parseBeforeInfo:()=>({ok:true,data:{entries:incoming,scratched_boats:[],active_boat_count:6,real_exhibition_count:6}}),
+    uniqueRacesByKey:rows=>rows,VENUE_MAP:{'14':'鳴門'},
+    fetchExhibitionSource:async()=>({ok:true,complete:!sourceMissing,primary_http_status:200,
+      data:{entries:structuredClone(incoming),scratched_boats:[],active_boat_count:6,real_exhibition_count:6},
+      source:{provider:'BOATRACE',url:'official-beforeinfo',urls:['official-beforeinfo'],captured_at:new Date(NOW).toISOString()}}),
     fetchOriginalExhibition:async({race})=>({snapshot:race.original_exhibition}),
     withRateLimitRetry:async fn=>fn(),sleep:async()=>{},runV8LiveGeneration:()=>assert.fail('deferred collection')};
   const run=new Function(...Object.keys(dependencies),stripTypeScriptTypes(source.slice(start,end))+'\nreturn fetchAndSaveExhibition;')(...Object.values(dependencies));
@@ -45,6 +49,8 @@ test('a complete source commits the saved six-boat key in one Race write while u
   assert.deepEqual(state.entryWrites,['entry-1','entry-2']);assert.equal(state.raceWrites.length,1);
   assert.equal(state.raceWrites[0].exhibition_input_key,buildCommittedExhibitionKey(state.race,state.entries));
   assert.equal(state.raceWrites[0].exhibition_committed_at,new Date(NOW).toISOString());
+  assert.equal(state.raceWrites[0].exhibition_collection.input_key,state.raceWrites[0].exhibition_input_key);
+  assert.equal(state.raceWrites[0].exhibition_collection.captured_at,new Date(NOW).toISOString());
   assert.notEqual(state.race.exhibition_input_key,state.prior.key);
   assert.equal(state.entries[5].updated_date,OLD);assert.deepEqual(result.ready_keys,[state.race.race_key]);
 });
@@ -54,7 +60,8 @@ test('one failed entry correction preserves the old commit marker even though al
   assert.equal(state.entries[0].exhibition_st,.08);assert.equal(state.entries[1].exhibition_st,.1);
   assert.equal(isSavedExhibitionComplete(state.entries),true);
   assert.equal(state.race.exhibition_input_key,state.prior.key);assert.equal(state.race.exhibition_committed_at,state.prior.at);
-  assert.equal(state.raceWrites.some(row=>'exhibition_input_key'in row||'exhibition_committed_at'in row),false);
+  assert.deepEqual(state.race.exhibition_collection,state.prior.collection);
+  assert.equal(state.raceWrites.some(row=>'exhibition_input_key'in row||'exhibition_committed_at'in row||'exhibition_collection'in row),false);
   assert.deepEqual(result.ready_keys,[]);assert.equal(state.errors.length,1);
 });
 
@@ -63,8 +70,21 @@ test('a missing source ST cannot be filled from stored data to publish a new com
   assert.equal(state.entries[0].exhibition_st,.08);assert.equal(state.entries[1].exhibition_st,.1);
   assert.equal(isSavedExhibitionComplete(state.entries),true);
   assert.equal(state.race.exhibition_input_key,state.prior.key);assert.equal(state.race.exhibition_committed_at,state.prior.at);
-  assert.equal(state.raceWrites.some(row=>'exhibition_input_key'in row||'exhibition_committed_at'in row),false);
+  assert.deepEqual(state.race.exhibition_collection,state.prior.collection);
+  assert.equal(state.raceWrites.some(row=>'exhibition_input_key'in row||'exhibition_committed_at'in row||'exhibition_collection'in row),false);
   assert.deepEqual(result.ready_keys,[]);
+});
+
+test('a failed Race write preserves the committed source and does not forward fully saved entries',async t=>{
+  const state=setup(t,{failedRace:true}),result=await state.run();
+  assert.deepEqual(state.entryWrites,['entry-1','entry-2']);
+  assert.equal(isSavedExhibitionComplete(state.entries),true);
+  assert.equal(state.raceWrites.length,1);
+  assert.equal(state.race.exhibition_input_key,state.prior.key);
+  assert.equal(state.race.exhibition_committed_at,state.prior.at);
+  assert.deepEqual(state.race.exhibition_collection,state.prior.collection);
+  assert.deepEqual(result.ready_keys,[]);
+  assert.equal(state.errors.length,1);assert.match(state.errors[0],/race write failed/);
 });
 
 test('READY inputs with no commit are collected and committed before the final refresh window',async t=>{

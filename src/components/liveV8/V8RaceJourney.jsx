@@ -14,7 +14,8 @@ import {selectJourneyBaseline} from './v8RacerEvidenceView';
 import {originalTimingSummary, savedSumView, SUM_LABELS, sumModelStatus, sumTimeText} from './v8SumView';
 import {isReplay, latestStudyStage, studyStageLabel, studySettlementIndex} from './v8StudyView';
 import {scenarioViews, scenarioSelectionContext, selectedScenarioView} from './v8ScenarioView';
-import {BUTTON_CLASS, displayForecastStatus, formatTime, latestStage, timeMs, useClock, useV8Dashboard} from './v8Client';
+import {exhibitionForecastEmptyState} from './v8ExhibitionEmptyState';
+import {BUTTON_CLASS, formatTime, latestStage, timeMs, useClock, useV8Dashboard} from './v8Client';
 
 const COMPARE={SUPPORTED:'事前の読みを支持',CHANGED:'展示で展開を修正',NO_BASE:'比較元の保存待ち',PARTIAL:'情報が揃うまで保留'};
 const THEORIES={UICHI_MAIN:'ういち基本型',UICHI_URA:'裏ういち型',UICHI_NEW_MAIN:'新ういち型',UICHI_NEW_URA:'新裏ういち型',EXHIBITION_RELATIVE:'展示・スタート相対評価（従来式）',SUM_BASIC:'基本SUM',SUM_AMAGASAKI:'尼崎・3項SUM',V8_ALL_FACTOR:'V8多因子評価'};
@@ -138,19 +139,7 @@ export default function V8RaceJourney({race,onForecastSnapshots}) {
   const currentRace=(data?.races || []).find(row=>row.id===race?.id || (row.race_key && row.race_key===race?.race_key)) || race;
   const ambiguous=(data?.ambiguous_race_keys || []).includes(currentRace?.race_key);
   const oddsBlocked=!!error||!data||data.complete===false||ambiguous;
-  const chosen=final || baseline;
-  const decision=displayForecastStatus(chosen,now,currentRace,{ambiguous,unavailable:!!error||!data||data.complete===false});
-  const finalEmpty=error||!data||ambiguous
-    ? {title:'展示後予想の保存状況を確認できません',detail:'保存記録を確認できていません。時間を置いて再読込してください。',step:'確認待ち'}
-    : decision.key==='CANCELLED'
-    ? {title:'レースは中止になりました',detail:'このレースの展示後予想は保存されていません。',step:'中止'}
-    : ['CLOSED','REPLAY'].includes(decision.key)
-    ? currentRace?.exhibition_ready===true
-      ? {title:'検証用の展示後予想を補完します',detail:'取得した展示情報から予想を作り、確定結果と照合します。補完分は事後検証として保存します。',step:'予想補完待ち'}
-      : {title:'展示データの再取得を待っています',detail:'締切後も展示情報を収集し、展示後予想と結果検証を補完します。',step:'展示再取得待ち'}
-    : currentRace?.exhibition_ready===true
-    ? {title:'展示後予想の保存を待っています',detail:'展示情報は取得済みです。展示後予想の保存を確認してから表示します。',step:'保存待ち'}
-    : {title:'展示情報を待っています',detail:'展示の進入・ST・タイムを取得後、展示後予想を保存して表示します。',step:'展示待ち'};
+  const finalEmpty=exhibitionForecastEmptyState({race:currentRace,now,unavailable:oddsBlocked});
   const settlementMap=useMemo(()=>studySettlementIndex([...(data?.verifications || []),...(data?.replay_verifications || [])]),[data?.verifications,data?.replay_verifications]);
   const finalSettlement=settlementMap.get(final?.id), baselineSettlement=settlementMap.get(baseline?.id);
   const finalPlan=finalSelectionView(final), finalDecision=finalSelectionDecision(final,currentRace,now,{blocked:oddsBlocked});
