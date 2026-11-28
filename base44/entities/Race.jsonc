@@ -11,6 +11,24 @@
       "type": "object",
       "description": "締切時刻の訂正を確認した公式取得元と取得時刻。保存済み予想の締切・買い目は変更しない。"
     },
+    "schedule_status": {
+      "type": "string",
+      "enum": ["CANCELLED", "POSTPONED"],
+      "description": "公式に確認した当日レースの中止・順延。いずれもstatusはcancelledとし、結果確定や翌日のレースとは区別する。"
+    },
+    "schedule_reason": {
+      "type": "string",
+      "description": "中止・途中中止・順延など、日付・場・レースを照合した公式の開催状況。"
+    },
+    "schedule_source": {
+      "type": "object",
+      "description": "開催状況の公式取得元URL・取得時刻・日付場R・中止/順延の根拠。締切の経過や取得失敗から状態を推測しない。"
+    },
+    "postponed_to": {
+      "type": "string",
+      "format": "date",
+      "description": "公式情報に明示された場合のみ保存する順延先日付。元レースと保存済み予想の日付は変更しない。"
+    },
     "original_exhibition": {
       "type": "object",
       "description": "公式BOATCASTのオリジナル展示。取得元・取得時刻・日付場R・艇別1周/周り足/直線と公式展示タイムを保持。未取得は欠測のまま扱う。"

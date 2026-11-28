@@ -122,8 +122,9 @@ test('ambiguous schedules, duplicate venues and conflicting current-race heading
 
 test('HTTP403 and failed HTML fallback stay explicit and preserve existing rows',async t=>{
   const state=setup(t,{status:403}),before=structuredClone(state.records),result=await run(state);
-  assert.equal(result.ok,false);assert.equal(result.reason,'SCHEDULE_CARD_HTTP_403');assert.equal(result.source.http_status,403);
-  assert.equal(result.primary_failure.reason,'SCHEDULE_HTTP_403');assert.equal(result.fallback.attempted,1);
+  assert.equal(result.ok,false);assert.equal(result.reason,'SCHEDULE_INDEX_HTTP_403');assert.equal(result.source.http_status,403);
+  assert.equal(result.primary_failure.reason,'SCHEDULE_HTTP_403');assert.equal(result.fallback.attempted,2);
+  assert.equal(result.fallback.failures.some(failure=>failure.reason==='SCHEDULE_CARD_HTTP_403'),true);
   assert.equal(state.requests.length,1);assert.equal(state.calls.length,1);assert.deepEqual(state.records,before);
 });
 

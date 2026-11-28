@@ -2,6 +2,7 @@
 import { base44 } from "@/api/base44Client";
 import { dedupeVerifications } from "@/lib/verificationUtils";
 import { runPrediction, judgeTrifecta } from "@/lib/predictionEngine";
+import { createRaceListCache } from "@/lib/raceListCache";
 
 const VERSION = "v3";
 
@@ -60,45 +61,14 @@ export async function getSettings() {
   return created;
 }
 
-// 今日のレース一覧(終了済みは別途)
-function raceDisplayScore(r) {
-  let score = 0;
-  if (r?.has_final) score += 40;
-  if (r?.exhibition_ready) score += 30;
-  if (r?.has_pre) score += 20;
-  if (r?.prediction_grade) score += 5;
-  if (r?.deadline) score += 2;
-  if (r?.status === "finished") score += 1;
-  return score;
+// 同日一覧の完了結果と進行中リクエストを共有し、日付をまたいだ混在を防ぐ。
+const readRaceList = createRaceListCache({
+  filterRaces: (...args) => base44.entities.Race.filter(...args),
+  retry: withRetry,
+});
+export async function listTodayRaces({ includeFinished = false, raceDate = todayStr(), force = false } = {}) {
+  return readRaceList({ includeFinished, raceDate, force });
 }
-
-function dedupeRacesForDisplay(races) {
-  const byKey = new Map();
-  for (const race of races || []) {
-    const key = race.race_key || `${race.race_date}_${String(race.venue_code || "").padStart(2, "0")}_${String(race.race_number || "").padStart(2, "0")}`;
-    const current = byKey.get(key);
-    if (!current || raceDisplayScore(race) > raceDisplayScore(current) ||
-        (raceDisplayScore(race) === raceDisplayScore(current) &&
-         String(race.updated_date || "") > String(current.updated_date || ""))) {
-      byKey.set(key, race);
-    }
-  }
-  return [...byKey.values()];
-}
-
-// 今日のレース一覧。同一race_keyが重複していても画面には1Rにつき1件だけ返す。
-// 複数の画面・更新処理が同時に同じ一覧を取りにいくとエンティティ一覧の
-// レート制限(429)に達するため、12秒だけ結果を共有する。
-let todayRacesCache = { at: 0, value: null };
-export async function listTodayRaces({ includeFinished = false } = {}) {
-  if (!todayRacesCache.value || Date.now() - todayRacesCache.at > 12000) {
-    const races = await withRetry(() => base44.entities.Race.filter({ race_date: todayStr() }, "-deadline", 500));
-    todayRacesCache = { at: Date.now(), value: dedupeRacesForDisplay(races || []) };
-  }
-  const unique = todayRacesCache.value;
-  if (!includeFinished) return unique.filter((r) => r.status !== "finished" && r.status !== "cancelled");
-  return unique;
-};
 
 function entryCompleteness(e) {
   return (e?.registration_number || e?.register_number ? 20 : 0) +

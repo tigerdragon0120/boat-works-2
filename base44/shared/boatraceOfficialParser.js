@@ -128,19 +128,18 @@ export function parseRaceIndex(html) {
 // racelist上部の締切予定時刻(1R〜12R)を抽出
 // =====================================================
 export function parseDeadlineTimes(html) {
-  const marker = String(html || '').indexOf('締切予定時刻');
-  if (marker < 0) return [];
-  // 締切行は短いtable行なので次の </tr> までに限定し、他の時刻を混ぜない。
-  const tail = String(html || '').slice(marker);
-  const rowEnd = tail.indexOf('</tr>');
-  const row = rowEnd >= 0 ? tail.slice(0, rowEnd) : tail.slice(0, 5000);
-  const times = [];
-  const re = /(\d{1,2}:\d{2})/g;
-  let m;
-  while ((m = re.exec(normalizeWidth(stripTags(row)))) !== null) {
-    if (!times.includes(m[1])) times.push(m[1]);
-  }
-  return times.slice(0, 12);
+  // レース番号はセルの位置で決まる。中止・空欄を落として後続Rを
+  // 左詰めしたり、同じ時刻を重複除去したりしない。
+  const rows = [...String(html || '').matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)]
+    .map(match => [...match[1].matchAll(/<td\b([^>]*)>([\s\S]*?)<\/td>/gi)])
+    .filter(cells => cells.length && stripTags(cells[0][2]) === '締切予定時刻');
+  if (rows.length !== 1) return [];
+  const cells = rows[0].slice(1);
+  if (cells.length !== 12 || cells.some(cell => /\bcolspan\s*=\s*["']?(?!1(?:["'\s>]|$))\d/i.test(cell[1]))) return [];
+  return cells.map(cell => {
+    const value = normalizeWidth(stripTags(cell[2]));
+    return /^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(value) ? value.padStart(5, '0') : null;
+  });
 }
 
 // =====================================================
@@ -267,8 +266,6 @@ export function parseRaceCard(html, raceDate, venueCode, venueName, raceNumber =
   let deadlineTime = null;
   if (raceNumber && deadlineTimes.length >= raceNumber) {
     deadlineTime = deadlineTimes[raceNumber - 1];
-  } else if (deadlineTimes.length === 1) {
-    deadlineTime = deadlineTimes[0];
   }
 
   // 選手データ抽出: racerphoto/XXXX.jpg をアンカーに6艇を特定

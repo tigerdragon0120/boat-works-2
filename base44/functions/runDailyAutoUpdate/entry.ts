@@ -159,7 +159,8 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     }
     for(const rno of ambiguousRaceNos)errors.push(venueName + ' R' + rno + ': 出走表重複を保持して再保存を保留');
 
-    let deadlineTimes: string[] = [];
+    let deadlineTimes: Array<string | null> = [];
+    const validClock = (value: any) => typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
     let seriesName = '';
     try {
       const sched = await fetchHtml(buildUrl('racelist', raceDate, venueCode, 1), 0, {timeoutMs:6000, deadlineMs:startTime + timeBudgetMs});
@@ -175,7 +176,7 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
     for (const er of existingRaces) {
       const rn = Number(er.race_number);
       const t = deadlineTimes[rn - 1];
-      if (!rn || !t) continue;
+      if (!rn || !validClock(t)) continue;
       if (['finished','cancelled'].includes(er.status) || hasConfirmedOfficialDeadline(er,{date:raceDate})) continue;
       const correctDeadline = `${raceDate}T${t}:00+09:00`;
       if (Date.parse(er.deadline) !== Date.parse(correctDeadline)) deadlineFixes.push({ race:er, deadline:correctDeadline });
@@ -272,7 +273,7 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
       };
       if (race.race_name) doc.race_name = race.race_name;
       if (race.race_type) doc.race_type = race.race_type;
-      if (t) doc.deadline = `${raceDate}T${t}:00+09:00`;
+      if (validClock(t)) doc.deadline = `${raceDate}T${t}:00+09:00`;
       if (seriesName) {
         doc.series_name = seriesName;
         doc.is_womens = venueIsWomens;
@@ -931,14 +932,14 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
 
   // Time-sensitive inputs come first. V1-V6 PRE/FINAL expansion is retired from AUTO.
   if (jstHour >= 8 && jstHour <= 22) {
-    logs.push('AUTO: 最新の公式締切を確認して展示・オッズを取得（V8）');
+    logs.push('AUTO: 公式の開催状況・締切を確認して展示・オッズを取得（V8）');
     const schedule = await runPhase('live_deadlines', async () => {
       const result = await refreshOfficialDeadlines(base44,
         {date:today,deadlineMs:Date.now()+Math.min(8000,remaining())});
-      if (result.ok === false) errors.push(`公式締切の確認を完了できませんでした（${result.reason||'次回再取得'}）`);
+      if (result.ok === false) errors.push(`公式の開催状況・締切の確認を完了できませんでした（${result.reason||'次回再取得'}）`);
       return result;
     }, {ok:false,updated:0,checked:0});
-    steps.push(`live_deadlines: ${Number(schedule.updated||0)}R補正`);
+    steps.push(`live_deadlines: 締切${Number(schedule.deadline_updated||0)}R補正・中止/順延${Number(schedule.disruption_updated||0)}R反映`);
     const exhibition = await runPhase('exhibition', () => fetchAndSaveExhibition(base44, today, Math.min(30000, remaining()), logs, errors, {liveOnly:true,deferForecasts:true}), {fetched:0,ready_keys:[]});
     steps.push(`exhibition: ${exhibition.failed ? '保留' : exhibition.fetched + 'R'}`);
     const odds = remaining() > 3000

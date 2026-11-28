@@ -23,7 +23,7 @@ const entriesFor=rno=>Array.from({length:6},(_,i)=>({id:'entry-'+rno+'-'+(i+1),r
 const matches=(row,query)=>Object.entries(query).every(([name,value])=>value&&typeof value==='object'
   ? '$in' in value&&value.$in.includes(row[name]):value===null?row[name]==null:row[name]===value);
 
-function setup(t,{forceCard=false,missingRace=false,confirmed=true,status='pre',noSchedule=false,beforeWrite=null,onCard=null}={}){
+function setup(t,{forceCard=false,missingRace=false,confirmed=true,status='pre',noSchedule=false,beforeWrite=null,onCard=null,deadlineSlots=null,cardTime='11:25'}={}){
   t.mock.timers.enable({apis:['Date'],now:NOW});
   const store={Race:Array.from({length:12},(_,i)=>race(i+1)).filter(row=>!missingRace||row.race_number!==2),
     RaceEntry:Array.from({length:12},(_,i)=>entriesFor(i+1)).flat().filter(row=>!missingRace||row.race_number!==2)};
@@ -51,11 +51,11 @@ function setup(t,{forceCard=false,missingRace=false,confirmed=true,status='pre',
   const dependencies={readV8Rows,planRaceCardEntries,hasConfirmedOfficialDeadline,
     buildUrl:(kind,_date,_venue,rno)=>kind+':'+rno,buildRaceKey:(_date,_venue,rno)=>key(rno),
     fetchHtml:async()=>({ok:true,html:'official-card'}),parseRaceIndex:()=>[{venue_code:VENUE,venue_name:'江戸川'}],
-    parseDeadlineTimes:()=>noSchedule?[]:Array.from({length:12},(_,i)=>i===1?'11:25':''),
+    parseDeadlineTimes:()=>deadlineSlots??(noSchedule?[]:Array.from({length:12},(_,i)=>i===1?'11:25':'')),
     parseSeriesName:()=>'',isWomensRace:()=>false,
     parseRaceCard:(_html,_date,_venue,_name,rno)=>{
       if(onCard)onCard(store);
-      return {ok:true,data:{venues:[{races:[{deadline_time:'11:25',race_name:'テスト',entries:entriesFor(rno).map(row=>({
+      return {ok:true,data:{venues:[{races:[{deadline_time:cardTime,race_name:'テスト',entries:entriesFor(rno).map(row=>({
         boat_number:row.boat_number,registration_number:row.registration_number,player_name:'選手'+row.boat_number,national_win_rate:6}))}]}]}};
     },withRateLimitRetry:async fn=>fn(),
   };
@@ -139,4 +139,21 @@ test('new races still receive their parsed card deadline',async t=>{
   assert.equal(env.writes.created.length,1);assert.equal(env.writes.created[0].race_key,key(2));
   assert.equal(env.writes.created[0].deadline,DATE+'T11:25:00+09:00');assert.equal(env.writes.created[0].status,'scheduled');
   assert.deepEqual(env.errors,[]);
+});
+
+test('a missing race slot never shifts the later deadline into the missing race',async t=>{
+  const slots=Array(12).fill(null);slots[2]='12:08';
+  const env=setup(t,{forceCard:true,confirmed:false,deadlineSlots:slots,cardTime:null});await env.run();
+  assert.equal(env.store.Race[1].deadline,DATE+'T11:34:00+09:00');
+  assert.equal(env.store.Race[2].deadline,DATE+'T12:08:00+09:00');
+  assert.equal(env.writes.conditional.length,1);
+  assert.equal(env.writes.conditional[0].query.id,'race-3');
+});
+
+test('official status text cannot be persisted as a datetime during card repair',async t=>{
+  const slots=Array(12).fill(null);slots[1]='中止';
+  const env=setup(t,{forceCard:true,confirmed:false,deadlineSlots:slots,cardTime:'中止'});await env.run();
+  assert.equal(env.store.Race[1].deadline,DATE+'T11:34:00+09:00');
+  assert.equal(env.writes.conditional.length,0);
+  assert.equal('deadline' in env.writes.metadata[0],false);
 });
