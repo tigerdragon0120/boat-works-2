@@ -15,7 +15,14 @@
 import { fetchBoatcastText } from "./boatcastClient.js";
 import { normalizeRs1, normalizeRs2, normalizeRaceResult } from "./boatcastNormalizer.js";
 
-const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30分以内なら鮮度OK
+// RS1/RS2のHTTP200は未公開本文の場合もある。FINAL種別の無期限キャッシュを
+// そのまま使わず、未保存結果は次の収集で必ず公開状態を確認し直す。
+const RESULT_CACHE_MAX_AGE_MS = 30000;
+const responseStatus = response => typeof response?.text === 'string'
+  ? response.text.split(/\r?\n/).map(line => line.trim()).find(line => line && line !== 'data=')?.split(/\s+/)[0] || null
+  : null;
+const validTrifecta = value => typeof value === 'string' && /^[1-6]-[1-6]-[1-6]$/.test(value)
+  && new Set(value.split('-')).size === 3;
 
 // BOATCASTから結果を取得(rs1 + rs2 を並列取得 → 正規化 → 統合)
 export async function fetchBoatcastResult(race, options = {}) {
@@ -24,7 +31,7 @@ export async function fetchBoatcastResult(race, options = {}) {
     const raceDate = String(race?.race_date || '').replace(/-/g, '');
     const raceNumber = Number(race?.race_number || 0);
     if (!venueCode || !raceDate || !raceNumber) {
-      return { ok: false, reason: 'invalid_race_params' };
+      return { ok: false, complete: false, reason: 'invalid_race_params' };
     }
 
     const metadata = {
@@ -38,8 +45,9 @@ export async function fetchBoatcastResult(race, options = {}) {
     const timeout = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : 6000;
     const stopAt = bounded ? Math.min(options.deadlineMs, Date.now() + timeout) : Infinity;
     const remaining = stopAt - Date.now();
-    if (remaining <= 0) return {ok:false,reason:'FETCH_TIME_BUDGET',http_access_count:0};
-    const requestOptions = bounded ? {timeoutMs:Math.max(1,Math.floor(remaining)),maxRetries:0} : {};
+    if (remaining <= 0) return {ok:false,complete:false,reason:'FETCH_TIME_BUDGET',http_access_count:0};
+    const requestOptions = {maxCacheAgeMs:RESULT_CACHE_MAX_AGE_MS,
+      ...(bounded ? {timeoutMs:Math.max(1,Math.floor(remaining)),maxRetries:0} : {})};
     const requests = Promise.all([
       fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType: 'RS1', ...requestOptions }),
       fetchBoatcastText({ venueCode, raceDate, raceNumber, dataType: 'RS2', ...requestOptions }),
@@ -54,15 +62,22 @@ export async function fetchBoatcastResult(race, options = {}) {
       })]) : await requests;
     } finally { if(timer!==undefined)clearTimeout(timer); }
     const [rs1Raw, rs2Raw] = responses;
+    const rs1Status = responseStatus(rs1Raw), rs2Status = responseStatus(rs2Raw);
+    // キャッシュ再利用を新規取得と記録しない。組み合わせた入力の古い取得時刻を使う。
+    const observed = [rs1Raw, rs2Raw].filter(raw => raw.ok).map(raw => raw.metadata?.fetched_at)
+      .filter(value => typeof value === 'string' && Number.isFinite(Date.parse(value)));
+    if (observed.length) metadata.fetched_at = new Date(Math.min(...observed.map(value => Date.parse(value)))).toISOString();
 
     // rs1が未公開の場合は結果確定前
     if (!rs1Raw.ok) {
-      return { ok: false, reason: 'rs1_not_available', http_access_count: rs1Raw.http_access_count || 0 };
+      return { ok: false, complete: false, reason: 'rs1_not_available', rs1_status: rs1Status, rs2_status: rs2Status,
+        http_access_count: rs1Raw.http_access_count || 0 };
     }
 
     const rs1Result = normalizeRs1(rs1Raw.text, metadata);
     if (!rs1Result.ok) {
-      return { ok: false, reason: `rs1_normalize: ${rs1Result.error}`, status: rs1Result.status };
+      return { ok: false, complete: false, reason: `rs1_normalize: ${rs1Result.error}`,
+        status: rs1Result.status || rs1Status, rs1_status: rs1Result.status || rs1Status, rs2_status: rs2Status };
     }
 
     // rs2は失敗してもrs1だけで部分結果として扱う(payoutなし)
@@ -73,20 +88,30 @@ export async function fetchBoatcastResult(race, options = {}) {
 
     const integrated = normalizeRaceResult(rs1Result, rs2Result, metadata);
     if (!integrated.ok) {
-      return { ok: false, reason: integrated.error };
+      return { ok: false, complete: false, reason: integrated.error,
+        rs1_status: rs1Result.status || rs1Status, rs2_status: rs2Result?.status || rs2Status };
     }
+
+    // 部分結果は従来どおり返すが、未公開払戻や不整合を確定保存の根拠にしない。
+    const reason = !validTrifecta(integrated.result_trifecta) ? 'result_trifecta_missing'
+      : !rs2Raw.ok ? 'rs2_not_available'
+        : !rs2Result?.ok ? `rs2_normalize: ${rs2Result?.error || 'not available'}`
+          : !Number.isFinite(integrated.payout) || integrated.payout <= 0 ? 'result_payout_missing'
+            : rs2Result.payouts?.trifecta?.combination !== integrated.result_trifecta ? 'result_payout_conflict' : null;
 
     return {
       ok: true,
+      complete: reason == null,
+      reason,
       source: 'BOATCAST',
       result: integrated,
-      rs1_status: rs1Result.status,
-      rs2_status: rs2Result?.status || null,
+      rs1_status: rs1Result.status || rs1Status,
+      rs2_status: rs2Result?.status || rs2Status,
       http_access_count: (rs1Raw.http_access_count || 0) + (rs2Raw.http_access_count || 0),
       fetched_at: metadata.fetched_at,
     };
   } catch (e) {
-    return { ok: false, reason: `exception: ${e.message}` };
+    return { ok: false, complete: false, reason: `exception: ${e.message}` };
   }
 }
 
@@ -136,6 +161,8 @@ export async function resolveRaceResult(race, options = {}) {
   if (boatcastResult.ok) {
     return {
       source: 'BOATCAST',
+      complete: boatcastResult.complete,
+      reason: boatcastResult.reason,
       result: boatcastResult.result,
       rs1_status: boatcastResult.rs1_status,
       rs2_status: boatcastResult.rs2_status,
@@ -146,7 +173,9 @@ export async function resolveRaceResult(race, options = {}) {
 
   return {
     source: null,
+    complete: false,
     reason: boatcastResult.reason,
-    rs1_status: boatcastResult.status || null,
+    rs1_status: boatcastResult.rs1_status || boatcastResult.status || null,
+    rs2_status: boatcastResult.rs2_status || null,
   };
 }

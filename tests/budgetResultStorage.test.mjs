@@ -24,7 +24,10 @@ function fixture({failSave=false}={}) {
       bulkCreate:async(rows)=>{writes.created.push(...rows);return rows;},
       bulkUpdate:async(rows)=>{writes.updated.push(...rows);return rows;}},
   };
-  const dependencies={saveSingleRaceResult:async(_sr,_race,doc,observedAt)=>{
+  const dependencies={syncFinishedRace:async(sr,race,result)=>{
+    assert.ok(result?.id);
+    return sr.Race.update(race.id,{status:'finished'});
+  },saveSingleRaceResult:async(_sr,_race,doc,observedAt)=>{
     if(failSave)throw new Error('result storage unavailable');
     writes.results.push({doc,observedAt});return{id:'result-1',...doc};
   }};
@@ -68,7 +71,9 @@ test('LOCAL fallback retains result, history and weather without legacy verifica
   const f=fixture(),errors=[];
   const parsed={...result,entries:result.boats,weather:'曇',wind_speed:0,water_temp:18,air_temp:16,wave_height:0};
   const run=bind(collector,'fetchAndSaveResults',{
-    uniqueRacesByKey:rows=>rows,VENUE_MAP:{'01':'桐生'},
+    readResultCollectionPlan:async()=>({total:1,candidates:[race],status_repairs:[],held:[],cancelled:0,skipped:0}),
+    syncFinishedRace:f.dependencies.syncFinishedRace,
+    isValidTrifecta:value=>/^[1-6]-[1-6]-[1-6]$/.test(String(value)),VENUE_MAP:{'01':'桐生'},
     resolveRaceResult:async()=>({source:'NONE'}),
     upsertBoatcastResultAndVerify:f.boatcast,upsertResultOnly:f.local,
     buildUrl:()=> 'https://fixture.invalid/result',fetchHtml:async()=>({ok:true,html:'fixture'}),

@@ -14,6 +14,9 @@ import { fetchOriginalExhibition } from '../../shared/originalExhibition.js';
 import { buildCommittedExhibitionKey } from '../../shared/exhibitionInputKey.js';
 import { fetchExhibitionSource } from '../../shared/exhibitionSource.js';
 import { refreshOfficialDeadlines, hasConfirmedOfficialDeadline } from '../../shared/officialLiveDeadlines.js';
+import { readResultCollectionPlan } from '../../shared/resultCollectionPlan.js';
+import { syncFinishedRace } from '../../shared/resultRaceState.js';
+import { isValidTrifecta } from '../../shared/resultEvidenceRules.js';
 
 const num = (v: any) => {
   if (v === null || v === undefined || v === '') return null;
@@ -374,77 +377,74 @@ async function fetchAndSaveRaceCards(base44: any, raceDate: string, timeBudgetMs
 // =====================================================
 async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: number, logs: string[], errors: string[]) {
   const sr = base44.asServiceRole.entities;
-  const startTime = Date.now();
-
-  // 当日全Race取得
-  const races = uniqueRacesByKey(await sr.Race.filter({ race_date: raceDate }, 'deadline', 5000).catch(() => []));
-  if (!races.length) {
-    return { total: 0, fetched: 0, skipped: 0, errors };
+  const startTime = Date.now(), deadlineMs = startTime + timeBudgetMs;
+  // A complete ledger is required: an unread page is not an empty result set.
+  const plan = await readResultCollectionPlan(base44, {raceDate, deadlineMs, now:startTime});
+  const races = plan.candidates;
+  let fetched = 0, boatcastCount = 0, localCount = 0, repaired = 0, attempted = 0;
+  let pending = 0;
+  logs.push(`結果取得: 対象${plan.total}R・取得候補${races.length}R・状態同期${plan.status_repairs.length}R・中止/順延除外${plan.cancelled}R`);
+  for (const held of plan.held) {
+    errors.push(`${held.race_key}: 結果の照合を保留（${held.reason}）`);
   }
 
-  // 結果済みのRaceを特定
-  const existingResults = await sr.RaceResult.filter({ race_id: { $in: races.map((r: any) => r.id) } }, '-finished_at', 600).catch(() => []);
-  const raceIdsWithResult = new Set(existingResults.filter((r: any) => r.result_trifecta && (r.is_finished || r.result_status === 'RESULT_FINAL')).map((r: any) => r.race_id));
-
-  let fetched = 0, skipped = 0, boatcastCount = 0, localCount = 0;
-  const now = Date.now();
+  // A previous result save may have succeeded while Race.status failed.
+  // Repair only from a matching official result, preserving cancellation state.
+  for (const {race, result} of plan.status_repairs) {
+    if (Date.now() >= deadlineMs) break;
+    try { await syncFinishedRace(sr, race, result); repaired++; }
+    catch (e: any) { errors.push(`${race.race_key}: 確定結果の状態同期を再試行（${e?.message || 'SAVE_FAILED'}）`); }
+  }
 
   for (const race of races) {
-    if (Date.now() - startTime > timeBudgetMs) {
-      logs.push(`結果取得: 時間予算到達 — 残り${races.length - races.indexOf(race)}R`);
+    if (Date.now() >= deadlineMs) {
+      logs.push(`結果取得: 時間予算到達 — 残り${races.length - attempted}Rは次回再取得`);
       break;
     }
-    if (raceIdsWithResult.has(race.id)) { skipped++; continue; }
-
-    // 締切時刻が過ぎているか確認
-    if (race.deadline) {
-      const deadlineTime = new Date(race.deadline).getTime();
-      if (now < deadlineTime + 5 * 60 * 1000) continue; // 締切5分後以降のみ
-    }
-
-    const venueCode = race.venue_code;
-    const raceNumber = race.race_number;
+    attempted++;
+    const venueCode = race.venue_code, raceNumber = race.race_number;
     const venueName = race.venue_name || race.venue || VENUE_MAP[venueCode] || venueCode;
-
-    // ============================================================
-    // BOATCAST優先で結果取得(着順・ST・進入・決まり手・天候・全券種払戻)
-    // 失敗時はLOCAL(boatrace.jp公式HTML)へフォールバック
-    // ============================================================
-    let resultSaved = false;
-    try {
-      const boatcastResult = await resolveRaceResult(race, {deadlineMs:startTime + timeBudgetMs,timeoutMs:6000});
-      if (boatcastResult.source === 'BOATCAST' && boatcastResult.result?.result_trifecta) {
-        await upsertBoatcastResultAndVerify(base44, race, boatcastResult, { verifyLegacy: false });
-        fetched++;
-        boatcastCount++;
-        resultSaved = true;
-        logs.push(`${venueName} R${raceNumber}: BOATCAST結果 ${boatcastResult.result.result_trifecta} ¥${boatcastResult.result.payout || 0} (${boatcastResult.result.popular_trifecta || '-'})`);
+    const boatcastResult = await resolveRaceResult(race, {deadlineMs, timeoutMs:6000});
+    const completeBoatcast = boatcastResult.source === 'BOATCAST'
+      && boatcastResult.complete !== false
+      && isValidTrifecta(boatcastResult.result?.result_trifecta)
+      && Number.isFinite(Number(boatcastResult.result?.payout)) && Number(boatcastResult.result.payout) > 0;
+    if (completeBoatcast) {
+      try {
+        const saved = await upsertBoatcastResultAndVerify(base44, race, boatcastResult, {verifyLegacy:false});
+        if (!saved?.saved) throw new Error('RESULT_NOT_SAVED');
+        fetched++; boatcastCount++;
+        logs.push(`${venueName} R${raceNumber}: BOATCAST結果 ${boatcastResult.result.result_trifecta} ¥${boatcastResult.result.payout} (${boatcastResult.result.popular_trifecta || '-'})`);
+      } catch (e: any) {
+        // A storage failure must not trigger another source/write in the same pass.
+        errors.push(`${venueName} R${raceNumber}: 結果の保存・状態同期を再試行（${e?.message || 'SAVE_FAILED'}）`);
       }
-    } catch (e: any) {
-      errors.push(`${venueName} R${raceNumber}: BOATCAST結果保存失敗 ${e.message}`);
+      continue;
     }
 
-    // BOATCAST失敗時はLOCAL fallback
-    if (!resultSaved) {
-      const url = buildUrl('raceresult', raceDate, venueCode, raceNumber);
-      const res = await fetchHtml(url, 0, {timeoutMs:6000, deadlineMs:startTime + timeBudgetMs});
-      if (!res.ok) continue;
-
-      const parsed = parseResult(res.html, raceDate, venueCode, venueName);
-      if (!parsed.ok || !parsed.data?.venues?.[0]?.results?.[0]) continue;
-
-      const result = parsed.data.venues[0].results[0];
-      result.race_number = raceNumber;
-
-      try {
-        await upsertResultOnly(base44, race, {
-          result_trifecta: result.result_trifecta,
-          finish_order: result.finish_order || [],
-          payout: result.payout || 0,
-          payouts: result.payouts || null,
-          fetched_at: new Date().toISOString(),
-        });
-
+    // Only acquisition gaps fall back to the official result HTML.
+    const url = buildUrl('raceresult', raceDate, venueCode, raceNumber);
+    const res = await fetchHtml(url, 0, {timeoutMs:6000, deadlineMs});
+    if (!res.ok) {
+      pending++;
+      errors.push(`${venueName} R${raceNumber}: 確定結果を再取得待ち（BOATCAST: ${boatcastResult.reason || 'RESULT_INCOMPLETE'} / 公式: ${res.status ? 'HTTP_' + res.status : 'FETCH_FAILED'}）`);
+      continue;
+    }
+    const parsed = parseResult(res.html, raceDate, venueCode, venueName);
+    const result = parsed.ok ? parsed.data?.venues?.[0]?.results?.[0] : null;
+    if (!result || !isValidTrifecta(result.result_trifecta) || !(Number(result.payout) > 0)) {
+      pending++;
+      logs.push(`${venueName} R${raceNumber}: 確定結果の公開待ち（次回再取得）`);
+      continue;
+    }
+    result.race_number = raceNumber;
+    try {
+      const saved = await upsertResultOnly(base44, race, {
+        result_trifecta: result.result_trifecta,
+        finish_order: result.finish_order || [], payout: result.payout,
+        payouts: result.payouts || null, fetched_at: new Date().toISOString(),
+      });
+      if (!saved) throw new Error('RESULT_NOT_SAVED');
         // RacerRaceHistory蓄積(LOCAL)
         const raceEntries = await sr.RaceEntry.filter({ race_id: race.id }, 'boat_number', 6).catch(() => []);
         const entryByBoat = new Map(raceEntries.map((e: any) => [e.boat_number, e]));
@@ -486,22 +486,17 @@ async function fetchAndSaveResults(base44: any, raceDate: string, timeBudgetMs: 
           await sr.Race.update(race.id, raceUpdate).catch(() => {});
         }
 
-        fetched++;
-        localCount++;
-        resultSaved = true;
-        logs.push(`${venueName} R${raceNumber}: LOCAL結果 ${result.result_trifecta} ¥${result.payout || 0}`);
-      } catch (e: any) {
-        errors.push(`${venueName} R${raceNumber}: LOCAL結果保存失敗 ${e.message}`);
-      }
+      fetched++; localCount++;
+      logs.push(`${venueName} R${raceNumber}: LOCAL結果 ${result.result_trifecta} ¥${result.payout}`);
+    } catch (e: any) {
+      errors.push(`${venueName} R${raceNumber}: 結果の保存・状態同期を再試行（${e?.message || 'SAVE_FAILED'}）`);
     }
-
-    // V8 settlement is handled by the shared all-race verification queue.
-
-    await sleep(300);
   }
-
-  logs.push(`結果取得: BOATCAST=${boatcastCount}R LOCAL=${localCount}R`);
-  return { total: races.length, fetched, skipped, boatcast: boatcastCount, local: localCount, errors };
+  const deferred = races.length - attempted + plan.status_repairs.length - repaired;
+  if (pending || deferred) logs.push(`結果取得: 公開/再取得待ち${pending}R・次回処理${deferred}R`);
+  logs.push(`結果取得: BOATCAST=${boatcastCount}R LOCAL=${localCount}R 状態同期=${repaired}R`);
+  return {total:plan.total, fetched, skipped:plan.skipped, boatcast:boatcastCount, local:localCount,
+    repaired, attempted, pending, deferred, cancelled:plan.cancelled, partial:pending > 0 || deferred > 0 || plan.held.length > 0, errors};
 }
 
 // =====================================================
@@ -917,7 +912,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     const before = errors.length;
     try {
       const result = await work();
-      phases.push({phase,status:errors.length > before ? 'PARTIAL' : 'SUCCESS'});
+      phases.push({phase,status:errors.length > before || result?.partial === true || result?.deferred === true ? 'PARTIAL' : 'SUCCESS'});
       return result;
     } catch (e: any) {
       const status = Number(e?.http_status ?? e?.response?.status ?? e?.status);
@@ -965,7 +960,7 @@ async function autoUpdate(base44: any, today: string, tomorrow: string, timeBudg
     const r = await runPhase('tomorrow_card', () => fetchAndSaveRaceCards(base44, tomorrow, remaining(), logs, errors), {races:0,entries:0});
     steps.push(`tomorrow_card: ${r.failed ? '保留' : '+' + r.races + 'R/+' + r.entries + '艇'}`);
   }
-  return {ok:errors.length===0,partial:errors.length>0 || remaining()<=0,
+  return {ok:errors.length===0,partial:errors.length>0 || remaining()<=0 || phases.some(row=>row.status==='PARTIAL'),
     failed:phases.length>0 && phases.every(row=>row.status==='FAILED'),phases,steps,logs,errors};
 }
 

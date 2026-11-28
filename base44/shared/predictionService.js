@@ -8,6 +8,7 @@ import { normalizeTkz, normalizeStartExhibition, normalizeExhibitionData } from 
 import { mergeExhibition } from "./exhibitionMerger.js";
 import { resolveProductionOdds, shouldFetchOdds } from "./oddsResolver.js";
 import { resolveRaceResult, mergeResultProtect } from "./resultResolver.js";
+import { syncFinishedRace } from "./resultRaceState.js";
 import { runAndSavePredictionV2, verifyV2Prediction } from "./predictionServiceV2.js";
 import { runAndSavePredictionV3, verifyV3Prediction } from "./predictionServiceV3.js";
 import { runAndSavePredictionV31, verifyV31Prediction } from "./predictionServiceV31.js";
@@ -807,7 +808,7 @@ export async function upsertBoatcastResultAndVerify(client, race, boatcastResult
   const saved = await saveSingleRaceResult(sr, race, doc, boatcastResult.fetched_at || null);
 
   // Race状態更新
-  await sr.Race.update(race.id, { status: "finished" }).catch(() => {});
+  await syncFinishedRace(sr, race, saved);
 
   // RacerRaceHistory蓄積(BOATCAST boatsデータから)
   const raceEntries = await sr.RaceEntry.filter({ race_id: race.id }, "boat_number", 6).catch(() => []);
@@ -919,7 +920,7 @@ export async function upsertResultOnly(client, race, resultData) {
   const sr = client.asServiceRole.entities;
   const doc = { race_id: race.id, race_key: race.race_key, result_trifecta: resultData.result_trifecta, finish_order: resultData.finish_order, payout: resultData.payout || 0, payouts: resultData.payouts || null, is_finished: true, finished_at: new Date().toISOString(), source: 'LOCAL', result_status: 'RESULT_FINAL' };
   const saved = await saveSingleRaceResult(sr, race, doc, resultData.fetched_at || null);
-  await client.asServiceRole.entities.Race.update(race.id, { status: "finished" });
+  await syncFinishedRace(sr, race, saved);
   return saved;
 }
 
