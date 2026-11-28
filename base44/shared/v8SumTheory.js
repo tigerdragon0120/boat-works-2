@@ -57,6 +57,9 @@ function matchingSourceUrls(raw, race, url) {
   const code = venue(race.venue_code), day = race.race_date.replaceAll('-', ''), round = String(Number(race.race_number)).padStart(2, '0');
   const original = new URL(url);
   if (original.hostname !== 'race.boatcast.jp' || original.pathname !== '/txt/' + code + '/bc_oriten_' + day + '_' + code + '_' + round + '.txt') return false;
+  // Accept only the canonical same-race TKZ URL emitted by the verified fallback.
+  // Compare raw text so URL normalization cannot admit aliases or extra metadata.
+  if (raw.exhibition_source_url === 'https://race.boatcast.jp/hp_txt/' + code + '/bc_j_tkz_' + day + '_' + code + '_' + round + '.txt') return true;
   const exhibition = sourceUrl(raw.exhibition_source_url);
   if (!exhibition) return false;
   const reference = new URL(exhibition);

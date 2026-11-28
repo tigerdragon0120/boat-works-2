@@ -31,6 +31,69 @@ const trialSnapshot=()=>({id:'snapshot-1',race_id:race.id,race_key:race.race_key
   venue_code:race.venue_code,race_number:race.race_number,deadline:race.deadline,snapshot_key:'source-1',snapshot_stage:'FINAL',
   gender_model:'OPEN',observed_at:'2026-11-24T02:22:00Z',created_date:'2026-11-24T02:22:00.001Z',
   boats:entries(),original_exhibition:structuredClone(raw)});
+const BOATCAST_TKZ='https://race.boatcast.jp/hp_txt/21/bc_j_tkz_20261124_21_07.txt';
+
+test('canonical TKZ provenance reaches saved V8 SUM scoring and its independent comparator',()=>{
+  const input=forecastArgs();input.originalExhibition.exhibition_source_url=BOATCAST_TKZ;
+  const result=buildRaceForecast(input),reference=buildRaceForecast(forecastArgs());
+  assert.equal(result.ok,true);
+  const output=result.record;
+  assert.equal(output.sum_evidence.status,'READY');assert.equal(output.sum_evidence.used_for_scoring,true);
+  assert.equal(output.provenance.sum_used_for_scoring,true);assert.equal(output.provenance.sum_speed_weight,.15);
+  assert.equal(output.sum_evidence.exhibition_source_url,BOATCAST_TKZ);
+  assert.equal(output.original_exhibition.exhibition_source_url,BOATCAST_TKZ);
+  assert.equal(output.sum_evidence.basic.mean,43.853333);
+  assert.deepEqual(output.boats.map(row=>row.score),reference.record.boats.map(row=>row.score));
+  assert.deepEqual(output.research_tickets,reference.record.research_tickets);
+  const snapshot=trialSnapshot();snapshot.original_exhibition.exhibition_source_url=BOATCAST_TKZ;
+  const trial=buildTheoryTrial(snapshot,now);
+  assert.equal(trial.ok,true);
+  assert.equal(trial.record.models.find(row=>row.key==='SUM_BASIC').status,'READY');
+});
+
+test('SUM evidence rejects different-race TKZ URLs and URL normalization aliases',()=>{
+  const urls=[
+    BOATCAST_TKZ.replace('20261124','20261125'),BOATCAST_TKZ.replace('/hp_txt/21/','/hp_txt/20/'),
+    BOATCAST_TKZ.replace('_21_07','_20_07'),BOATCAST_TKZ.replace('_07.txt','_08.txt'),
+    BOATCAST_TKZ.replace('_tkz_','_stt_'),BOATCAST_TKZ.replace('https:','http:'),
+    BOATCAST_TKZ.replace('race.boatcast.jp','race.boatcast.jp.evil.invalid'),
+    BOATCAST_TKZ.replace('race.boatcast.jp','user@race.boatcast.jp'),
+    BOATCAST_TKZ.replace('race.boatcast.jp','race.boatcast.jp:443'),
+    BOATCAST_TKZ.replace('/bc_j_tkz_','/%62c_j_tkz_'),
+    BOATCAST_TKZ.replace('/hp_txt/','/other/../hp_txt/'),
+    BOATCAST_TKZ+'?race=7',BOATCAST_TKZ+'#race',' '+BOATCAST_TKZ,
+  ];
+  for(const url of urls){
+    const input=args();input.originalExhibition.exhibition_source_url=url;
+    const result=buildSumEvidence(input);
+    assert.equal(result.evidence.status,'INVALID',url);
+    assert.deepEqual(result.evidence.missing,['ORIGINAL_SOURCE_URL_MISMATCH'],url);
+    assert.equal(result.evidence.used_for_scoring,false);assert.equal(result.original_exhibition,null);
+  }
+});
+
+test('valid TKZ provenance does not bypass SUM source, racer, shared-time or chronology checks',()=>{
+  const cases=[
+    [input=>input.originalExhibition.source_url=raw.source_url.replace('_07.txt','_08.txt'),'ORIGINAL_SOURCE_URL_MISMATCH'],
+    [input=>input.originalExhibition.entries[0].registration_number='9999','ORIGINAL_RACER_MISMATCH'],
+    [input=>input.originalExhibition.entries[0].exhibition_time=6.74,'EXHIBITION_TIME_SOURCE_CONFLICT'],
+    [input=>input.originalExhibition.captured_at='2026-11-24T02:26:00Z','ORIGINAL_SOURCE_TIME_INVALID'],
+    [input=>input.originalExhibition.exhibition_captured_at='2026-11-24T02:26:00Z','ORIGINAL_SOURCE_TIME_INVALID'],
+    [input=>{input.now='2026-11-24T03:00:00Z';input.originalExhibition.captured_at='2026-11-24T02:35:00Z';},'ORIGINAL_SOURCE_TIME_INVALID'],
+    [input=>input.originalExhibition.captured_at='2026-11-23T02:20:00Z','ORIGINAL_SOURCE_DATE_INVALID'],
+  ];
+  for(const [mutate,reason] of cases){
+    const input=args();input.originalExhibition.exhibition_source_url=BOATCAST_TKZ;mutate(input);
+    const result=buildSumEvidence(input);
+    assert.equal(result.evidence.status,'INVALID');assert.deepEqual(result.evidence.missing,[reason]);
+    assert.equal(result.evidence.used_for_scoring,false);assert.equal(result.original_exhibition,null);
+  }
+  const incomplete=args();incomplete.originalExhibition.exhibition_source_url=BOATCAST_TKZ;
+  incomplete.originalExhibition.entries.pop();
+  const missing=buildSumEvidence(incomplete).evidence;
+  assert.equal(missing.status,'INSUFFICIENT');assert.equal(missing.basic.mean,null);
+  assert.ok(missing.basic.missing.includes('BOAT_6_SUM_INPUT_MISSING'));
+});
 
 test('reproduces the published six-boat totals and positive-faster differences without rounding inputs first',()=>{
   const {evidence,original_exhibition}=buildSumEvidence(args());

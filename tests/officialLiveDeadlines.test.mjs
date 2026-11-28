@@ -28,7 +28,8 @@ function setup(t,{rows=[race()],payload=delayed(),status=200,beforeWrite=()=>{},
     headers:{'content-type':'application/json','last-modified':new Date(NOW-1000).toUTCString(),...headers}});};
   return {records,calls,requests,client:{asServiceRole:{entities:{Race:entity}}},fetcher};
 }
-const run=state=>refreshOfficialDeadlines(state.client,{date:DATE,deadlineMs:Date.now()+8000,fetcher:state.fetcher});
+const run=state=>refreshOfficialDeadlines(state.client,{date:DATE,deadlineMs:Date.now()+8000,fetcher:state.fetcher,
+  htmlFetcher:async()=>({ok:false,status:403,html:''})});
 
 test('edge-compatible manual redirects reject 302 without reading the body or database',async t=>{
   const state=setup(t),before=structuredClone(state.records);let requests=0,bodyRead=false;
@@ -119,10 +120,11 @@ test('ambiguous schedules, duplicate venues and conflicting current-race heading
   });
 });
 
-test('HTTP403 stays explicit, keeps existing rows and performs no database mutation',async t=>{
+test('HTTP403 and failed HTML fallback stay explicit and preserve existing rows',async t=>{
   const state=setup(t,{status:403}),before=structuredClone(state.records),result=await run(state);
-  assert.equal(result.ok,false);assert.equal(result.reason,'SCHEDULE_HTTP_403');assert.equal(result.source.http_status,403);
-  assert.equal(state.requests.length,1);assert.equal(state.calls.length,0);assert.deepEqual(state.records,before);
+  assert.equal(result.ok,false);assert.equal(result.reason,'SCHEDULE_CARD_HTTP_403');assert.equal(result.source.http_status,403);
+  assert.equal(result.primary_failure.reason,'SCHEDULE_HTTP_403');assert.equal(result.fallback.attempted,1);
+  assert.equal(state.requests.length,1);assert.equal(state.calls.length,1);assert.deepEqual(state.records,before);
 });
 
 test('future acquisition/publication times, another day and a newer stored source are rejected',async t=>{
