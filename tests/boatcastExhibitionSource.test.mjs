@@ -43,6 +43,45 @@ test('real Edogawa pair reproduces all six official values, including F and .73,
   assert.equal(state.calls.length,2);for(const call of state.calls){assert.equal(call.maxRetries,0);assert.ok(call.timeoutMs<=4000);}
 });
 
+test('actual saved Edogawa names with exact branch/birthplace suffixes match the two pure source names',async()=>{
+  const storedNames=['坪内実大阪/大阪','野村誠群馬/群馬','須藤博倫埼玉/埼玉','佐藤右京東京/宮城','成田華音埼玉/埼玉','鈴木雄登愛知/愛知'];
+  const roster=entries.map((entry,index)=>({...entry,player_name:storedNames[index],racer_name:storedNames[index],register_number:entry.registration_number}));
+  const before=JSON.stringify(roster),result=await run(()=>{},{entries:roster}).promise;
+  assert.equal(result.ok,true);assert.equal(result.data.entries.length,6);
+  assert.deepEqual(result.data.entries.map(row=>row.registration_number),registrations);
+  assert.deepEqual(result.data.entries.map(row=>row.exhibition_st),[-.04,.04,.73,.12,.11,.12]);
+  assert.equal(buildCommittedExhibitionKey(race,result.data.entries),buildCommittedExhibitionKey(race,(await run().promise).data.entries));
+  assert.equal(JSON.stringify(roster),before,'the adapter must not rewrite the saved names');
+});
+
+test('only the exact terminal prefecture pair is removed, with available location fields cross-checked',async()=>{
+  const row=(player_name,extra={})=>entries.map((entry,index)=>index===0?{...entry,player_name,racer_name:player_name,...extra}:entry);
+  const annotated=await run(()=>{},{entries:row('坪内　実　大阪府／大阪府',{branch_name:'大阪',birthplace:'大阪府'})}).promise;
+  assert.equal(annotated.ok,true);
+  for(const [player_name,extra] of [
+    ['坪内実大阪/大阪',{branch_name:'東京'}],['坪内実大阪/大阪',{birthplace:'滋賀'}],
+    ['坪内実大阪/大阪',{racer_name:'坪内実東京/大阪'}],['坪内実大阪/大阪',{racer_name:'別人大阪/大阪'}],
+    ['坪内実不明/大阪',{}],['坪内実大阪/不明',{}],['坪内実大阪/大阪追記',{}],['大阪/大阪',{}],
+  ]){
+    const state=run(()=>{},{entries:row(player_name,extra)}),result=await state.promise;
+    assert.equal(result.ok,false,player_name);assert.equal(result.reason,'SOURCE_ROSTER_UNCONFIRMED');assert.equal(state.calls.length,0);
+  }
+  for(const player_name of ['坪内実大阪','坪内実追記大阪/大阪','坪内実太郎大阪/大阪']){
+    const result=await run(()=>{},{entries:row(player_name)}).promise;
+    assert.equal(result.ok,false,player_name);assert.equal(result.reason,'SOURCE_TIME_OR_NAME_MISMATCH');
+  }
+});
+
+test('roster-only suffix normalization does not excuse a different or annotated source name',async()=>{
+  const roster=entries.map((entry,index)=>index===0?{...entry,player_name:'坪内実大阪/大阪',racer_name:'坪内実大阪/大阪'}:entry);
+  for(const type of ['TKZ','STT']){
+    const result=await run(sources=>{sources[type].text=changeRow(sources[type].text,0,parts=>{
+      parts[type==='TKZ'?0:2]='坪内実大阪/大阪';return parts;
+    });},{entries:roster}).promise;
+    assert.equal(result.ok,false);assert.equal(result.data,undefined);
+  }
+});
+
 test('observed entry-course change follows the explicit boat identity rather than row position',async()=>{
   const {promise}=run(sources=>{
     let text=changeRow(sources.STT.text,1,p=>{p[0]='3';return p;});

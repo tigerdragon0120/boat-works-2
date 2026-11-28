@@ -9,6 +9,25 @@ const knownNetworkCodes=new Set(['ERR_NETWORK','ECONNRESET','ECONNABORTED','ETIM
 const bugs=new Set(['TypeError','RangeError','ReferenceError','SyntaxError','URIError','EvalError']);
 const present=value=>value!=null&&String(value).trim()!=='';
 const name=value=>typeof value==='string'?value.normalize('NFKC').replace(/[\s\u3000]/g,''):'';
+// The legacy official-card parser stores the adjacent branch/birthplace pair
+// in player_name (e.g. 坪内実大阪/大阪). Recognize only that complete, terminal
+// pair on the saved roster. Source names still require exact full-name equality.
+const prefectures='北海道 青森 岩手 宮城 秋田 山形 福島 茨城 栃木 群馬 埼玉 千葉 東京 神奈川 新潟 富山 石川 福井 山梨 長野 岐阜 静岡 愛知 三重 滋賀 京都 大阪 兵庫 奈良 和歌山 鳥取 島根 岡山 広島 山口 徳島 香川 愛媛 高知 福岡 佐賀 長崎 熊本 大分 宮崎 鹿児島 沖縄'.split(' ');
+const prefectureNames=new Map(prefectures.flatMap(value=>[[value,value],
+  [value==='北海道'?value:value+({東京:'都',京都:'府',大阪:'府'}[value]||'県'),value]]));
+const prefecturePattern=[...prefectureNames.keys()].sort((a,b)=>b.length-a.length).join('|');
+const pairedLocation=new RegExp('^([^/]+?)('+prefecturePattern+')/('+prefecturePattern+')$');
+function rosterName(value,row){
+  if(!value)return null;
+  const pair=value.match(pairedLocation);
+  if(!pair)return value.includes('/')?null:value;
+  const [,pure,branch,birthplace]=pair;
+  if(pure.length<2)return null;
+  // When separately recorded, the location fields must confirm the suffix.
+  if(present(row.branch_name)&&prefectureNames.get(name(row.branch_name))!==prefectureNames.get(branch))return null;
+  if(present(row.birthplace)&&prefectureNames.get(name(row.birthplace))!==prefectureNames.get(birthplace))return null;
+  return pure;
+}
 const number=value=>typeof value==='number'?Number.isFinite(value)?value:null
   :typeof value==='string'&&/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(value.trim())?Number(value):null;
 const integer=(value,min,max)=>{const n=number(value);return Number.isInteger(n)&&n>=min&&n<=max?n:null;};
@@ -26,7 +45,7 @@ function identify(race,entries){
   const byBoat=new Map(),registrations=new Set(),names=new Set(),ids=new Set();
   for(const row of entries){
     const boat=integer(row?.boat_number,1,6),regs=[row?.registration_number,row?.register_number].filter(present).map(x=>String(x).trim());
-    const aliases=[row?.player_name,row?.racer_name].filter(present).map(name),registered=regs[0],racerName=aliases[0];
+    const aliases=[row?.player_name,row?.racer_name].filter(present).map(name),registered=regs[0],racerName=rosterName(aliases[0],row);
     if(boat==null||byBoat.has(boat)||!regs.length||regs.some(x=>!/^\d{4}$/.test(x))||new Set(regs).size!==1
       ||registrations.has(registered)||!aliases.length||!racerName||new Set(aliases).size!==1||names.has(racerName)
       ||typeof row.id!=='string'||!row.id||ids.has(row.id)||row.race_id!==race.id||row.race_key!==key
