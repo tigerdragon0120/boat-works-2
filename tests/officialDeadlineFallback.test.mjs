@@ -62,6 +62,20 @@ test('403 fallback uses the official 12-slot card and saves a guarded deadline w
   saved.deadline_source.url=urlFor('04');assert.equal(hasConfirmedOfficialDeadline(saved,{date:DATE,now:NOW}),false);
 });
 
+test('a repeated caption outside the schedule table is allowed without relaxing row or header identity',async t=>{
+  assert.equal(HTML.split('締切予定時刻').length-1,2);
+  const state=setup(t),result=await state.run();assert.equal(result.ok,true);assert.equal(result.updated,1);
+});
+
+test('duplicate deadline label cells or table headers remain ambiguous and cannot be saved',async t=>{
+  for(const kind of ['label','header'])await t.test(kind,async child=>{
+    const html=kind==='label'?HTML+'<table><tr><td>締切予定時刻</td><td>11:34</td></tr></table>'
+      :HTML.replace('</thead>','</thead><thead><tr><th>another header</th></tr></thead>');
+    const state=setup(child,{html}),result=await state.run();assert.equal(result.ok,false);assert.equal(state.writes.length,0);
+    assert.equal(result.reason,kind==='label'?'SCHEDULE_CARD_SLOTS_INVALID':'SCHEDULE_CARD_IDENTITY_INVALID');
+  });
+});
+
 test('only documented acquisition failures activate HTML fallback',async t=>{
   for(const status of [403,404,408,429,500,503,302,400,401])await t.test(String(status),async child=>{
     const state=setup(child,{status}),result=await state.run();

@@ -27,9 +27,13 @@ export function normalizeOfficialCardDeadlines(html,{date,venueCode,source,now=D
     ||source.race_date!==date||source.venue_code!==venueCode||source.request_race_number!==1
     ||fetched==null||fetched>now||now-fetched>MAX_AGE_MS)return fail('SCHEDULE_CARD_SOURCE_INVALID');
   if(typeof html!=='string'||html.length>512*1024)return fail('SCHEDULE_CARD_PAYLOAD_INVALID');
-  const marker=html.indexOf('締切予定時刻'),start=html.lastIndexOf('<table',marker),end=html.indexOf('</table>',marker);
-  if(marker<0||marker!==html.lastIndexOf('締切予定時刻')||start<0||end<marker)return fail('SCHEDULE_CARD_SLOTS_INVALID');
-  const table=html.slice(start,end+8),header=table.match(/<thead\b[^>]*>([\s\S]*?)<\/thead>/i)?.[1]||'';
+  const labels=[...html.matchAll(/<td\b[^>]*>\s*締切予定時刻\s*<\/td>/gi)];
+  const marker=labels.length===1?html.indexOf('締切予定時刻',labels[0].index):-1;
+  const start=html.lastIndexOf('<table',marker),end=html.indexOf('</table>',marker);
+  if(marker<0||start<0||end<marker)return fail('SCHEDULE_CARD_SLOTS_INVALID');
+  const table=html.slice(start,end+8),headers=[...table.matchAll(/<thead\b[^>]*>([\s\S]*?)<\/thead>/gi)];
+  if(headers.length!==1)return fail('SCHEDULE_CARD_IDENTITY_INVALID');
+  const header=headers[0][1];
   const links=[...header.matchAll(/href\s*=\s*["']([^"']+)["']/gi)].map(match=>match[1].replaceAll('&amp;','&'));
   if(links.length!==12)return fail('SCHEDULE_CARD_IDENTITY_INVALID');
   for(let index=0;index<12;index++){
