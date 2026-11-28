@@ -52,26 +52,33 @@ export default function Venue() {
   const [raceResult, setRaceResult] = useState(null);
   const sectionFetchTried = useRef(new Set());
   const exhibitionFetchTried = useRef(new Set());
-  // 重複した読み込みを抑えてAPIレート制限に達しないようにする
+  // 保存データの読取と外部補完は別々に管理する。補完中もDBを読めるようにする。
   const detailSeq = useRef(0);
-  const refreshBusy = useRef(false);
+  const savedReadSeq = useRef(0);
+  const savedRefreshInFlight = useRef(null);
+  const collectionInFlight = useRef(new Map());
+  const resultInFlight = useRef(new Map());
+  const latestRaceRef = useRef(null);
+  const selectionScope = useRef(null);
+  const selectionKey = `${selectedDate}:${String(code).padStart(2, '0')}:${selectedId || ''}`;
+  if (selectionScope.current?.key !== selectionKey) selectionScope.current = { key: selectionKey };
   const listSeq = useRef(0);
 
   // Initial load and background refresh must read the same selected JST date.
-  const readVenueRaces = async () => {
+  const readVenueRaces = async ({ force = false } = {}) => {
     const currentDay = selectedDate === todayJst;
-    const all = currentDay ? await listTodayRaces({ includeFinished: true })
+    const all = currentDay ? await listTodayRaces({ includeFinished: true, raceDate: selectedDate, force })
       : await base44.entities.Race.filter({race_date:selectedDate,venue_code:{$in:[String(code).padStart(2,'0'),String(Number(code))]}},'race_number',100);
     if (!Array.isArray(all) || (!currentDay && all.length >= 100)) throw new Error('レース情報を最後まで確認できませんでした');
     return all.filter((r) => r.race_date === selectedDate && String(r.venue_code).padStart(2, "0") === String(code).padStart(2, "0"))
       .sort((a, b) => a.race_number - b.race_number);
   };
 
-  const loadList = async () => {
+  const loadList = async ({ force = false } = {}) => {
     const request = ++listSeq.current;
     setLoading(true);
     try {
-    const list = await readVenueRaces();
+    const list = await readVenueRaces({ force });
     if (request !== listSeq.current) return;
     if (!list.length) {
       setListNotice(`${selectedDate} のレース情報はまだ確認できません。番組の取得待ち、または非開催の可能性があります。`);
@@ -110,7 +117,7 @@ export default function Venue() {
   }, [code,selectedDate,requestedRace]);
 
   const raceList = useMemo(() => races.filter(r=>r.race_date===selectedDate && String(r.venue_code).padStart(2,'0')===String(code).padStart(2,'0')), [races,selectedDate,code]);
-  const visibleRace = race?.race_date===selectedDate && String(race?.venue_code).padStart(2,'0')===String(code).padStart(2,'0');
+  const visibleRace = race?.id===selectedId && race?.race_date===selectedDate && String(race?.venue_code).padStart(2,'0')===String(code).padStart(2,'0');
   // A closed race must not trap users on an empty V7 view when a future race is available.
   const nextOpenRace = useMemo(() => {
     const now = Date.now();
@@ -120,85 +127,124 @@ export default function Venue() {
 
   const venueName = raceList[0]?.venue || raceList[0]?.venue_name || `場コード ${code}`;
 
-  // 選択中レースの詳細読み込み
+  const captureScope = () => ({ view: selectionScope.current, detail: detailSeq.current });
+  const isCurrentScope = (scope) => scope.view === selectionScope.current && scope.detail === detailSeq.current;
+
+  // DB読取だけを行う。外部取得・予想生成・結果補完は表示の完了条件にしない。
+  const readSavedDetail = async ({ initialRace = null, refreshList = true, force = false, scope = captureScope() } = {}) => {
+    if (!selectedId || !isCurrentScope(scope)) return null;
+    const request = ++savedReadSeq.current;
+    const stale = () => !isCurrentScope(scope) || request !== savedReadSeq.current;
+    let selectedRace = initialRace || (latestRaceRef.current?.id === selectedId ? latestRaceRef.current : raceList.find((r) => r.id === selectedId));
+    try {
+      if (refreshList) {
+        const listRequest = ++listSeq.current;
+        const latestList = await readVenueRaces({ force });
+        if (stale() || listRequest !== listSeq.current) return null;
+        setLoading(false);
+        if (!latestList.length) {
+          setListNotice('選択日の最新番組が未取得のため、直前に確認できた内容を表示しています。');
+          return null;
+        }
+        selectedRace = latestList.find((r) => r.id === selectedId)
+          || latestList.find((r) => selectedRace?.race_key && r.race_key === selectedRace.race_key);
+        if (!selectedRace) {
+          setListNotice('選択中のレースを最新番組で確認できないため、取得済みの表示を保持しています。');
+          return null;
+        }
+        setRaces(latestList);
+        if (selectedRace.id !== selectedId) {
+          setSelectedId(selectedRace.id);
+          return null;
+        }
+      }
+      if (!selectedRace || selectedRace.race_date !== selectedDate || String(selectedRace.venue_code).padStart(2, '0') !== String(code).padStart(2, '0')) return null;
+      latestRaceRef.current = selectedRace;
+      setRace(selectedRace);
+      const freshEntries = await getRaceEntries(selectedRace.id, selectedRace.race_key);
+      if (stale()) return null;
+      if (!Array.isArray(freshEntries)) throw new Error('出走表の保存データを確認できませんでした');
+      if (freshEntries.length) setEntries(freshEntries);
+      setListNotice(null);
+      return { race: selectedRace, entries: freshEntries, scope };
+    } catch (error) {
+      if (!stale()) setListNotice('最新情報を更新できませんでした。取得済みの表示を保持しています。');
+      console.warn('[Venue] saved detail read failed:', error?.message || error);
+      return null;
+    }
+  };
+
+  // 結果APIは未取得結果を外部から補完するため、出走表の読取とは独立させる。
+  const refreshRaceResult = async (r, scope) => {
+    if (!isCurrentScope(scope) || resultInFlight.current.has(r.id)) return;
+    const token = {};
+    resultInFlight.current.set(r.id, token);
+    try {
+      const result = await getRaceResult(r);
+      if (isCurrentScope(scope) && result) setRaceResult(result);
+    } catch (error) {
+      console.warn('[Venue] result refresh failed:', error?.message || error);
+    } finally {
+      if (resultInFlight.current.get(r.id) === token) resultInFlight.current.delete(r.id);
+    }
+  };
+
+  // 外部補完は同一レースで重ねない。この待ち時間はDBの表示pollを止めない。
+  const completeRaceData = async (r, es, { initial = false, scope } = {}) => {
+    const currentRace = () => latestRaceRef.current?.id === r.id ? latestRaceRef.current : r;
+    const canCollect = () => isCurrentScope(scope) && !['finished', 'cancelled'].includes(currentRace().status)
+      && !['CANCELLED', 'POSTPONED'].includes(currentRace().schedule_status);
+    if (!canCollect() || collectionInFlight.current.has(r.id)) return;
+    const token = {};
+    collectionInFlight.current.set(r.id, token);
+    const sectionKey = `${r.race_date}_${String(r.venue_code).padStart(2, '0')}_${r.race_number}`;
+    const collect = async (type) => {
+      if (!canCollect()) return;
+      try {
+        await fetchOnlineData(type, r.race_date, r.venue_code, r.race_number, r.id);
+      } catch (error) {
+        console.warn(`[Venue] ${type} supplement failed:`, sectionKey, error?.message || error);
+      }
+      if (isCurrentScope(scope)) await readSavedDetail({ force: true, scope });
+    };
+    try {
+      const hasSection = (es || []).some((e) => e.section_points != null || e.section_st != null || !!e.section_finishes || e.section_momentum != null);
+      if (!hasSection && !sectionFetchTried.current.has(sectionKey)) {
+        sectionFetchTried.current.add(sectionKey);
+        await collect('section');
+      }
+      if (!canCollect()) return;
+      const activeEntries = (es || []).filter((e) => !e.is_absent && !e.is_scratched);
+      const hasCompleteExhibition = activeEntries.length > 0 && activeEntries.every((e) => e.exhibition_time != null && e.exhibition_st != null);
+      const minsToDeadline = (Date.parse(currentRace().deadline || '') - Date.now()) / 60000;
+      const initialExhibition = initial && !hasCompleteExhibition && minsToDeadline <= 60 && minsToDeadline >= -30 && !exhibitionFetchTried.current.has(sectionKey);
+      if (initialExhibition || (!initial && minsToDeadline <= 60 && minsToDeadline > 0)) {
+        if (initialExhibition) exhibitionFetchTried.current.add(sectionKey);
+        await collect('exhibition');
+      }
+      const minsToOddsDeadline = (Date.parse(currentRace().deadline || '') - Date.now()) / 60000;
+      if (!initial && minsToOddsDeadline <= 25 && minsToOddsDeadline > 0) await collect('odds');
+    } finally {
+      if (collectionInFlight.current.get(r.id) === token) collectionInFlight.current.delete(r.id);
+    }
+  };
+
   const loadDetail = async () => {
     if (!selectedId) return;
-    // レースを素早く切り替えた時、古い読み込みが走り続けないよう打ち切る
-    const seq = ++detailSeq.current;
-    const stale = () => seq !== detailSeq.current;
-    // 前レースのstateを完全クリア
-    // レース切替時は必ず事前予想(PRE)を先に見せる
-    setV61Stages({ pre: null, final: null });
-    setV62Stages({ pre: null, final: null });
-    setV63Stages({ pre: null, final: null });
-    setV65Stages({ pre: null, final: null });
-    setStageTab("PRE");
+    ++detailSeq.current;
+    const scope = captureScope();
+    const r = raceList.find((x) => x.id === selectedId);
+    // 切替直後に前レースの艇・結果を新しいレース名の下へ表示しない。
+    setEntries([]);
     setRaceResult(null);
-
-    const r = races.find((x) => x.id === selectedId);
-    setRace(r);
+    setV8ForecastSnapshots(null);
+    latestRaceRef.current = r || null;
+    setRace(r || null);
     if (!r) return;
-    const savedResult = await getRaceResult(r);
-    if (stale()) return;
-    setRaceResult(savedResult);
-    let es = await getRaceEntries(selectedId, r.race_key);
-    if (stale()) return;
-
-    // 節間成績が未取得なら、そのレースの公式racelistから自動補完する。
-    const hasSection = (es || []).some((e) =>
-      e.section_points != null || e.section_st != null || !!e.section_finishes || e.section_momentum != null
-    );
-    const sectionKey = `${r.race_date}_${String(r.venue_code).padStart(2, "0")}_${r.race_number}`;
-    if (!hasSection && !sectionFetchTried.current.has(sectionKey)) {
-      sectionFetchTried.current.add(sectionKey);
-      try {
-        await fetchOnlineData("section", r.race_date, r.venue_code, r.race_number, r.id);
-        es = await getRaceEntries(selectedId, r.race_key);
-      } catch (err) {
-        console.warn("節間成績の自動取得に失敗", sectionKey, err);
-      }
-    }
-    // 締切60分前〜30分後で展示が未取得なら、画面を開いた時にも1回だけ即時取得する。
-    // 5分周期ワーカーが大量の重複Raceで対象レースまで到達できない場合の安全網。
-    const activeEntries = (es || []).filter((e) => !e.is_absent && !e.is_scratched);
-    const hasCompleteExhibition = activeEntries.length > 0 && activeEntries.every((e) =>
-      e.exhibition_time != null && e.exhibition_st != null
-    );
-    const deadlineMs = r.deadline ? new Date(r.deadline).getTime() : NaN;
-    const nowMs = Date.now();
-    const inExhibitionWindow = Number.isFinite(deadlineMs) &&
-      nowMs >= deadlineMs - 60 * 60 * 1000 && nowMs <= deadlineMs + 30 * 60 * 1000;
-    if (!hasCompleteExhibition && inExhibitionWindow && !exhibitionFetchTried.current.has(sectionKey)) {
-      exhibitionFetchTried.current.add(sectionKey);
-      try {
-        const exhibitionResult = await fetchOnlineData("exhibition", r.race_date, r.venue_code, r.race_number, r.id);
-        es = await getRaceEntries(selectedId, r.race_key);
-        if (exhibitionResult?.data?.exhibition_ready === true) {
-          setRace((prev) => prev ? { ...prev, exhibition_ready: true } : prev);
-        }
-      } catch (err) {
-        console.warn("展示データの即時取得に失敗", sectionKey, err);
-      }
-    }
-    if (stale()) return;
-    setEntries(es || []);
-    // 合成(V6.1)の事前予想・直前予想を取得し、タブ切替時に即座に表示する。
-    const resolvedV61Stages = await getV61Stages(selectedId, r?.race_key);
-    if (stale()) return;
-    setV61Stages(resolvedV61Stages);
-
-    // === 合成(V6.1) FINAL自動生成保証 ===
-    // 展示取得済み・締切前で直前予想が未生成なら背景で生成する。
-    // 事前予想の初回表示を待たせないため、ここではawaitしない。
-    if (!resolvedV61Stages.final && r?.exhibition_ready && r?.deadline
-        && new Date(r.deadline).getTime() > Date.now()) {
-      ensureV61Final(r)
-        .then(async (ensured) => {
-          if (stale() || !ensured) return;
-          setV61Stages(await getV61Stages(selectedId, r?.race_key));
-        })
-        .catch((e) => console.warn("[Venue] V6.1 FINAL auto-gen failed:", e?.message || e));
-    }
+    const saved = await readSavedDetail({ initialRace: r, refreshList: false, scope });
+    if (!saved) return;
+    void refreshRaceResult(saved.race, scope);
+    void completeRaceData(saved.race, saved.entries, { initial: true, scope });
   };
   useEffect(() => {
     loadDetail().catch((e) => console.warn("[Venue] detail load failed:", e?.message || e));
@@ -275,124 +321,42 @@ export default function Venue() {
 
   // 締切直前にバックエンドで生成されたFINAL予想を、ページを開いたままでも反映する。
   // loadDetailのように表示を一度クリアせず、予想部分だけを静かに更新する。
-  const refreshPredictions = async () => {
-    if (!selectedId || !visibleRace) return;
-    // 15秒周期の更新が重なったり、非表示タブで走り続けると
-    // APIレート制限に達するため、実行中と非表示中はスキップする。
-    if (refreshBusy.current) return;
-    if (typeof document !== "undefined" && document.hidden) return;
-    refreshBusy.current = true;
-    const refreshSeq = detailSeq.current;
+  const refreshPredictions = async ({ force = false } = {}) => {
+    if (!selectedId) return;
+    if (!force && typeof document !== "undefined" && document.hidden) return;
+    const scope = captureScope();
+    // DB poll同士だけをまとめる。手動更新・別レースは遅い旧読取を待たない。
+    if (!force && savedRefreshInFlight.current && isCurrentScope(savedRefreshInFlight.current.scope)) return;
+    const token = { scope };
+    savedRefreshInFlight.current = token;
     try {
-
-    // 展示・オッズは締切直前にバックエンドで更新されるため、
-    // 予想だけでなくRace/RaceEntryも再読込して開いたままの画面へ反映する。
-    // 画面を開いたままでも直前データ取得を起動する。ワーカー待ちだけにすると
-    // exhibition_ready=false のままFINAL生成条件に入れない時間帯が発生する。
-    if (race?.deadline) {
-      const deadlineMs = new Date(race.deadline).getTime();
-      const minsToDeadline = (deadlineMs - Date.now()) / 60000;
-      if (Number.isFinite(minsToDeadline) && minsToDeadline <= 60 && minsToDeadline > 0) {
-        await fetchOnlineData("exhibition", race.race_date, race.venue_code, race.race_number, race.id).catch(() => null);
-        if (minsToDeadline <= 25) {
-          await fetchOnlineData("odds", race.race_date, race.venue_code, race.race_number, race.id).catch(() => null);
-        }
-      }
-    }
-
-    const latestList = await readVenueRaces();
-    if (refreshSeq !== detailSeq.current) return;
-    if (!latestList.length) {
-      setListNotice('選択日の最新番組が未取得のため、直前に確認できた内容を表示しています。');
-      return;
-    }
-    const selectedRace = latestList.find((x) => x.id === selectedId)
-      || latestList.find((x) => x.race_key === race?.race_key);
-    if (!selectedRace) {
-      setListNotice('選択中のレースを最新番組で確認できないため、取得済みの表示を保持しています。');
-      return;
-    }
-
-    setRaces(latestList);
-    setRace(selectedRace);
-    setListNotice(null);
-
-    const freshEntries = await getRaceEntries(selectedRace.id, selectedRace.race_key);
-    if (refreshSeq !== detailSeq.current) return;
-    if (Array.isArray(freshEntries) && freshEntries.length) setEntries(freshEntries);
-
-    // レース終了後にRaceResultが後から入っても、開いたまま結果・払戻を反映する。
-    // 取得できなかったときは既存の正常な表示を消さない。
-    const seq = detailSeq.current;
-    const latestResult = await getRaceResult(selectedRace);
-    if (seq !== detailSeq.current) return;
-    if (latestResult) setRaceResult(latestResult);
-
-    if (selectedRace.status === "finished" || selectedRace.status === "cancelled") return;
-    let stages = await getV61Stages(selectedRace.id, selectedRace.race_key);
-    setV61Stages(stages);
-
-    // ページを開いたまま展示が揃った場合もFINAL生成を開始する。
-    // 以前は初回loadDetail時しかensureしなかったため、展示取得後に直前予想が出ないことがあった。
-    if (!stages.final && selectedRace.exhibition_ready && selectedRace.deadline
-        && new Date(selectedRace.deadline).getTime() > Date.now()) {
-      const ensured = await ensureV61Final(selectedRace);
-      if (ensured) {
-        stages = await getV61Stages(selectedRace.id, selectedRace.race_key);
-        setV61Stages(stages);
-      }
-    }
-
-    // V6.2タブ表示中はV6.2予想も同じ周期で更新する
-    // V6.2も表示中のタブに依存せず、データが揃ったら自動生成する。
-    const ensuredV62 = await ensureV62Final(selectedRace);
-    if (predictionVersion === "v62" || ensuredV62) {
-      setV62Stages(await getV62Stages(selectedRace.id, selectedRace.race_key));
-    }
-
-    // V6.3は表示タブの時だけ生成・更新する(毎レースV4+V6.2を走らせないため)
-    if (predictionVersion === "v63") {
-      await ensureV63Final(selectedRace);
-      setV63Stages(await getV63Stages(selectedRace.id, selectedRace.race_key));
-    }
-
-    // V6.4も表示タブの時だけ生成・更新する
-    if (predictionVersion === "v64") {
-      await ensureV64Final(selectedRace);
-      setV64Stages(await getV64Stages(selectedRace.id, selectedRace.race_key));
-    }
-
-    // V6.5(女子戦)も表示タブの時だけ生成・更新する
-    if (predictionVersion === "v65") {
-      await ensureV65Final(selectedRace);
-      setV65Stages(await getV65Stages(selectedRace.id, selectedRace.race_key));
-    }
-    } catch (error) {
-      if (refreshSeq === detailSeq.current) setListNotice('最新情報を更新できませんでした。取得済みの表示を保持しています。');
-      throw error;
+      const saved = await readSavedDetail({ force, scope });
+      if (!saved) return;
+      void refreshRaceResult(saved.race, saved.scope);
+      void completeRaceData(saved.race, saved.entries, { scope: saved.scope });
+      // この画面の予想はUnifiedRaceViewのV8/V7。表示に使わないV6生成は起動しない。
     } finally {
-      refreshBusy.current = false;
+      if (savedRefreshInFlight.current === token) savedRefreshInFlight.current = null;
     }
   };
 
+  const refreshDeadlineMs = Date.parse(race?.deadline || '');
+  const nearDeadline = Number.isFinite(refreshDeadlineMs) && Math.abs(Date.now() - refreshDeadlineMs) <= 30 * 60 * 1000;
   useEffect(() => {
     if (!selectedId || !visibleRace) {
       const waitingTimer = window.setInterval(() => { if (!document.hidden) void loadList(); }, 90000);
       return () => window.clearInterval(waitingTimer);
     }
-    // 締切前後30分は20秒、それ以外は90秒で静かに更新する。
-    // 15秒間隔ではエンティティ一覧のレート制限(429)に達し、更新が失敗していた。
-    const deadlineMs = race?.deadline ? new Date(race.deadline).getTime() : NaN;
-    const nearDeadline = Number.isFinite(deadlineMs) && Math.abs(Date.now() - deadlineMs) <= 30 * 60 * 1000;
+    // 締切前後30分は20秒、それ以外は90秒。外部補完の完了を待たず保存値を読む。
     const intervalId = window.setInterval(() => {
-      refreshPredictions().catch((e) => console.warn("[Venue] prediction refresh failed:", e?.message || e));
+      void refreshPredictions();
     }, nearDeadline ? 20000 : 90000);
     return () => window.clearInterval(intervalId);
-  }, [selectedId, races, race?.deadline, predictionVersion, selectedDate, code]);
+  }, [selectedId, visibleRace, race?.deadline, nearDeadline, selectedDate, code]);
 
   const refreshAll = async () => {
-    await loadList();
-    await refreshPredictions();
+    if (selectedId && visibleRace) await refreshPredictions({ force: true });
+    else await loadList({ force: true });
   };
 
   const run = async (stage) => {
