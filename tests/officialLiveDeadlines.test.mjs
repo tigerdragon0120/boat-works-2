@@ -30,6 +30,17 @@ function setup(t,{rows=[race()],payload=delayed(),status=200,beforeWrite=()=>{},
 }
 const run=state=>refreshOfficialDeadlines(state.client,{date:DATE,deadlineMs:Date.now()+8000,fetcher:state.fetcher});
 
+test('edge-compatible manual redirects reject 302 without reading the body or database',async t=>{
+  const state=setup(t),before=structuredClone(state.records);let requests=0,bodyRead=false;
+  const result=await refreshOfficialDeadlines(state.client,{date:DATE,deadlineMs:NOW+8000,fetcher:async(_url,options)=>{
+    requests++;assert.equal(options.redirect,'manual');
+    return {status:302,text:async()=>{bodyRead=true;return JSON.stringify(delayed());}};
+  }});
+  assert.equal(requests,1);assert.equal(bodyRead,false);assert.equal(result.ok,false);
+  assert.equal(result.reason,'SCHEDULE_HTTP_302');assert.equal(result.source.http_status,302);
+  assert.equal(result.updated,0);assert.deepEqual(state.calls,[]);assert.deepEqual(state.records,before);
+});
+
 test('the observed public schedule maps 12 race slots and never treats closed text as a time',()=>{
   const normalized=normalizeOfficialDeadlines(fixture.payload,{date:DATE,source:fixture.source,now:Date.parse(fixture.source.fetched_at)});
   assert.equal(normalized.ok,true);assert.equal(normalized.deadlines.has(DATE+'_03_02'),false);

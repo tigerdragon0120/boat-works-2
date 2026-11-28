@@ -84,7 +84,7 @@ export async function refreshOfficialDeadlines(client,{date,deadlineMs=Date.now(
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),Math.min(3500,budget-Date.now()));
   let payload;
   try{
-    const response=await fetcher(source.url,{signal:controller.signal,redirect:'error',headers:{Accept:'application/json'}});
+    const response=await fetcher(source.url,{signal:controller.signal,redirect:'manual',headers:{Accept:'application/json'}});
     source.http_status=Number(response.status)||null;
     source.fetched_at=nowIso();
     if(response.status!==200)return stop(`SCHEDULE_HTTP_${source.http_status||0}`);
